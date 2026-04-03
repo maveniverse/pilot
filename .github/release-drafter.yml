@@ -8,7 +8,8 @@ categories:
     labels:
       - breaking
   - title: 🚨 Removed
-    label: removed
+    labels:
+      - removed
   - title: 🚀 New features and improvements
     labels:
       - enhancement
@@ -19,16 +20,19 @@ categories:
       - fix
       - bugfix
   - title: 📦 Dependency updates
-    label: dependencies
+    labels:
+      - dependencies
   - title: 📝 Documentation updates
-    label: documentation
+    labels:
+      - documentation
   - title: 👻 Maintenance
     labels:
       - chore
       - internal
       - maintenance
   - title: 🔧 Build
-    label: build
+    labels:
+      - build
   - title: 🚦 Tests
     labels:
       - test
