@@ -31,6 +31,7 @@ import org.apache.maven.plugins.annotations.Parameter;
  *
  * <p>Usage:</p>
  * <pre>
+ * mvn pilot:search
  * mvn pilot:search -Dquery=guava
  * mvn pilot:search -Dquery="g:com.google.guava AND a:guava"
  * </pre>
@@ -44,7 +45,7 @@ public class SearchMojo extends AbstractMojo {
      * The search query. Supports free-text (e.g., {@code guava}) or Solr field syntax
      * (e.g., {@code g:com.google.guava AND a:guava}).
      */
-    @Parameter(property = "query", required = true)
+    @Parameter(property = "query")
     private String query;
 
     @Override
@@ -52,12 +53,18 @@ public class SearchMojo extends AbstractMojo {
         CentralSearchClient client = new CentralSearchClient();
 
         try {
-            JsonObject response = client.query(query.trim(), 100, 0);
-            JsonObject responseBody = response.getJsonObject("response");
-            int totalHits = responseBody.getInt("numFound");
-            List<String[]> initialResults = SearchTui.extractArtifacts(responseBody);
+            String q = query != null ? query.trim() : "";
+            List<String[]> initialResults = List.of();
+            int totalHits = 0;
 
-            SearchTui tui = new SearchTui(client, query.trim(), initialResults, totalHits);
+            if (!q.isEmpty()) {
+                JsonObject response = client.query(q, 100, 0);
+                JsonObject responseBody = response.getJsonObject("response");
+                totalHits = responseBody.getInt("numFound");
+                initialResults = SearchTui.extractArtifacts(responseBody);
+            }
+
+            SearchTui tui = new SearchTui(client, q, initialResults, totalHits);
             String selectedGav = tui.run();
             if (selectedGav != null) {
                 getLog().info("Selected: " + selectedGav);
