@@ -5,6 +5,9 @@ on:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
 
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Release to Maven Central
@@ -21,7 +24,6 @@ jobs:
       - name: Verify tag state
         id: version
         run: |
-          git fetch --tags
           echo "All recent tags:"
           git tag -l --sort=version:refname | tail -5
           echo "Current commit: $(git rev-parse HEAD)"
@@ -61,7 +63,7 @@ jobs:
           gh extension install valeriobelli/gh-milestone
           version=${{ steps.version.outputs.version }}
           echo "Trying to find milestone $version"
-          milestone=$(gh milestone list --json id,title,state  --jq "map_values(select(.title == \"${version}\" and .state == \"OPEN\")).[].number")
+          milestone=$(gh milestone list --json number,title,state --jq "map(select(.title == \"${version}\" and .state == \"OPEN\"))[].number")
           if [ ! -z "$milestone" ]; then
               echo "Found milestone $version, closing it"
               gh milestone edit $milestone --state closed
@@ -79,7 +81,7 @@ jobs:
             echo "Preparing development $next_version"
             echo "Trying to find milestone $next_version"
 
-            milestone=$(gh milestone list --json id,title,state --jq "map_values(select(.title == \"${next_version}\" and .state == \"OPEN\")).[].number")
+            milestone=$(gh milestone list --json number,title,state --jq "map(select(.title == \"${next_version}\" and .state == \"OPEN\"))[].number")
             if [ -z "$milestone" ]; then
               echo "Creating milestone $next_version"
               gh milestone create --title $next_version
