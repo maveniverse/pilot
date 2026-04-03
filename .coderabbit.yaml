@@ -1,0 +1,29 @@
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_filters:
+    - "!target/**"
+    - "!*.iml"
+    - "!docs/images/**"
+
+  path_instructions:
+    - path: "src/main/**/*.java"
+      instructions: |
+        Focus on code quality, performance, security, and Java best practices.
+        This is a TUI application using the TamboUI framework.
+    - path: "src/test/**/*.java"
+      instructions: |
+        Ensure tests are meaningful. Tests use JUnit 5 and AssertJ.
+        TUI tests use TamboUI's TuiTestRunner and Pilot test fixtures.
+    - path: "pom.xml"
+      instructions: |
+        Verify dependency versions and check for conflicts.
+        Parent POM is eu.maveniverse.maven.parent:parent.
+
+chat:
+  auto_reply: true
