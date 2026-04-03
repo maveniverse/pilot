@@ -1,0 +1,50 @@
+name-template: $NEXT_PATCH_VERSION
+tag-template: $NEXT_PATCH_VERSION
+version-template: $MAJOR.$MINOR.$PATCH
+commitish: main
+
+categories:
+  - title: ":boom: Breaking changes"
+    labels:
+      - breaking
+  - title: 🚨 Removed
+    labels:
+      - removed
+  - title: 🚀 New features and improvements
+    labels:
+      - enhancement
+      - feature
+  - title: 🐛 Bug Fixes
+    labels:
+      - bug
+      - fix
+      - bugfix
+  - title: 📦 Dependency updates
+    labels:
+      - dependencies
+  - title: 📝 Documentation updates
+    labels:
+      - documentation
+  - title: 👻 Maintenance
+    labels:
+      - chore
+      - internal
+      - maintenance
+  - title: 🔧 Build
+    labels:
+      - build
+  - title: 🚦 Tests
+    labels:
+      - test
+      - tests
+exclude-labels:
+  - reverted
+  - no-changelog
+  - skip-changelog
+  - invalid
+
+change-template: '- $TITLE ([#$NUMBER]($URL)) @$AUTHOR'
+
+template: |
+  <!-- Optional: add a release summary here -->
+  $CHANGES
