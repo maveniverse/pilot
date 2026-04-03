@@ -53,7 +53,7 @@ jobs:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
         run: |
-          mvn -B deploy -Dnjord.autoPublish -Pbundle,javadoc,sign -s .github/release-settings.xml
+          mvn -B deploy -Dnjord.autoPublish -Pmaveniverse-release -s .github/release-settings.xml
 
       - name: Post release
         env:
