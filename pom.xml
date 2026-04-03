@@ -56,10 +56,11 @@ under the License.
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <mavenVersion>3.9.9</mavenVersion>
-    <tamboui.version>0.2.0-SNAPSHOT</tamboui.version>
-    <domtrip.version>0.4.2-SNAPSHOT</domtrip.version>
+    <tamboui.version>0.1.0</tamboui.version>
+    <domtrip.version>0.6.0</domtrip.version>
 
     <!-- SonarCloud -->
+    <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
     <sonar.organization>maveniverse</sonar.organization>
     <sonar.host.url>https://sonarcloud.io</sonar.host.url>
   </properties>
