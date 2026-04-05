@@ -29,7 +29,7 @@ under the License.
   <groupId>eu.maveniverse.maven.plugins</groupId>
   <artifactId>pilot</artifactId>
   <version>${revision}</version>
-  <packaging>maven-plugin</packaging>
+  <packaging>pom</packaging>
 
   <name>Pilot</name>
   <description>Interactive TUI for Maven — search, browse, and manage dependencies from the terminal.</description>
@@ -42,9 +42,11 @@ under the License.
     </license>
   </licenses>
 
-  <prerequisites>
-    <maven>3.6.3</maven>
-  </prerequisites>
+  <modules>
+    <module>pilot-core</module>
+    <module>pilot-cli</module>
+    <module>pilot-plugin</module>
+  </modules>
 
   <scm>
     <connection>scm:git:git@github.com:maveniverse/pilot.git</connection>
@@ -55,9 +57,11 @@ under the License.
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
-    <mavenVersion>3.9.9</mavenVersion>
+    <mavenVersion>3.9.14</mavenVersion>
     <tamboui.version>0.1.0</tamboui.version>
     <domtrip.version>1.0.0</domtrip.version>
+    <jline.version>4.0.10</jline.version>
+    <resolverVersion>1.9.27</resolverVersion>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
@@ -65,107 +69,133 @@ under the License.
     <sonar.host.url>https://sonarcloud.io</sonar.host.url>
   </properties>
 
-  <dependencies>
-    <!-- Maven -->
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-plugin-api</artifactId>
-      <version>${mavenVersion}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-core</artifactId>
-      <version>${mavenVersion}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven.plugin-tools</groupId>
-      <artifactId>maven-plugin-annotations</artifactId>
-      <version>${version.maven-plugin-tools}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>javax.inject</groupId>
-      <artifactId>javax.inject</artifactId>
-      <version>1</version>
-      <scope>provided</scope>
-    </dependency>
+  <dependencyManagement>
+    <dependencies>
+      <!-- Maven -->
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-plugin-api</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-core</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.plugin-tools</groupId>
+        <artifactId>maven-plugin-annotations</artifactId>
+        <version>${version.maven-plugin-tools}</version>
+      </dependency>
+      <dependency>
+        <groupId>javax.inject</groupId>
+        <artifactId>javax.inject</artifactId>
+        <version>1</version>
+      </dependency>
 
-    <!-- TamboUI TUI framework -->
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-core</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-tui</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-widgets</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-jline3-backend</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
+      <!-- TamboUI TUI framework -->
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-core</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-tui</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-widgets</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-jline3-backend</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
 
-    <!-- DomTrip for POM editing -->
-    <dependency>
-      <groupId>eu.maveniverse.maven.domtrip</groupId>
-      <artifactId>domtrip-maven</artifactId>
-      <version>${domtrip.version}</version>
-    </dependency>
+      <!-- JLine 4 -->
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-shell</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-terminal-jni</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-builtins</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
 
-    <!-- JSON -->
-    <dependency>
-      <groupId>org.glassfish</groupId>
-      <artifactId>jakarta.json</artifactId>
-      <version>2.0.1</version>
-    </dependency>
+      <!-- Maven Embedder -->
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-embedder</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-compat</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-connector-basic</artifactId>
+        <version>${resolverVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-transport-http</artifactId>
+        <version>${resolverVersion}</version>
+      </dependency>
 
-    <!-- Test -->
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>5.11.4</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <version>3.27.3</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-core</artifactId>
-      <version>${tamboui.version}</version>
-      <classifier>test-fixtures</classifier>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-tui</artifactId>
-      <version>${tamboui.version}</version>
-      <classifier>test-fixtures</classifier>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
+      <!-- DomTrip for POM editing -->
+      <dependency>
+        <groupId>eu.maveniverse.maven.domtrip</groupId>
+        <artifactId>domtrip-maven</artifactId>
+        <version>${domtrip.version}</version>
+      </dependency>
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-plugin-plugin</artifactId>
-        <configuration>
-          <goalPrefix>pilot</goalPrefix>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
+      <!-- JSON -->
+      <dependency>
+        <groupId>org.glassfish</groupId>
+        <artifactId>jakarta.json</artifactId>
+        <version>2.0.1</version>
+      </dependency>
+
+      <!-- Test -->
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>6.0.3</version>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>3.27.7</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-core</artifactId>
+        <version>${tamboui.version}</version>
+        <classifier>test-fixtures</classifier>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-tui</artifactId>
+        <version>${tamboui.version}</version>
+        <classifier>test-fixtures</classifier>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 </project>

@@ -1,0 +1,505 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package eu.maveniverse.maven.pilot;
+
+import dev.tamboui.layout.Constraint;
+import dev.tamboui.layout.Layout;
+import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
+import dev.tamboui.terminal.Backend;
+import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
+import dev.tamboui.tui.TuiConfig;
+import dev.tamboui.tui.TuiRunner;
+import dev.tamboui.tui.event.Event;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.widgets.block.Block;
+import dev.tamboui.widgets.block.BorderType;
+import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Row;
+import dev.tamboui.widgets.table.Table;
+import dev.tamboui.widgets.table.TableState;
+import eu.maveniverse.domtrip.Document;
+import eu.maveniverse.domtrip.maven.Coordinates;
+import eu.maveniverse.domtrip.maven.PomEditor;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Interactive TUI for viewing and applying dependency updates.
+ */
+public class UpdatesTui {
+
+    public static class DependencyInfo {
+        public final String groupId;
+        public final String artifactId;
+        public String version;
+        public final String scope;
+        public final String type;
+        public String newestVersion;
+        public VersionComparator.UpdateType updateType;
+        public boolean selected;
+        public boolean managed;
+        public boolean plugin;
+        /** The Maven property expression controlling the version, e.g. {@code ${junit.version}} */
+        public String propertyExpression;
+
+        public DependencyInfo(String groupId, String artifactId, String version, String scope, String type) {
+            this.groupId = groupId;
+            this.artifactId = artifactId;
+            this.version = version != null ? version : "";
+            this.scope = scope != null ? scope : "compile";
+            this.type = type != null ? type : "jar";
+        }
+
+        String ga() {
+            return groupId + ":" + artifactId;
+        }
+
+        boolean hasUpdate() {
+            return newestVersion != null && !newestVersion.equals(version) && !newestVersion.isEmpty();
+        }
+    }
+
+    private enum Filter {
+        ALL,
+        PATCH,
+        MINOR,
+        MAJOR
+    }
+
+    private final List<DependencyInfo> allDeps;
+    private List<DependencyInfo> displayDeps;
+    private final String pomPath;
+    private final String projectGav;
+    private final TableState tableState = new TableState();
+    private final ExecutorService httpPool = Executors.newFixedThreadPool(5);
+    private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
+
+    private Filter filter = Filter.ALL;
+    private String status = "Loading updates\u2026";
+    private boolean loading = true;
+    private int loadedCount = 0;
+
+    private Backend sharedBackend;
+
+    public void setBackend(Backend backend) {
+        this.sharedBackend = backend;
+    }
+
+    private TuiRunner runner;
+
+    public UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav) {
+        this.allDeps = dependencies;
+        this.displayDeps = new ArrayList<>(dependencies);
+        this.pomPath = pomPath;
+        this.projectGav = projectGav;
+        if (!displayDeps.isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    public void run() throws Exception {
+        var configBuilder = TuiConfig.builder().tickRate(Duration.ofMillis(100));
+        if (sharedBackend != null) {
+            configBuilder.backend(sharedBackend).shutdownHook(false);
+        }
+        TuiRunner r = TuiRunner.create(configBuilder.build());
+        try {
+            runner = r;
+            fetchAllUpdates();
+            r.run(this::handleEvent, this::render);
+        } finally {
+            r.close();
+            httpPool.shutdownNow();
+        }
+    }
+
+    private void fetchAllUpdates() {
+        for (var dep : allDeps) {
+            CompletableFuture.supplyAsync(
+                            () -> SearchTui.fetchVersionsFromMetadata(dep.groupId, dep.artifactId), httpPool)
+                    .thenAccept(versions -> runner.runOnRenderThread(() -> {
+                        loadedCount++;
+                        String newest = null;
+                        for (String v : versions) {
+                            if (VersionComparator.isPreview(v)) continue;
+                            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
+                                newest = v;
+                                break; // versions are newest-first
+                            }
+                        }
+                        if (newest != null) {
+                            dep.newestVersion = newest;
+                            dep.updateType = VersionComparator.classify(dep.version, newest);
+                        }
+                        if (loadedCount >= allDeps.size()) {
+                            loading = false;
+                            applyFilter();
+                            long updates = allDeps.stream()
+                                    .filter(DependencyInfo::hasUpdate)
+                                    .count();
+                            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
+                        }
+                    }));
+        }
+    }
+
+    boolean handleEvent(Event event, TuiRunner runner) {
+        if (!(event instanceof KeyEvent key)) {
+            return true;
+        }
+
+        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
+            runner.quit();
+            return true;
+        }
+
+        if (key.isUp()) {
+            tableState.selectPrevious();
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        if (key.isDown()) {
+            tableState.selectNext(displayDeps.size());
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase(' ')) {
+            toggleSelection();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('a')) {
+            selectAll();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('n')) {
+            deselectAll();
+            return true;
+        }
+
+        if (key.isKey(KeyCode.ENTER)) {
+            applyUpdates();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('1')) {
+            filter = Filter.ALL;
+            applyFilter();
+            return true;
+        }
+        if (key.isCharIgnoreCase('2')) {
+            filter = Filter.PATCH;
+            applyFilter();
+            return true;
+        }
+        if (key.isCharIgnoreCase('3')) {
+            filter = Filter.MINOR;
+            applyFilter();
+            return true;
+        }
+        if (key.isCharIgnoreCase('4')) {
+            filter = Filter.MAJOR;
+            applyFilter();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void toggleSelection() {
+        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        if (sel >= 0 && sel < displayDeps.size()) {
+            var dep = displayDeps.get(sel);
+            if (dep.hasUpdate()) {
+                dep.selected = !dep.selected;
+            }
+        }
+    }
+
+    private void selectAll() {
+        for (var dep : displayDeps) {
+            if (dep.hasUpdate()) dep.selected = true;
+        }
+    }
+
+    private void deselectAll() {
+        for (var dep : displayDeps) {
+            dep.selected = false;
+        }
+    }
+
+    private void applyFilter() {
+        displayDeps = allDeps.stream()
+                .filter(dep -> switch (filter) {
+                    case ALL -> dep.hasUpdate();
+                    case PATCH -> dep.updateType == VersionComparator.UpdateType.PATCH;
+                    case MINOR -> dep.updateType == VersionComparator.UpdateType.MINOR;
+                    case MAJOR -> dep.updateType == VersionComparator.UpdateType.MAJOR;
+                })
+                .collect(java.util.stream.Collectors.toList());
+        if (!displayDeps.isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    private void applyUpdates() {
+        List<DependencyInfo> toUpdate =
+                displayDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+
+        if (toUpdate.isEmpty()) {
+            status = "No updates selected";
+            return;
+        }
+
+        try {
+            String pomContent = Files.readString(Path.of(pomPath));
+            PomEditor editor = new PomEditor(Document.of(pomContent));
+
+            for (var dep : toUpdate) {
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (dep.plugin) {
+                    if (dep.managed) {
+                        editor.plugins().updateManagedPlugin(true, coords);
+                    } else {
+                        editor.plugins().updatePlugin(true, coords);
+                    }
+                } else {
+                    if (dep.managed) {
+                        editor.dependencies().updateManagedDependency(true, coords);
+                    } else {
+                        editor.dependencies().updateDependency(true, coords);
+                    }
+                }
+            }
+
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            status = "Updated " + toUpdate.size() + " dependencies in POM";
+
+            // Update model
+            for (var dep : toUpdate) {
+                dep.version = dep.newestVersion;
+                dep.newestVersion = null;
+                dep.selected = false;
+                dep.updateType = null;
+            }
+            applyFilter();
+        } catch (Exception e) {
+            status = "Failed to update POM: " + e.getMessage();
+        }
+    }
+
+    // -- Rendering --
+
+    void render(Frame frame) {
+        var zones = Layout.vertical()
+                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
+                .split(frame.area());
+
+        renderHeader(frame, zones.get(0));
+        renderUpdatesTable(frame, zones.get(1));
+        renderInfoBar(frame, zones.get(2));
+    }
+
+    private void renderHeader(Frame frame, Rect area) {
+        String title = loading ? " Pilot \u2014 Checking Updates\u2026 " : " Pilot \u2014 Dependency Updates ";
+        Block block = Block.builder()
+                .title(title)
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().cyan())
+                .build();
+
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" " + projectGav).bold().cyan());
+        if (loading) {
+            spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "\u2026")
+                    .dim());
+        }
+
+        Paragraph header = Paragraph.builder()
+                .text(dev.tamboui.text.Text.from(Line.from(spans)))
+                .block(block)
+                .build();
+        frame.renderWidget(header, area);
+    }
+
+    private void renderUpdatesTable(Frame frame, Rect area) {
+        long updateCount =
+                displayDeps.stream().filter(DependencyInfo::hasUpdate).count();
+        String title = " Updates (" + updateCount + " of " + allDeps.size() + " dependencies) " + "[" + filter + "] ";
+
+        Block block = Block.builder()
+                .title(title)
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .build();
+
+        if (displayDeps.isEmpty()) {
+            String msg = loading ? "Checking versions\u2026" : "No updates available";
+            Paragraph empty =
+                    Paragraph.builder().text(msg).block(block).centered().build();
+            frame.renderWidget(empty, area);
+            return;
+        }
+
+        Row header = Row.from("", "groupId:artifactId", "source", "current", "", "available", "type")
+                .style(Style.create().bold().yellow());
+
+        List<Row> rows = new ArrayList<>();
+        for (var dep : displayDeps) {
+            rows.add(createUpdateRow(dep));
+        }
+
+        Table table = Table.builder()
+                .header(header)
+                .rows(rows)
+                .widths(
+                        Constraint.length(3),
+                        Constraint.percentage(35),
+                        Constraint.length(9),
+                        Constraint.percentage(15),
+                        Constraint.length(3),
+                        Constraint.percentage(15),
+                        Constraint.percentage(10))
+                .highlightStyle(Style.create().reversed().bold())
+                .highlightSymbol("\u25B8 ")
+                .block(block)
+                .build();
+
+        frame.renderStatefulWidget(table, area, tableState);
+    }
+
+    private Row createUpdateRow(DependencyInfo dep) {
+        String check = dep.selected ? "[\u2713]" : "[ ]";
+        String ga = dep.groupId + ":" + dep.artifactId;
+        String source = dep.plugin ? (dep.managed ? "plugin-m" : "plugin") : (dep.managed ? "managed" : "declared");
+        String current = dep.version;
+        String arrow = dep.hasUpdate() ? "\u2192" : "";
+        String available = dep.hasUpdate() ? dep.newestVersion : "";
+        String type = dep.updateType != null ? dep.updateType.name().toLowerCase() : "";
+
+        Style style = dep.updateType != null
+                ? switch (dep.updateType) {
+                    case PATCH -> Style.create().fg(Color.GREEN);
+                    case MINOR -> Style.create().fg(Color.YELLOW);
+                    case MAJOR -> Style.create().fg(Color.RED);
+                }
+                : Style.create();
+
+        return Row.from(check, ga, source, current, arrow, available, type).style(style);
+    }
+
+    private void renderInfoBar(Frame frame, Rect area) {
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
+                .split(area);
+
+        // POM info
+        renderPomInfo(frame, rows.get(0));
+
+        // Status
+        List<Span> statusSpans = new ArrayList<>();
+        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
+
+        // Key bindings
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" "));
+        spans.add(Span.raw("\u2191\u2193").bold());
+        spans.add(Span.raw(":Nav  "));
+        spans.add(Span.raw("Space").bold());
+        spans.add(Span.raw(":Toggle  "));
+        spans.add(Span.raw("a").bold());
+        spans.add(Span.raw(":All  "));
+        spans.add(Span.raw("n").bold());
+        spans.add(Span.raw(":None  "));
+        spans.add(Span.raw("Enter").bold());
+        spans.add(Span.raw(":Apply  "));
+        spans.add(Span.raw("1-4").bold());
+        spans.add(Span.raw(":Filter  "));
+        spans.add(Span.raw("q").bold());
+        spans.add(Span.raw(":Quit"));
+
+        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+    }
+
+    private void renderPomInfo(Frame frame, Rect area) {
+        List<Span> spans = new ArrayList<>();
+        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        if (sel >= 0 && sel < displayDeps.size()) {
+            var dep = displayDeps.get(sel);
+            String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
+            var info = pomInfoCache.get(pomKey);
+            if (info != null && info.name != null) {
+                spans.add(Span.raw(" "));
+                spans.add(Span.raw(info.name).bold().cyan());
+                if (info.license != null) {
+                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(info.license).fg(Color.GREEN));
+                }
+                if (info.organization != null) {
+                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(info.organization).dim());
+                }
+            } else {
+                spans.add(Span.raw(" " + dep.ga()).cyan());
+            }
+            // Show property expression and shared property count
+            if (dep.propertyExpression != null) {
+                spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                spans.add(Span.raw(dep.propertyExpression).fg(Color.YELLOW));
+                long shared = allDeps.stream()
+                        .filter(d -> dep.propertyExpression.equals(d.propertyExpression))
+                        .count();
+                if (shared > 1) {
+                    spans.add(Span.raw(" (" + shared + " deps share this property)")
+                            .dim());
+                }
+            }
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    private void fetchPomInfoIfNeeded() {
+        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        if (sel < 0 || sel >= displayDeps.size()) return;
+        var dep = displayDeps.get(sel);
+        String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
+        if (pomInfoCache.containsKey(pomKey)) return;
+        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null));
+
+        CompletableFuture.supplyAsync(
+                        () -> SearchTui.fetchPomFromCentral(dep.groupId, dep.artifactId, dep.version), httpPool)
+                .thenAccept(info -> runner.runOnRenderThread(() -> pomInfoCache.put(pomKey, info)));
+    }
+}
