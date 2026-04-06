@@ -23,13 +23,13 @@ package eu.maveniverse.maven.pilot;
  */
 public class VersionComparator {
 
-    enum UpdateType {
+    public enum UpdateType {
         PATCH,
         MINOR,
         MAJOR
     }
 
-    static UpdateType classify(String current, String newer) {
+    public static UpdateType classify(String current, String newer) {
         int[] currentParts = parseSemver(current);
         int[] newerParts = parseSemver(newer);
 
@@ -42,7 +42,7 @@ public class VersionComparator {
         return UpdateType.PATCH;
     }
 
-    static boolean isPreview(String version) {
+    public static boolean isPreview(String version) {
         String lower = version.toLowerCase();
         return lower.contains("alpha")
                 || lower.contains("beta")
@@ -56,7 +56,7 @@ public class VersionComparator {
                 || lower.contains("-dev");
     }
 
-    static boolean isNewer(String current, String candidate) {
+    public static boolean isNewer(String current, String candidate) {
         return compareVersions(current, candidate) < 0;
     }
 

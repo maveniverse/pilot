@@ -73,19 +73,23 @@ public class CentralSearchClient implements SearchTui.SearchClient {
 
     private JsonObject executeSearch(String url) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setRequestMethod("GET");
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setConnectTimeout(10_000);
-        connection.setReadTimeout(10_000);
+        try {
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(10_000);
 
-        int status = connection.getResponseCode();
-        if (status != 200) {
-            throw new IOException("Search API returned HTTP " + status);
-        }
+            int status = connection.getResponseCode();
+            if (status != 200) {
+                throw new IOException("Search API returned HTTP " + status);
+            }
 
-        try (InputStream is = connection.getInputStream();
-                JsonReader reader = Json.createReader(is)) {
-            return reader.readObject();
+            try (InputStream is = connection.getInputStream();
+                    JsonReader reader = Json.createReader(is)) {
+                return reader.readObject();
+            }
+        } finally {
+            connection.disconnect();
         }
     }
 }

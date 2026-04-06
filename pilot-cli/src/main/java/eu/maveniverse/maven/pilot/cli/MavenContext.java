@@ -18,7 +18,6 @@
  */
 package eu.maveniverse.maven.pilot.cli;
 
-import java.io.File;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
@@ -29,6 +28,7 @@ import java.util.stream.Collectors;
 import org.apache.maven.execution.DefaultMavenExecutionRequest;
 import org.apache.maven.execution.MavenExecutionRequest;
 import org.apache.maven.execution.MavenExecutionRequestPopulator;
+import org.apache.maven.internal.aether.DefaultRepositorySystemSessionFactory;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.MavenProject;
@@ -51,6 +51,8 @@ import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.graph.Exclusion;
+import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactRequest;
 
 /**
  * Lazy-initialized wrapper around Maven's embedded infrastructure.
@@ -107,8 +109,7 @@ public class MavenContext {
         detectCiFriendlyRevision();
 
         // Create repository session and attach to project building request
-        var sessionFactory =
-                container.lookup(org.apache.maven.internal.aether.DefaultRepositorySystemSessionFactory.class);
+        var sessionFactory = container.lookup(DefaultRepositorySystemSessionFactory.class);
         var repoSession = sessionFactory.newRepositorySession(executionRequest);
         executionRequest.getProjectBuildingRequest().setRepositorySession(repoSession);
     }
@@ -116,19 +117,19 @@ public class MavenContext {
     /**
      * Finds pom.xml in the current directory.
      */
-    public File findPom() {
-        File pom = Path.of("pom.xml").toFile();
-        return pom.exists() ? pom : null;
+    public Path findPom() {
+        Path pom = Path.of("pom.xml");
+        return Files.exists(pom) ? pom : null;
     }
 
     /**
      * Returns a short project name from the current pom.xml, or null.
      */
     public String projectName() {
-        File pom = findPom();
+        Path pom = findPom();
         if (pom == null) return null;
         try {
-            MavenProject project = buildProject(pom.toPath());
+            MavenProject project = buildProject(pom);
             return project.getArtifactId();
         } catch (Exception e) {
             return null;
@@ -184,22 +185,22 @@ public class MavenContext {
     }
 
     /**
-     * Resolves a POM artifact and returns its file.
+     * Resolves a POM artifact and returns its path.
      */
-    public File resolveArtifact(String groupId, String artifactId, String version, List<?> remoteRepos)
+    public Path resolveArtifact(String groupId, String artifactId, String version, List<?> remoteRepos)
             throws Exception {
         init();
         RepositorySystemSession session =
                 executionRequest.getProjectBuildingRequest().getRepositorySession();
         var artifact = new DefaultArtifact(groupId, artifactId, "pom", version);
-        var request = new org.eclipse.aether.resolution.ArtifactRequest(artifact, null, null);
+        var request = new ArtifactRequest(artifact, null, null);
         if (remoteRepos != null) {
             @SuppressWarnings("unchecked")
-            var repos = (List<org.eclipse.aether.repository.RemoteRepository>) remoteRepos;
+            var repos = (List<RemoteRepository>) remoteRepos;
             request.setRepositories(repos);
         }
         var result = repoSystem.resolveArtifact(session, request);
-        return result.getArtifact().getFile();
+        return result.getArtifact().getFile().toPath();
     }
 
     /**
@@ -208,9 +209,9 @@ public class MavenContext {
      */
     private void detectCiFriendlyRevision() {
         try {
-            Path rootPom = Path.of("pom.xml");
-            if (!Files.exists(rootPom)) return;
-            String content = Files.readString(rootPom);
+            Path pomFile = findPom();
+            if (pomFile == null) return;
+            String content = Files.readString(pomFile);
             if (!content.contains("${revision}")) return;
 
             // Already set (e.g. via -Drevision=...)
@@ -274,8 +275,9 @@ public class MavenContext {
      */
     private String scanLocalRepoVersion() {
         try {
-            Path rootPom = Path.of("pom.xml");
-            String content = Files.readString(rootPom);
+            Path pomFile = findPom();
+            if (pomFile == null) return null;
+            String content = Files.readString(pomFile);
             // Extract groupId and artifactId from the root POM
             String groupId = extractXmlValue(content, "groupId");
             String artifactId = extractXmlValue(content, "artifactId");
@@ -317,14 +319,18 @@ public class MavenContext {
     }
 
     private String extractXmlValue(String xml, String tag) {
-        // Simple extraction — looks for direct child of <project>, skipping <parent>
-        String withoutParent = xml.replaceAll("(?s)<parent>.*?</parent>", "");
-        int start = withoutParent.indexOf("<" + tag + ">");
+        // Simple extraction — looks for direct child of <project>,
+        // stripping blocks that could contain nested elements with the same tag name
+        String stripped = xml.replaceAll("(?s)<parent>.*?</parent>", "")
+                .replaceAll("(?s)<dependencies>.*?</dependencies>", "")
+                .replaceAll("(?s)<build>.*?</build>", "")
+                .replaceAll("(?s)<profiles>.*?</profiles>", "");
+        int start = stripped.indexOf("<" + tag + ">");
         if (start < 0) return null;
         start += tag.length() + 2;
-        int end = withoutParent.indexOf("</" + tag + ">", start);
+        int end = stripped.indexOf("</" + tag + ">", start);
         if (end < 0) return null;
-        String value = withoutParent.substring(start, end).trim();
+        String value = stripped.substring(start, end).trim();
         return value.contains("$") ? null : value;
     }
 

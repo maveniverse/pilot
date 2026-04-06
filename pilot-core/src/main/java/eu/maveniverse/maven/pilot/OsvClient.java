@@ -47,10 +47,10 @@ public class OsvClient {
 
         public Vulnerability(String id, String summary, String severity, String published, List<String> aliases) {
             this.id = id;
-            this.summary = summary;
+            this.summary = summary != null ? summary : "";
             this.severity = severity;
             this.published = published;
-            this.aliases = aliases;
+            this.aliases = aliases != null ? aliases : List.of();
         }
     }
 

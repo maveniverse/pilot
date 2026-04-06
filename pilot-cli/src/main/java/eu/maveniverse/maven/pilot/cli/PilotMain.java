@@ -19,6 +19,8 @@
 package eu.maveniverse.maven.pilot.cli;
 
 import java.nio.file.Path;
+import java.util.stream.Collectors;
+import org.jline.shell.CommandSession;
 import org.jline.shell.Shell;
 import org.jline.shell.impl.SimpleCommandGroup;
 import org.jline.terminal.Terminal;
@@ -55,10 +57,12 @@ public class PilotMain {
                         .orElse(null);
                 if (cmd == null) {
                     System.err.println("Unknown command: " + cmdName);
-                    System.err.println("Available commands: search, pom, tree, analyze, updates, conflicts, audit");
+                    String available =
+                            commands.commands().stream().map(c -> c.name()).collect(Collectors.joining(", "));
+                    System.err.println("Available commands: " + available);
                     System.exit(1);
                 }
-                cmd.execute(new org.jline.shell.CommandSession(terminal), cmdArgs);
+                cmd.execute(new CommandSession(terminal), cmdArgs);
             } else {
                 // REPL mode
                 Path historyFile = Path.of(System.getProperty("user.home"), ".pilot_history");

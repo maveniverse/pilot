@@ -20,7 +20,6 @@ package eu.maveniverse.maven.pilot.cli;
 
 import eu.maveniverse.maven.pilot.*;
 import jakarta.json.JsonObject;
-import java.io.File;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,6 +28,7 @@ import org.apache.maven.model.Dependency;
 import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.graph.DependencyNode;
+import org.jline.builtins.Nano;
 import org.jline.shell.Command;
 import org.jline.shell.CommandSession;
 import org.jline.shell.impl.AbstractCommand;
@@ -61,32 +61,31 @@ public class PilotCommands {
     }
 
     private MavenProject requireProject(String[] args) throws Exception {
-        File pom = findPomFromArgs(args);
+        Path pom = findPomFromArgs(args);
         if (pom == null) {
             pom = mavenContext.findPom();
         }
         if (pom == null) {
             throw new IllegalStateException("No pom.xml found in current directory");
         }
-        return mavenContext.buildProject(pom.toPath());
+        return mavenContext.buildProject(pom);
     }
 
     /**
      * Parses {@code -f <path>} from args. The path can point to a pom.xml file
      * or a directory containing one.
      */
-    private File findPomFromArgs(String[] args) {
+    private Path findPomFromArgs(String[] args) {
         for (int i = 0; i < args.length - 1; i++) {
             if ("-f".equals(args[i]) || "--file".equals(args[i])) {
                 Path p = Path.of(args[i + 1]);
                 if (Files.isDirectory(p)) {
                     p = p.resolve("pom.xml");
                 }
-                File f = p.toFile();
-                if (!f.exists()) {
-                    throw new IllegalArgumentException("POM file not found: " + f);
+                if (!Files.exists(p)) {
+                    throw new IllegalArgumentException("POM file not found: " + p);
                 }
-                return f;
+                return p;
             }
         }
         return null;
@@ -165,8 +164,8 @@ public class PilotCommands {
         public Object execute(CommandSession session, String[] args) throws Exception {
             while (true) {
                 MavenProject project = requireProject(args);
-                File pomFile = project.getFile();
-                String rawPom = Files.readString(pomFile.toPath());
+                Path pomPath = project.getFile().toPath();
+                String rawPom = Files.readString(pomPath);
                 String[] rawLines = rawPom.split("\n");
 
                 StringWriter sw = new StringWriter();
@@ -180,16 +179,16 @@ public class PilotCommands {
                 PomOriginHelper.attachOrigins(
                         originMap, effectiveTree.root, project.getModel(), rawLines, parentPomContents);
 
-                PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
+                PomTui tui = new PomTui(
+                        rawPom, effectiveTree, originMap, pomPath.getFileName().toString(), parentPomContents);
                 tui.setBackend(sharedBackend);
                 tui.setEditSupported(true);
                 boolean wantsEdit = tui.run();
                 if (!wantsEdit) break;
 
                 // Launch JLine Nano editor
-                var nano =
-                        new org.jline.builtins.Nano(terminal, pomFile.toPath().getParent());
-                nano.open(pomFile.getAbsolutePath());
+                var nano = new Nano(terminal, pomPath.getParent());
+                nano.open(pomPath.toAbsolutePath().toString());
                 nano.run();
                 // Loop back to re-read the (possibly modified) POM
             }
@@ -335,11 +334,11 @@ public class PilotCommands {
         while (current.getParent() != null) {
             current = current.getParent();
             String modelId = current.getGroupId() + ":" + current.getArtifactId() + ":" + current.getVersion();
-            File parentFile = current.getFile();
+            Path parentPath = current.getFile() != null ? current.getFile().toPath() : null;
 
-            if (parentFile == null || !parentFile.exists()) {
+            if (parentPath == null || !Files.exists(parentPath)) {
                 try {
-                    parentFile = mavenContext.resolveArtifact(
+                    parentPath = mavenContext.resolveArtifact(
                             current.getGroupId(),
                             current.getArtifactId(),
                             current.getVersion(),
@@ -348,9 +347,9 @@ public class PilotCommands {
                 }
             }
 
-            if (parentFile != null && parentFile.exists()) {
+            if (parentPath != null && Files.exists(parentPath)) {
                 try {
-                    contents.put(modelId, Files.readString(parentFile.toPath()).split("\n"));
+                    contents.put(modelId, Files.readString(parentPath).split("\n"));
                 } catch (Exception ignored) {
                 }
             }

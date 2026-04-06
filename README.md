@@ -132,7 +132,7 @@ Pilot uses [DomTrip](https://github.com/maveniverse/domtrip) for all POM modific
 
 ## Project Structure
 
-```
+```text
 pilot/               (reactor parent)
   pilot-core/        (TUI screens, models, clients — no Maven dependency)
   pilot-cli/         (standalone CLI + REPL shell with embedded Maven)
