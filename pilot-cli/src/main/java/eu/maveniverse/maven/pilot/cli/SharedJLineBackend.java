@@ -36,8 +36,8 @@ import org.jline.utils.NonBlockingReader;
  */
 class SharedJLineBackend extends AbstractBackend {
 
-    private static final String ESC = "\033";
-    private static final String CSI = ESC + "[";
+    // Mouse capture sequences have no terminfo equivalents
+    private static final String CSI = "\033[";
 
     private final Terminal terminal;
     private final PrintWriter writer;
@@ -59,8 +59,7 @@ class SharedJLineBackend extends AbstractBackend {
 
     @Override
     public void clear() throws IOException {
-        writer.print(CSI + "2J");
-        writer.print(CSI + "H");
+        terminal.puts(InfoCmp.Capability.clear_screen);
         writer.flush();
     }
 
@@ -71,13 +70,13 @@ class SharedJLineBackend extends AbstractBackend {
 
     @Override
     public void showCursor() throws IOException {
-        writer.print(CSI + "?25h");
+        terminal.puts(InfoCmp.Capability.cursor_normal);
         writer.flush();
     }
 
     @Override
     public void hideCursor() throws IOException {
-        writer.print(CSI + "?25l");
+        terminal.puts(InfoCmp.Capability.cursor_invisible);
         writer.flush();
     }
 
@@ -118,6 +117,7 @@ class SharedJLineBackend extends AbstractBackend {
 
     @Override
     public void enableMouseCapture() throws IOException {
+        // No terminfo capabilities for mouse — use xterm sequences directly
         writer.print(CSI + "?1000h");
         writer.print(CSI + "?1002h");
         writer.print(CSI + "?1015h");
@@ -138,54 +138,54 @@ class SharedJLineBackend extends AbstractBackend {
 
     @Override
     public void scrollUp(int lines) throws IOException {
-        writer.print(CSI + lines + "S");
+        terminal.puts(InfoCmp.Capability.parm_index, lines);
         writer.flush();
     }
 
     @Override
     public void scrollDown(int lines) throws IOException {
-        writer.print(CSI + lines + "T");
+        terminal.puts(InfoCmp.Capability.parm_rindex, lines);
         writer.flush();
     }
 
     @Override
     public void insertLines(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "L");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_insert_line, n);
     }
 
     @Override
     public void deleteLines(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "M");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_delete_line, n);
     }
 
     @Override
     public void moveCursorUp(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "A");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_up_cursor, n);
     }
 
     @Override
     public void moveCursorDown(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "B");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_down_cursor, n);
     }
 
     @Override
     public void moveCursorRight(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "C");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_right_cursor, n);
     }
 
     @Override
     public void moveCursorLeft(int n) throws IOException {
-        if (n > 0) writer.print(CSI + n + "D");
+        if (n > 0) terminal.puts(InfoCmp.Capability.parm_left_cursor, n);
     }
 
     @Override
     public void eraseToEndOfLine() throws IOException {
-        writer.print(CSI + "K");
+        terminal.puts(InfoCmp.Capability.clr_eol);
     }
 
     @Override
     public void carriageReturn() throws IOException {
-        writer.print("\r");
+        terminal.puts(InfoCmp.Capability.carriage_return);
     }
 
     @Override
@@ -215,7 +215,7 @@ class SharedJLineBackend extends AbstractBackend {
 
     @Override
     public void close() throws IOException {
-        writer.print(CSI + "0m");
+        terminal.puts(InfoCmp.Capability.exit_attribute_mode);
         if (mouseEnabled) {
             disableMouseCapture();
         }
