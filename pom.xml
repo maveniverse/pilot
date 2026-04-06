@@ -28,7 +28,7 @@ under the License.
 
   <groupId>eu.maveniverse.maven.plugins</groupId>
   <artifactId>pilot</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>${revision}</version>
   <packaging>maven-plugin</packaging>
 
   <name>Pilot</name>
@@ -49,7 +49,7 @@ under the License.
   <scm>
     <connection>scm:git:git@github.com:maveniverse/pilot.git</connection>
     <developerConnection>scm:git:git@github.com:maveniverse/pilot.git</developerConnection>
-    <tag>HEAD</tag>
+    <tag>${revision}</tag>
     <url>https://github.com/maveniverse/pilot</url>
   </scm>
 
@@ -57,7 +57,7 @@ under the License.
     <maven.compiler.release>17</maven.compiler.release>
     <mavenVersion>3.9.9</mavenVersion>
     <tamboui.version>0.1.0</tamboui.version>
-    <domtrip.version>0.6.0</domtrip.version>
+    <domtrip.version>1.0.0</domtrip.version>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
