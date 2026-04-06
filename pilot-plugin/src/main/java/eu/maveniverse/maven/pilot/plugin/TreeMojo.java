@@ -18,6 +18,7 @@
  */
 package eu.maveniverse.maven.pilot.plugin;
 
+import eu.maveniverse.maven.pilot.DependencyNodeConverter;
 import eu.maveniverse.maven.pilot.DependencyTreeModel;
 import eu.maveniverse.maven.pilot.TreeTui;
 import java.util.Collections;

@@ -16,10 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package eu.maveniverse.maven.pilot.plugin;
+package eu.maveniverse.maven.pilot;
 
-import eu.maveniverse.maven.pilot.DependencyTreeModel;
-import eu.maveniverse.maven.pilot.DependencyTreeModel.TreeNode;
 import java.util.HashSet;
 import java.util.Set;
 import org.eclipse.aether.graph.DependencyNode;
@@ -30,11 +28,11 @@ import org.eclipse.aether.graph.DependencyNode;
 public class DependencyNodeConverter {
 
     public static DependencyTreeModel convert(DependencyNode rootNode) {
-        TreeNode root = convertNode(rootNode, 0, new HashSet<>());
+        DependencyTreeModel.TreeNode root = convertNode(rootNode, 0, new HashSet<>());
         return DependencyTreeModel.fromTree(root);
     }
 
-    private static TreeNode convertNode(DependencyNode node, int depth, Set<String> visited) {
+    private static DependencyTreeModel.TreeNode convertNode(DependencyNode node, int depth, Set<String> visited) {
         String groupId, artifactId, version, scope;
         boolean optional = false;
 
@@ -57,7 +55,8 @@ public class DependencyNodeConverter {
             scope = "";
         }
 
-        TreeNode treeNode = new TreeNode(groupId, artifactId, version, scope, optional, depth);
+        DependencyTreeModel.TreeNode treeNode =
+                new DependencyTreeModel.TreeNode(groupId, artifactId, version, scope, optional, depth);
 
         String nodeKey = treeNode.ga() + ":" + version;
         if (!visited.add(nodeKey)) {

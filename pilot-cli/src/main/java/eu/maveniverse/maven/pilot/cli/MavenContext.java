@@ -237,7 +237,8 @@ public class MavenContext {
      */
     private String computeGitVersion() {
         try {
-            Process p = new ProcessBuilder("git", "describe", "--tags", "--long")
+            String gitCmd = findGitExecutable();
+            Process p = new ProcessBuilder(gitCmd, "describe", "--tags", "--long")
                     .redirectErrorStream(true)
                     .start();
             String output = new String(p.getInputStream().readAllBytes()).trim();
@@ -257,6 +258,8 @@ public class MavenContext {
 
                 return count == 0 ? tag : tag + "-" + count + "-SNAPSHOT";
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
             // fall through to local repo scan
         }
@@ -301,6 +304,16 @@ public class MavenContext {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String findGitExecutable() {
+        for (String dir : List.of("/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")) {
+            Path git = Path.of(dir, "git");
+            if (Files.isExecutable(git)) {
+                return git.toString();
+            }
+        }
+        return "git"; // fallback to PATH
     }
 
     private String extractXmlValue(String xml, String tag) {

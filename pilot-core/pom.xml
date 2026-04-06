@@ -50,6 +50,14 @@ under the License.
       <artifactId>tamboui-jline3-backend</artifactId>
     </dependency>
 
+    <!-- Maven Resolver API (optional — only needed for DependencyNodeConverter) -->
+    <dependency>
+      <groupId>org.apache.maven.resolver</groupId>
+      <artifactId>maven-resolver-api</artifactId>
+      <version>${resolverVersion}</version>
+      <optional>true</optional>
+    </dependency>
+
     <!-- DomTrip for POM editing -->
     <dependency>
       <groupId>eu.maveniverse.maven.domtrip</groupId>
