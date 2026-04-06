@@ -18,6 +18,8 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import eu.maveniverse.domtrip.Element;
+import eu.maveniverse.domtrip.Node;
 import java.io.File;
 import java.io.StringWriter;
 import java.lang.reflect.Method;
@@ -82,7 +84,7 @@ public class PomMojo extends AbstractMojo {
 
             // Parse effective POM and attach origins by walking Model + XmlTree in parallel
             XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
-            var originMap = new IdentityHashMap<XmlTreeModel.XmlNode, PomTui.OriginInfo>();
+            var originMap = new IdentityHashMap<Node, PomTui.OriginInfo>();
             attachOrigins(originMap, effectiveTree.root, project.getModel(), rawLines, parentPomContents);
 
             PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
@@ -128,43 +130,47 @@ public class PomMojo extends AbstractMojo {
 
     /**
      * Walks the Maven Model and XmlTree in parallel, attaching InputLocation-based
-     * OriginInfo directly to each XmlNode via the identity map.
+     * OriginInfo directly to each node via the identity map.
      */
     private void attachOrigins(
-            IdentityHashMap<XmlTreeModel.XmlNode, PomTui.OriginInfo> map,
-            XmlTreeModel.XmlNode xmlNode,
+            IdentityHashMap<Node, PomTui.OriginInfo> map,
+            Element xmlElement,
             InputLocationTracker tracker,
             String[] rawLines,
             Map<String, String[]> parentPomContents) {
-        for (var child : xmlNode.children) {
-            if (child.isComment) continue;
+        for (Node child : XmlTreeModel.treeChildren(xmlElement)) {
+            if (!(child instanceof Element childElement)) continue;
 
             // Attach the InputLocation for this field
-            InputLocation loc = tracker.getLocation(child.tagName);
+            InputLocation loc = tracker.getLocation(childElement.name());
             if (loc != null) {
-                map.put(child, buildOriginInfo(loc, rawLines, parentPomContents));
+                map.put(childElement, buildOriginInfo(loc, rawLines, parentPomContents));
             }
 
             // Recurse into sub-objects
             try {
-                String getterName = "get" + Character.toUpperCase(child.tagName.charAt(0)) + child.tagName.substring(1);
+                String name = childElement.name();
+                String getterName = "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
                 Method getter = tracker.getClass().getMethod(getterName);
                 Object value = getter.invoke(tracker);
 
                 if (value instanceof InputLocationTracker subTracker) {
-                    attachOrigins(map, child, subTracker, rawLines, parentPomContents);
+                    attachOrigins(map, childElement, subTracker, rawLines, parentPomContents);
                 } else if (value instanceof List<?> list) {
                     // Match list items to XML children by position
                     int listIdx = 0;
-                    for (var grandchild : child.children) {
-                        if (listIdx < list.size() && list.get(listIdx) instanceof InputLocationTracker itemTracker) {
-                            InputLocation itemLoc = itemTracker.getLocation("");
-                            if (itemLoc != null) {
-                                map.put(grandchild, buildOriginInfo(itemLoc, rawLines, parentPomContents));
+                    for (Node grandchild : XmlTreeModel.treeChildren(childElement)) {
+                        if (grandchild instanceof Element grandchildElement) {
+                            if (listIdx < list.size()
+                                    && list.get(listIdx) instanceof InputLocationTracker itemTracker) {
+                                InputLocation itemLoc = itemTracker.getLocation("");
+                                if (itemLoc != null) {
+                                    map.put(grandchildElement, buildOriginInfo(itemLoc, rawLines, parentPomContents));
+                                }
+                                attachOrigins(map, grandchildElement, itemTracker, rawLines, parentPomContents);
                             }
-                            attachOrigins(map, grandchild, itemTracker, rawLines, parentPomContents);
+                            listIdx++;
                         }
-                        listIdx++;
                     }
                 }
             } catch (NoSuchMethodException ignored) {

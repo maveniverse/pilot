@@ -37,6 +37,9 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import eu.maveniverse.domtrip.Comment;
+import eu.maveniverse.domtrip.Element;
+import eu.maveniverse.domtrip.Node;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -69,7 +72,7 @@ class PomTui {
 
     private final XmlTreeModel rawModel;
     private final XmlTreeModel effectiveModel;
-    private final IdentityHashMap<XmlTreeModel.XmlNode, OriginInfo> originMap;
+    private final IdentityHashMap<Node, OriginInfo> originMap;
     private final String fileName;
     private final String[] rawPomLines;
     private final Map<String, String[]> parentPomContents;
@@ -84,17 +87,16 @@ class PomTui {
 
     private TuiRunner runner;
 
-    PomTui(String rawPom, String effectivePom, String fileName) throws Exception {
+    PomTui(String rawPom, String effectivePom, String fileName) {
         this(rawPom, XmlTreeModel.parse(effectivePom), new IdentityHashMap<>(), fileName, Map.of());
     }
 
     PomTui(
             String rawPom,
             XmlTreeModel effectiveModel,
-            IdentityHashMap<XmlTreeModel.XmlNode, OriginInfo> originMap,
+            IdentityHashMap<Node, OriginInfo> originMap,
             String fileName,
-            Map<String, String[]> parentPomContents)
-            throws Exception {
+            Map<String, String[]> parentPomContents) {
         this.rawModel = XmlTreeModel.parse(rawPom);
         this.effectiveModel = effectiveModel;
         this.originMap = originMap != null ? originMap : new IdentityHashMap<>();
@@ -192,19 +194,19 @@ class PomTui {
         if (sel >= 0 && sel < visible.size()) {
             var node = visible.get(sel);
             if (key.isRight()) {
-                if (node.hasChildren() && !node.expanded) {
-                    node.expanded = true;
+                if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e) && !model.isExpanded(e)) {
+                    model.setExpanded(e, true);
                 } else {
                     tableState.selectNext(visible.size());
                 }
                 return true;
             }
             if (key.isLeft()) {
-                if (node.expanded && node.hasChildren()) {
-                    node.expanded = false;
+                if (node instanceof Element e && model.isExpanded(e) && XmlTreeModel.hasTreeChildren(e)) {
+                    model.setExpanded(e, false);
                 } else {
                     for (int i = sel - 1; i >= 0; i--) {
-                        if (visible.get(i).depth < node.depth) {
+                        if (visible.get(i).depth() < node.depth()) {
                             tableState.select(i);
                             break;
                         }
@@ -215,12 +217,12 @@ class PomTui {
         }
 
         if (key.isCharIgnoreCase('e')) {
-            expandAll(model.root);
+            model.expandAll(model.root);
             return true;
         }
         if (key.isCharIgnoreCase('w')) {
-            collapseAll(model.root);
-            model.root.expanded = true;
+            model.collapseAll(model.root);
+            model.setExpanded(model.root, true);
             return true;
         }
 
@@ -277,23 +279,20 @@ class PomTui {
         }
     }
 
-    private boolean nodeMatchesSearch(XmlTreeModel.XmlNode node, String query) {
-        String text = node.tagName + (node.textContent != null ? node.textContent : "");
+    private boolean nodeMatchesSearch(Node node, String query) {
+        String text;
+        if (node instanceof Comment comment) {
+            text = comment.content();
+        } else if (node instanceof Element element) {
+            text = element.name() + element.textContentTrimmedOr("");
+        } else {
+            return false;
+        }
         return text.toLowerCase().contains(query);
     }
 
     private XmlTreeModel currentModel() {
         return view == View.RAW ? rawModel : effectiveModel;
-    }
-
-    private void expandAll(XmlTreeModel.XmlNode node) {
-        node.expanded = true;
-        for (var child : node.children) expandAll(child);
-    }
-
-    private void collapseAll(XmlTreeModel.XmlNode node) {
-        node.expanded = false;
-        for (var child : node.children) collapseAll(child);
     }
 
     // -- Rendering --
@@ -388,7 +387,7 @@ class PomTui {
         String searchQuery = searchMode ? searchBuffer.toString().toLowerCase() : activeSearch;
         List<Row> rows = new ArrayList<>();
         for (var node : visible) {
-            Line line = XmlTreeModel.renderNode(node);
+            Line line = model.renderNode(node);
 
             if (searchQuery != null && !searchQuery.isEmpty() && nodeMatchesSearch(node, searchQuery)) {
                 rows.add(Row.from(Cell.from(line)).style(Style.create().bg(Color.DARK_GRAY)));
@@ -492,7 +491,7 @@ class PomTui {
         if (sel < 0 || sel >= visible.size()) return null;
 
         var node = visible.get(sel);
-        if (node.isComment || node.tagName.isEmpty()) return null;
+        if (!(node instanceof Element)) return null;
 
         // Direct lookup via IdentityHashMap — no path building needed
         OriginInfo origin = originMap.get(node);
@@ -530,15 +529,16 @@ class PomTui {
         return snippet;
     }
 
-    private int findInLines(XmlTreeModel.XmlNode node, String[] lines) {
-        if (node.isLeaf() && node.textContent != null) {
-            String search = "<" + node.tagName + ">";
+    private int findInLines(Node node, String[] lines) {
+        if (!(node instanceof Element element)) return -1;
+        if (XmlTreeModel.isLeaf(element)) {
+            String search = "<" + element.name() + ">";
             for (int i = 0; i < lines.length; i++) {
                 if (lines[i].contains(search)) return i;
             }
-        } else if (node.hasChildren()) {
-            String search1 = "<" + node.tagName + ">";
-            String search2 = "<" + node.tagName + " ";
+        } else if (XmlTreeModel.hasTreeChildren(element)) {
+            String search1 = "<" + element.name() + ">";
+            String search2 = "<" + element.name() + " ";
             for (int i = 0; i < lines.length; i++) {
                 if (lines[i].contains(search1) || lines[i].contains(search2)) return i;
             }
