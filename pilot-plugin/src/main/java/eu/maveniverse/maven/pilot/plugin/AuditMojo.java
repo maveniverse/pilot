@@ -19,11 +19,8 @@
 package eu.maveniverse.maven.pilot.plugin;
 
 import eu.maveniverse.maven.pilot.AuditTui;
-import java.util.ArrayList;
-import java.util.HashSet;
+import eu.maveniverse.maven.pilot.DependencyCollectors;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -33,12 +30,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.Dependency;
-import org.eclipse.aether.graph.DependencyNode;
-import org.eclipse.aether.graph.Exclusion;
 
 /**
  * Interactive license and security audit dashboard.
@@ -65,63 +57,14 @@ public class AuditMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRootArtifact(new DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(),
-                    project.getPackaging(), project.getVersion()));
-            collectRequest.setDependencies(
-                    project.getDependencies().stream().map(this::convert).collect(Collectors.toList()));
-            if (project.getDependencyManagement() != null) {
-                collectRequest.setManagedDependencies(project.getDependencyManagement().getDependencies().stream()
-                        .map(this::convert)
-                        .collect(Collectors.toList()));
-            }
-            collectRequest.setRepositories(project.getRemoteProjectRepositories());
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
 
-            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            List<AuditTui.AuditEntry> entries = DependencyCollectors.collectAuditEntries(result.getRoot());
 
-            // Collect all transitive dependencies
-            List<AuditTui.AuditEntry> entries = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
-            collectEntries(result.getRoot(), entries, seen, true);
-
-            String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
-            AuditTui tui = new AuditTui(entries, gav);
+            AuditTui tui = new AuditTui(entries, MojoHelper.projectGav(project));
             tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run audit: " + e.getMessage(), e);
         }
-    }
-
-    private void collectEntries(
-            DependencyNode node, List<AuditTui.AuditEntry> entries, Set<String> seen, boolean isRoot) {
-        if (!isRoot && node.getDependency() != null) {
-            var art = node.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-            if (seen.add(ga)) {
-                entries.add(new AuditTui.AuditEntry(
-                        art.getGroupId(), art.getArtifactId(),
-                        art.getVersion(), node.getDependency().getScope()));
-            }
-        }
-        for (DependencyNode child : node.getChildren()) {
-            collectEntries(child, entries, seen, false);
-        }
-    }
-
-    private Dependency convert(org.apache.maven.model.Dependency dep) {
-        var artifact = new DefaultArtifact(
-                dep.getGroupId(),
-                dep.getArtifactId(),
-                dep.getClassifier() != null ? dep.getClassifier() : "",
-                dep.getType() != null ? dep.getType() : "jar",
-                dep.getVersion());
-        var d = new Dependency(artifact, dep.getScope(), dep.isOptional());
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            d = d.setExclusions(dep.getExclusions().stream()
-                    .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList()));
-        }
-        return d;
     }
 }

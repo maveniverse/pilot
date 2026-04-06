@@ -26,7 +26,6 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.stream.Collectors;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.InputLocation;
 import org.apache.maven.model.InputLocationTracker;
@@ -249,9 +248,7 @@ public class PilotCommands {
 
             DependencyNode rootNode = mavenContext.collectDependencies(project);
 
-            Set<String> transitiveGAs = new HashSet<>();
-            List<AnalyzeTui.DepEntry> transitive = new ArrayList<>();
-            collectTransitive(rootNode, declaredGAs, transitiveGAs, transitive);
+            List<AnalyzeTui.DepEntry> transitive = DependencyCollectors.collectTransitive(rootNode, declaredGAs);
 
             String pomPath = project.getFile().getAbsolutePath();
             AnalyzeTui tui = new AnalyzeTui(declared, transitive, pomPath, projectGav(project));
@@ -340,16 +337,7 @@ public class PilotCommands {
             MavenProject project = requireProject(args);
             DependencyNode rootNode = mavenContext.collectDependencies(project);
 
-            Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
-            collectConflicts(rootNode, conflictMap, new ArrayList<>());
-
-            List<ConflictsTui.ConflictGroup> conflicts = conflictMap.entrySet().stream()
-                    .filter(e -> e.getValue().size() > 1
-                            || e.getValue().stream()
-                                    .anyMatch(c -> c.requestedVersion != null
-                                            && !c.requestedVersion.equals(c.resolvedVersion)))
-                    .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
-                    .collect(Collectors.toList());
+            List<ConflictsTui.ConflictGroup> conflicts = DependencyCollectors.collectConflicts(rootNode);
 
             String pomPath = project.getFile().getAbsolutePath();
             ConflictsTui tui = new ConflictsTui(conflicts, pomPath, projectGav(project));
@@ -374,9 +362,7 @@ public class PilotCommands {
             MavenProject project = requireProject(args);
             DependencyNode rootNode = mavenContext.collectDependencies(project);
 
-            List<AuditTui.AuditEntry> entries = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
-            collectAuditEntries(rootNode, entries, seen, true);
+            List<AuditTui.AuditEntry> entries = DependencyCollectors.collectAuditEntries(rootNode);
 
             AuditTui tui = new AuditTui(entries, projectGav(project));
             tui.setBackend(sharedBackend);
@@ -450,77 +436,6 @@ public class PilotCommands {
         String rawVersion = rawVersions.get(info.groupId + ":" + info.artifactId);
         if (rawVersion != null && rawVersion.startsWith("${") && rawVersion.endsWith("}")) {
             info.propertyExpression = rawVersion;
-        }
-    }
-
-    private void collectTransitive(
-            DependencyNode node, Set<String> declaredGAs, Set<String> seen, List<AnalyzeTui.DepEntry> result) {
-        for (DependencyNode child : node.getChildren()) {
-            if (child.getDependency() == null) continue;
-            var art = child.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-
-            if (!declaredGAs.contains(ga) && seen.add(ga)) {
-                String via = "";
-                if (node.getDependency() != null) {
-                    via = node.getDependency().getArtifact().getGroupId() + ":"
-                            + node.getDependency().getArtifact().getArtifactId();
-                }
-                var entry = new AnalyzeTui.DepEntry(
-                        art.getGroupId(),
-                        art.getArtifactId(),
-                        art.getVersion(),
-                        child.getDependency().getScope(),
-                        false);
-                entry.pulledBy = via;
-                result.add(entry);
-            }
-            collectTransitive(child, declaredGAs, seen, result);
-        }
-    }
-
-    private void collectConflicts(
-            DependencyNode node, Map<String, List<ConflictsTui.ConflictEntry>> conflicts, List<String> path) {
-        for (DependencyNode child : node.getChildren()) {
-            if (child.getDependency() == null) continue;
-            var art = child.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-
-            String requestedVersion = art.getVersion();
-            String resolvedVersion = requestedVersion;
-            if (child.getData().get("conflict.originalVersion") instanceof String original) {
-                requestedVersion = original;
-            }
-
-            List<String> currentPath = new ArrayList<>(path);
-            currentPath.add(ga);
-
-            var entry = new ConflictsTui.ConflictEntry(
-                    art.getGroupId(),
-                    art.getArtifactId(),
-                    requestedVersion,
-                    resolvedVersion,
-                    String.join(" \u2192 ", currentPath),
-                    child.getDependency().getScope());
-
-            conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
-            collectConflicts(child, conflicts, currentPath);
-        }
-    }
-
-    private void collectAuditEntries(
-            DependencyNode node, List<AuditTui.AuditEntry> entries, Set<String> seen, boolean isRoot) {
-        if (!isRoot && node.getDependency() != null) {
-            var art = node.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-            if (seen.add(ga)) {
-                entries.add(new AuditTui.AuditEntry(
-                        art.getGroupId(), art.getArtifactId(),
-                        art.getVersion(), node.getDependency().getScope()));
-            }
-        }
-        for (DependencyNode child : node.getChildren()) {
-            collectAuditEntries(child, entries, seen, false);
         }
     }
 

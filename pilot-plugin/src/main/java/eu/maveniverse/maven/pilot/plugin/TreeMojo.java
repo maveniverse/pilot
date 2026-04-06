@@ -21,9 +21,6 @@ package eu.maveniverse.maven.pilot.plugin;
 import eu.maveniverse.maven.pilot.DependencyNodeConverter;
 import eu.maveniverse.maven.pilot.DependencyTreeModel;
 import eu.maveniverse.maven.pilot.TreeTui;
-import java.util.Collections;
-import java.util.List;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -33,11 +30,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.Dependency;
-import org.eclipse.aether.graph.Exclusion;
 
 /**
  * Interactive TUI for browsing the project dependency tree.
@@ -71,58 +64,13 @@ public class TreeMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectRequest collectRequest = new CollectRequest();
-
-            org.eclipse.aether.artifact.Artifact rootArtifact = new DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(),
-                    project.getPackaging(), project.getVersion());
-            collectRequest.setRootArtifact(rootArtifact);
-
-            List<Dependency> dependencies = convertDependencies(project.getDependencies());
-            collectRequest.setDependencies(dependencies);
-
-            if (project.getDependencyManagement() != null) {
-                collectRequest.setManagedDependencies(
-                        convertDependencies(project.getDependencyManagement().getDependencies()));
-            }
-
-            collectRequest.setRepositories(project.getRemoteProjectRepositories());
-
-            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
             DependencyTreeModel model = DependencyNodeConverter.convert(result.getRoot());
 
-            TreeTui tui = new TreeTui(
-                    model, project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion());
+            TreeTui tui = new TreeTui(model, MojoHelper.projectGav(project));
             tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to display dependency tree: " + e.getMessage(), e);
         }
-    }
-
-    private List<Dependency> convertDependencies(List<org.apache.maven.model.Dependency> deps) {
-        if (deps == null) {
-            return Collections.emptyList();
-        }
-        return deps.stream().map(this::convertDependency).collect(Collectors.toList());
-    }
-
-    private Dependency convertDependency(org.apache.maven.model.Dependency dep) {
-        org.eclipse.aether.artifact.Artifact artifact = new DefaultArtifact(
-                dep.getGroupId(),
-                dep.getArtifactId(),
-                dep.getClassifier() != null ? dep.getClassifier() : "",
-                dep.getType() != null ? dep.getType() : "jar",
-                dep.getVersion());
-
-        Dependency aetherDep = new Dependency(artifact, dep.getScope(), dep.isOptional());
-
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            List<Exclusion> exclusions = dep.getExclusions().stream()
-                    .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList());
-            aetherDep = aetherDep.setExclusions(exclusions);
-        }
-
-        return aetherDep;
     }
 }
