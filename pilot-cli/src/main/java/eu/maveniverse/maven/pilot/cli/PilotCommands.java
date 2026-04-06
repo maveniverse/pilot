@@ -22,15 +22,10 @@ import eu.maveniverse.maven.pilot.*;
 import jakarta.json.JsonObject;
 import java.io.File;
 import java.io.StringWriter;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import org.apache.maven.model.Dependency;
-import org.apache.maven.model.InputLocation;
-import org.apache.maven.model.InputLocationTracker;
-import org.apache.maven.model.InputSource;
-import org.apache.maven.model.Plugin;
 import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.graph.DependencyNode;
@@ -182,7 +177,8 @@ public class PilotCommands {
 
                 XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
                 var originMap = new IdentityHashMap<XmlTreeModel.XmlNode, PomTui.OriginInfo>();
-                attachOrigins(originMap, effectiveTree.root, project.getModel(), rawLines, parentPomContents);
+                PomOriginHelper.attachOrigins(
+                        originMap, effectiveTree.root, project.getModel(), rawLines, parentPomContents);
 
                 PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
                 tui.setBackend(sharedBackend);
@@ -272,47 +268,7 @@ public class PilotCommands {
         public Object execute(CommandSession session, String[] args) throws Exception {
             MavenProject project = requireProject(args);
 
-            // Build a map of raw (un-interpolated) versions from the original model
-            Map<String, String> rawVersions = new HashMap<>();
-            if (project.getOriginalModel().getDependencies() != null) {
-                for (Dependency dep : project.getOriginalModel().getDependencies()) {
-                    rawVersions.put(dep.getGroupId() + ":" + dep.getArtifactId(), dep.getVersion());
-                }
-            }
-            if (project.getOriginalModel().getDependencyManagement() != null
-                    && project.getOriginalModel().getDependencyManagement().getDependencies() != null) {
-                for (Dependency dep :
-                        project.getOriginalModel().getDependencyManagement().getDependencies()) {
-                    rawVersions.put(dep.getGroupId() + ":" + dep.getArtifactId(), dep.getVersion());
-                }
-            }
-
-            List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
-
-            for (Dependency dep : project.getDependencies()) {
-                var info = new UpdatesTui.DependencyInfo(
-                        dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
-                setPropertyExpression(info, rawVersions);
-                dependencies.add(info);
-            }
-
-            if (project.getDependencyManagement() != null) {
-                for (Dependency dep : project.getDependencyManagement().getDependencies()) {
-                    boolean alreadyListed = dependencies.stream()
-                            .anyMatch(d ->
-                                    d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
-                    if (!alreadyListed) {
-                        var info = new UpdatesTui.DependencyInfo(
-                                dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
-                        info.managed = true;
-                        setPropertyExpression(info, rawVersions);
-                        dependencies.add(info);
-                    }
-                }
-            }
-
-            // Collect plugins
-            collectPlugins(project, dependencies, rawVersions);
+            List<UpdatesTui.DependencyInfo> dependencies = UpdatesCollector.collect(project);
 
             String pomPath = project.getFile().getAbsolutePath();
             UpdatesTui tui = new UpdatesTui(dependencies, pomPath, projectGav(project));
@@ -373,72 +329,6 @@ public class PilotCommands {
 
     // -- Helpers ------------------------------------------------------------
 
-    private void collectPlugins(
-            MavenProject project, List<UpdatesTui.DependencyInfo> dependencies, Map<String, String> rawVersions) {
-        // Collect raw plugin versions from original model
-        if (project.getOriginalModel().getBuild() != null) {
-            if (project.getOriginalModel().getBuild().getPlugins() != null) {
-                for (Plugin p : project.getOriginalModel().getBuild().getPlugins()) {
-                    if (p.getVersion() != null) {
-                        rawVersions.put(p.getGroupId() + ":" + p.getArtifactId(), p.getVersion());
-                    }
-                }
-            }
-            if (project.getOriginalModel().getBuild().getPluginManagement() != null
-                    && project.getOriginalModel()
-                                    .getBuild()
-                                    .getPluginManagement()
-                                    .getPlugins()
-                            != null) {
-                for (Plugin p : project.getOriginalModel()
-                        .getBuild()
-                        .getPluginManagement()
-                        .getPlugins()) {
-                    if (p.getVersion() != null) {
-                        rawVersions.put(p.getGroupId() + ":" + p.getArtifactId(), p.getVersion());
-                    }
-                }
-            }
-        }
-
-        // Add build plugins with versions
-        if (project.getBuild() != null && project.getBuild().getPlugins() != null) {
-            for (Plugin p : project.getBuild().getPlugins()) {
-                if (p.getVersion() == null || p.getVersion().isEmpty()) continue;
-                var info = new UpdatesTui.DependencyInfo(
-                        p.getGroupId(), p.getArtifactId(), p.getVersion(), "", "maven-plugin");
-                info.plugin = true;
-                setPropertyExpression(info, rawVersions);
-                dependencies.add(info);
-            }
-        }
-
-        // Add managed plugins
-        if (project.getPluginManagement() != null
-                && project.getPluginManagement().getPlugins() != null) {
-            for (Plugin p : project.getPluginManagement().getPlugins()) {
-                if (p.getVersion() == null || p.getVersion().isEmpty()) continue;
-                boolean alreadyListed = dependencies.stream()
-                        .anyMatch(d -> d.groupId.equals(p.getGroupId()) && d.artifactId.equals(p.getArtifactId()));
-                if (!alreadyListed) {
-                    var info = new UpdatesTui.DependencyInfo(
-                            p.getGroupId(), p.getArtifactId(), p.getVersion(), "", "maven-plugin");
-                    info.plugin = true;
-                    info.managed = true;
-                    setPropertyExpression(info, rawVersions);
-                    dependencies.add(info);
-                }
-            }
-        }
-    }
-
-    private static void setPropertyExpression(UpdatesTui.DependencyInfo info, Map<String, String> rawVersions) {
-        String rawVersion = rawVersions.get(info.groupId + ":" + info.artifactId);
-        if (rawVersion != null && rawVersion.startsWith("${") && rawVersion.endsWith("}")) {
-            info.propertyExpression = rawVersion;
-        }
-    }
-
     private Map<String, String[]> readParentPomContents(MavenProject project) {
         Map<String, String[]> contents = new LinkedHashMap<>();
         MavenProject current = project;
@@ -466,78 +356,5 @@ public class PilotCommands {
             }
         }
         return contents;
-    }
-
-    private void attachOrigins(
-            IdentityHashMap<XmlTreeModel.XmlNode, PomTui.OriginInfo> map,
-            XmlTreeModel.XmlNode xmlNode,
-            InputLocationTracker tracker,
-            String[] rawLines,
-            Map<String, String[]> parentPomContents) {
-        for (var child : xmlNode.children) {
-            if (child.isComment) continue;
-
-            InputLocation loc = tracker.getLocation(child.tagName);
-            if (loc != null) {
-                map.put(child, buildOriginInfo(loc, rawLines, parentPomContents));
-            }
-
-            try {
-                String getterName = "get" + Character.toUpperCase(child.tagName.charAt(0)) + child.tagName.substring(1);
-                Method getter = tracker.getClass().getMethod(getterName);
-                Object value = getter.invoke(tracker);
-
-                if (value instanceof InputLocationTracker subTracker) {
-                    attachOrigins(map, child, subTracker, rawLines, parentPomContents);
-                } else if (value instanceof List<?> list) {
-                    int listIdx = 0;
-                    for (var grandchild : child.children) {
-                        if (listIdx < list.size() && list.get(listIdx) instanceof InputLocationTracker itemTracker) {
-                            InputLocation itemLoc = itemTracker.getLocation("");
-                            if (itemLoc != null) {
-                                map.put(grandchild, buildOriginInfo(itemLoc, rawLines, parentPomContents));
-                            }
-                            attachOrigins(map, grandchild, itemTracker, rawLines, parentPomContents);
-                        }
-                        listIdx++;
-                    }
-                }
-            } catch (NoSuchMethodException ignored) {
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private PomTui.OriginInfo buildOriginInfo(
-            InputLocation location, String[] rawLines, Map<String, String[]> parentPomContents) {
-        InputSource source = location.getSource();
-        String sourceName = (source != null && source.getModelId() != null) ? source.getModelId() : "this POM";
-        int lineNum = location.getLineNumber();
-
-        String[] sourceLines;
-        if ("this POM".equals(sourceName)) {
-            sourceLines = rawLines;
-        } else if (parentPomContents != null && parentPomContents.containsKey(sourceName)) {
-            sourceLines = parentPomContents.get(sourceName);
-        } else {
-            return new PomTui.OriginInfo(sourceName, lineNum, List.of());
-        }
-
-        return new PomTui.OriginInfo(sourceName, lineNum, buildSnippet(sourceLines, lineNum));
-    }
-
-    private List<String> buildSnippet(String[] lines, int targetLine) {
-        if (targetLine <= 0 || lines == null || lines.length == 0) {
-            return List.of();
-        }
-        List<String> snippet = new ArrayList<>();
-        int start = Math.max(0, targetLine - 3);
-        int end = Math.min(lines.length - 1, targetLine + 1);
-        for (int i = start; i <= end; i++) {
-            String prefix = (i == targetLine - 1) ? "\u2192 " : "  ";
-            String lineNum = String.format("%4d", i + 1);
-            snippet.add(prefix + lineNum + " \u2502 " + lines[i]);
-        }
-        return snippet;
     }
 }
