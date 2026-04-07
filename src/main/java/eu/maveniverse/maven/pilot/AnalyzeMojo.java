@@ -61,9 +61,7 @@ public class AnalyzeMojo extends AbstractMojo {
     private RepositorySystem repoSystem;
 
     /**
-     * Collects declared dependencies from the project POM, resolves the full transitive
-     * dependency tree, and presents a side-by-side view of declared vs transitive dependencies
-     * using the Analyze TUI.
+     * Analyze the project's declared dependencies against the full transitive dependency tree and launch the interactive Analyze TUI.
      *
      * @throws MojoExecutionException if dependency collection, traversal, or the TUI run fails
      */
