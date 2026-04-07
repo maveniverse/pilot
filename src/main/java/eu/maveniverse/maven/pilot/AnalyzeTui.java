@@ -44,6 +44,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
@@ -69,11 +71,57 @@ class AnalyzeTui {
         }
 
         String ga() {
-            return classifier.isEmpty() ? groupId + ":" + artifactId : groupId + ":" + artifactId + ":" + classifier;
+            return hasClassifier() ? groupId + ":" + artifactId + ":" + classifier : groupId + ":" + artifactId;
         }
 
         String gav() {
             return ga() + ":" + version;
+        }
+
+        boolean hasClassifier() {
+            return !classifier.isEmpty();
+        }
+    }
+
+    /**
+     * Create a declared dependency entry and register it.
+     */
+    static void addDeclaredEntry(
+            Set<String> declaredGAs,
+            List<DepEntry> declared,
+            String groupId,
+            String artifactId,
+            String classifier,
+            String version,
+            String scope) {
+        var entry = new DepEntry(groupId, artifactId, classifier, version, scope, true);
+        declaredGAs.add(entry.ga());
+        declared.add(entry);
+    }
+
+    /**
+     * Recursively collect transitive dependencies from the resolved dependency tree.
+     */
+    static void collectTransitive(
+            DependencyNode node, Set<String> declaredGAs, Set<String> seen, List<DepEntry> result) {
+        for (DependencyNode child : node.getChildren()) {
+            if (child.getDependency() == null) continue;
+            var art = child.getDependency().getArtifact();
+            var entry = new DepEntry(
+                    art.getGroupId(),
+                    art.getArtifactId(),
+                    art.getClassifier(),
+                    art.getVersion(),
+                    child.getDependency().getScope(),
+                    false);
+            if (!declaredGAs.contains(entry.ga()) && seen.add(entry.ga())) {
+                if (node.getDependency() != null) {
+                    entry.pulledBy = node.getDependency().getArtifact().getGroupId() + ":"
+                            + node.getDependency().getArtifact().getArtifactId();
+                }
+                result.add(entry);
+            }
+            collectTransitive(child, declaredGAs, seen, result);
         }
     }
 

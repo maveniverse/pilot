@@ -33,7 +33,6 @@ import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
@@ -75,15 +74,14 @@ public class AnalyzeMojo extends AbstractMojo {
             Set<String> declaredGAs = new HashSet<>();
             List<AnalyzeTui.DepEntry> declared = new ArrayList<>();
             for (Dependency dep : project.getDependencies()) {
-                var entry = new AnalyzeTui.DepEntry(
+                AnalyzeTui.addDeclaredEntry(
+                        declaredGAs,
+                        declared,
                         dep.getGroupId(),
                         dep.getArtifactId(),
                         dep.getClassifier(),
                         dep.getVersion(),
-                        dep.getScope(),
-                        true);
-                declaredGAs.add(entry.ga());
-                declared.add(entry);
+                        dep.getScope());
             }
 
             // Resolve full transitive tree
@@ -92,7 +90,7 @@ public class AnalyzeMojo extends AbstractMojo {
             // Find transitive (undeclared) dependencies
             Set<String> transitiveGAs = new HashSet<>();
             List<AnalyzeTui.DepEntry> transitive = new ArrayList<>();
-            collectTransitive(result.getRoot(), declaredGAs, transitiveGAs, transitive, "");
+            AnalyzeTui.collectTransitive(result.getRoot(), declaredGAs, transitiveGAs, transitive);
 
             String pomPath = project.getFile().getAbsolutePath();
             String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
@@ -101,48 +99,6 @@ public class AnalyzeMojo extends AbstractMojo {
             tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to analyze dependencies: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Traverse a resolved dependency tree and collect dependencies that are present in the tree
-     * but not declared in the project's POM.
-     *
-     * For each discovered undeclared dependency this method adds an AnalyzeTui.DepEntry to
-     * {@code result} and records its GA in {@code seen} to avoid duplicates.
-     *
-     * @param node the dependency tree node to traverse
-     * @param declaredGAs set of declared `groupId:artifactId` values to skip
-     * @param seen mutable set used to deduplicate discovered GAs; entries will be added as discovered
-     * @param result mutable list that will be populated with undeclared dependency entries
-     * @param pulledBy the `groupId:artifactId` of the dependency that pulled the current node (recursion context)
-     */
-    private void collectTransitive(
-            DependencyNode node,
-            Set<String> declaredGAs,
-            Set<String> seen,
-            List<AnalyzeTui.DepEntry> result,
-            String pulledBy) {
-        for (DependencyNode child : node.getChildren()) {
-            if (child.getDependency() == null) continue;
-            var art = child.getDependency().getArtifact();
-            var entry = new AnalyzeTui.DepEntry(
-                    art.getGroupId(),
-                    art.getArtifactId(),
-                    art.getClassifier(),
-                    art.getVersion(),
-                    child.getDependency().getScope(),
-                    false);
-
-            if (!declaredGAs.contains(entry.ga()) && seen.add(entry.ga())) {
-                if (node.getDependency() != null) {
-                    entry.pulledBy = node.getDependency().getArtifact().getGroupId() + ":"
-                            + node.getDependency().getArtifact().getArtifactId();
-                }
-                result.add(entry);
-            }
-
-            collectTransitive(child, declaredGAs, seen, result, entry.ga());
         }
     }
 }
