@@ -88,13 +88,13 @@ class PomTui {
     private TuiRunner runner;
 
     /**
-     * Get the currently selected table row index, using zero when no selection exists.
+     * Get the currently selected table row index.
      *
-     * @return the selected row index, or 0 if nothing is selected
+     * @return the selected row index, or -1 if nothing is selected
      */
     private int selectedIndex() {
         Integer sel = tableState.selected();
-        return sel != null ? sel : 0;
+        return sel != null ? sel : -1;
     }
 
     /**

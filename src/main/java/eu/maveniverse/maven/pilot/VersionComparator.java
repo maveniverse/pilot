@@ -48,7 +48,7 @@ class VersionComparator {
                 || lower.contains("beta")
                 || lower.contains("-rc")
                 || lower.contains(".rc")
-                || lower.contains("-m")
+                || lower.matches(".*-m\\d+.*")
                 || lower.contains("-cr")
                 || lower.contains("snapshot")
                 || lower.contains("-ea")

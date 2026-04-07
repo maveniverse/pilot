@@ -148,6 +148,7 @@ class UpdatesTui {
         } finally {
             configured.close();
             httpPool.shutdownNow();
+            httpPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
         }
     }
 
@@ -298,7 +299,7 @@ class UpdatesTui {
                     case MINOR -> dep.updateType == VersionComparator.UpdateType.MINOR;
                     case MAJOR -> dep.updateType == VersionComparator.UpdateType.MAJOR;
                 })
-                .collect(java.util.stream.Collectors.toList());
+                .toList();
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }

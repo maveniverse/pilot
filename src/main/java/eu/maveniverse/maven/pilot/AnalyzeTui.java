@@ -327,9 +327,6 @@ class AnalyzeTui {
 
         List<Row> rows = new ArrayList<>();
         for (var dep : deps) {
-            List<Span> spans = new ArrayList<>();
-            spans.add(Span.raw(dep.ga()));
-
             if (view == View.DECLARED) {
                 rows.add(Row.from(dep.ga(), dep.version, dep.scope));
             } else {

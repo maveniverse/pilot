@@ -26,7 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,17 +67,15 @@ class OsvClient {
      */
     List<Vulnerability> query(String groupId, String artifactId, String version) throws IOException {
         String packageName = groupId + ":" + artifactId;
-        String requestBody = """
-                {
-                  "version": "%s",
-                  "package": {
-                    "name": "%s",
-                    "ecosystem": "Maven"
-                  }
-                }
-                """.formatted(version, packageName);
+        String requestBody = Json.createObjectBuilder()
+                .add("version", version)
+                .add(
+                        "package",
+                        Json.createObjectBuilder().add("name", packageName).add("ecosystem", "Maven"))
+                .build()
+                .toString();
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(API_URL).openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(API_URL).toURL().openConnection();
         try {
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");

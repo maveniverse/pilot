@@ -24,7 +24,7 @@ import jakarta.json.JsonReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
@@ -59,7 +59,7 @@ class CentralSearchClient implements SearchTui.SearchClient {
         }
         StringBuilder sb = new StringBuilder();
         for (String token : q.split("\\s+")) {
-            if (sb.length() > 0) {
+            if (!sb.isEmpty()) {
                 sb.append(' ');
             }
             if (token.startsWith("*") || token.endsWith("*")) {
@@ -79,7 +79,8 @@ class CentralSearchClient implements SearchTui.SearchClient {
      * @throws IOException if the HTTP response code is not 200 or an I/O error occurs while performing the request or reading the response
      */
     private JsonObject executeSearch(String url) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection connection =
+                (HttpURLConnection) URI.create(url).toURL().openConnection();
         try {
             connection.setRequestMethod("GET");
             connection.setRequestProperty("Accept", "application/json");

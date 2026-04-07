@@ -40,15 +40,19 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
@@ -181,6 +185,7 @@ class SearchTui {
         } finally {
             configured.close();
             httpPool.shutdownNow();
+            httpPool.awaitTermination(5, TimeUnit.SECONDS);
         }
         return selectedGav;
     }
@@ -188,10 +193,9 @@ class SearchTui {
     // -- Event handling -----------------------------------------------------
 
     boolean handleEvent(Event event, TuiRunner runner) {
-        if (!(event instanceof KeyEvent)) {
+        if (!(event instanceof KeyEvent key)) {
             return true; // re-render on tick/resize so async updates are visible
         }
-        KeyEvent key = (KeyEvent) event;
 
         if (key.isCtrlC()) {
             runner.quit();
@@ -662,7 +666,7 @@ class SearchTui {
                         }
                         String k = g + ":" + artId;
                         if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, vers.isEmpty() ? java.util.Collections.singletonList("") : vers);
+                            versionCache.put(k, vers.isEmpty() ? Collections.singletonList("") : vers);
                         }
                     }));
         }
@@ -822,7 +826,8 @@ class SearchTui {
                     + version + ".pom";
             String pomUrl = "https://repo1.maven.org/maven2/" + path;
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(pomUrl).openConnection();
+            HttpURLConnection conn =
+                    (HttpURLConnection) URI.create(pomUrl).toURL().openConnection();
             try {
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(5_000);
@@ -836,17 +841,14 @@ class SearchTui {
                 String date = null;
                 long lastModified = conn.getLastModified();
                 if (lastModified > 0) {
-                    date = java.time.Instant.ofEpochMilli(lastModified)
-                            .atZone(java.time.ZoneId.systemDefault())
+                    date = Instant.ofEpochMilli(lastModified)
+                            .atZone(ZoneId.systemDefault())
                             .toLocalDate()
                             .toString();
                 }
 
                 try (InputStream is = conn.getInputStream()) {
-                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                    dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                    DocumentBuilder db = dbf.newDocumentBuilder();
+                    DocumentBuilder db = createSafeDocumentBuilder();
                     Document doc = db.parse(is);
                     Element root = doc.getDocumentElement();
 
@@ -876,11 +878,19 @@ class SearchTui {
         }
     }
 
+    private static DocumentBuilder createSafeDocumentBuilder() throws Exception {
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        return dbf.newDocumentBuilder();
+    }
+
     private static String getChildText(Element parent, String tagName) {
         NodeList list = parent.getChildNodes();
         for (int i = 0; i < list.getLength(); i++) {
-            if (list.item(i) instanceof Element) {
-                Element el = (Element) list.item(i);
+            if (list.item(i) instanceof Element el) {
                 if (el.getTagName().equals(tagName)) {
                     String text = el.getTextContent();
                     return (text != null && !text.trim().isEmpty()) ? text.trim() : null;
@@ -926,8 +936,8 @@ class SearchTui {
             String ts = "";
             if (doc.containsKey("timestamp")) {
                 long millis = doc.getJsonNumber("timestamp").longValue();
-                ts = java.time.Instant.ofEpochMilli(millis)
-                        .atZone(java.time.ZoneId.systemDefault())
+                ts = Instant.ofEpochMilli(millis)
+                        .atZone(ZoneId.systemDefault())
                         .toLocalDate()
                         .toString();
             }
@@ -951,7 +961,8 @@ class SearchTui {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/maven-metadata.xml";
             String metaUrl = "https://repo1.maven.org/maven2/" + path;
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(metaUrl).openConnection();
+            HttpURLConnection conn =
+                    (HttpURLConnection) URI.create(metaUrl).toURL().openConnection();
             try {
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(5_000);
@@ -962,10 +973,7 @@ class SearchTui {
                 }
 
                 try (InputStream is = conn.getInputStream()) {
-                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                    dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                    DocumentBuilder db = dbf.newDocumentBuilder();
+                    DocumentBuilder db = createSafeDocumentBuilder();
                     Document doc = db.parse(is);
 
                     NodeList versionNodes = doc.getElementsByTagName("version");
@@ -978,7 +986,7 @@ class SearchTui {
                 }
 
                 // Reverse so newest versions come first
-                java.util.Collections.reverse(versions);
+                Collections.reverse(versions);
             } finally {
                 conn.disconnect();
             }
