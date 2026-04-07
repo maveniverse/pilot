@@ -75,10 +75,12 @@ public class AnalyzeMojo extends AbstractMojo {
             Set<String> declaredGAs = new HashSet<>();
             List<AnalyzeTui.DepEntry> declared = new ArrayList<>();
             for (Dependency dep : project.getDependencies()) {
-                String ga = dep.getGroupId() + ":" + dep.getArtifactId();
-                declaredGAs.add(ga);
+                String classifier = dep.getClassifier() != null ? dep.getClassifier() : "";
+                String key =
+                        dep.getGroupId() + ":" + dep.getArtifactId() + (classifier.isEmpty() ? "" : ":" + classifier);
+                declaredGAs.add(key);
                 declared.add(new AnalyzeTui.DepEntry(
-                        dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), true));
+                        dep.getGroupId(), dep.getArtifactId(), classifier, dep.getVersion(), dep.getScope(), true));
             }
 
             // Resolve full transitive tree
@@ -121,9 +123,10 @@ public class AnalyzeMojo extends AbstractMojo {
         for (DependencyNode child : node.getChildren()) {
             if (child.getDependency() == null) continue;
             var art = child.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
+            String classifier = art.getClassifier() != null ? art.getClassifier() : "";
+            String key = art.getGroupId() + ":" + art.getArtifactId() + (classifier.isEmpty() ? "" : ":" + classifier);
 
-            if (!declaredGAs.contains(ga) && seen.add(ga)) {
+            if (!declaredGAs.contains(key) && seen.add(key)) {
                 String via = "";
                 if (node.getDependency() != null) {
                     via = node.getDependency().getArtifact().getGroupId() + ":"
@@ -132,6 +135,7 @@ public class AnalyzeMojo extends AbstractMojo {
                 var entry = new AnalyzeTui.DepEntry(
                         art.getGroupId(),
                         art.getArtifactId(),
+                        classifier,
                         art.getVersion(),
                         child.getDependency().getScope(),
                         false);
@@ -139,7 +143,7 @@ public class AnalyzeMojo extends AbstractMojo {
                 result.add(entry);
             }
 
-            collectTransitive(child, declaredGAs, seen, result, ga);
+            collectTransitive(child, declaredGAs, seen, result, key);
         }
     }
 }

@@ -53,25 +53,27 @@ class AnalyzeTui {
     static class DepEntry {
         final String groupId;
         final String artifactId;
+        final String classifier;
         final String version;
         final String scope;
         final boolean declared;
         String pulledBy; // for transitive deps: who pulled this in
 
-        DepEntry(String groupId, String artifactId, String version, String scope, boolean declared) {
+        DepEntry(String groupId, String artifactId, String classifier, String version, String scope, boolean declared) {
             this.groupId = groupId;
             this.artifactId = artifactId;
+            this.classifier = classifier != null ? classifier : "";
             this.version = version != null ? version : "";
             this.scope = scope != null ? scope : "compile";
             this.declared = declared;
         }
 
         String ga() {
-            return groupId + ":" + artifactId;
+            return classifier.isEmpty() ? groupId + ":" + artifactId : groupId + ":" + artifactId + ":" + classifier;
         }
 
         String gav() {
-            return groupId + ":" + artifactId + ":" + version;
+            return ga() + ":" + version;
         }
     }
 
@@ -248,7 +250,7 @@ class AnalyzeTui {
             // Move from transitive to declared
             transitive.remove(sel);
             dep.pulledBy = null;
-            declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.version, dep.scope, true));
+            declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true));
             status = "Added " + dep.ga() + " to POM";
             if (sel >= transitive.size() && !transitive.isEmpty()) {
                 tableState.select(transitive.size() - 1);
