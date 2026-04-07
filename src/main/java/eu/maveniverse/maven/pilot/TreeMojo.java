@@ -67,7 +67,7 @@ public class TreeMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
             CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
-            DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot());
+            DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
 
             TreeTui tui = new TreeTui(
                     model, project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion());

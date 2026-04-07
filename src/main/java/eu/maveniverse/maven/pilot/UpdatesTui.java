@@ -55,6 +55,11 @@ import java.util.concurrent.Executors;
  */
 class UpdatesTui {
 
+    @FunctionalInterface
+    interface VersionResolver {
+        List<String> resolveVersions(String groupId, String artifactId);
+    }
+
     static class DependencyInfo {
         final String groupId;
         final String artifactId;
@@ -94,6 +99,7 @@ class UpdatesTui {
     private List<DependencyInfo> displayDeps;
     private final String pomPath;
     private final String projectGav;
+    private final VersionResolver versionResolver;
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = Executors.newFixedThreadPool(5);
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
@@ -125,11 +131,12 @@ class UpdatesTui {
      * @param pomPath path to the POM file that updates will be applied to
      * @param projectGav human-readable project identifier shown in the UI
      */
-    UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav) {
+    UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav, VersionResolver versionResolver) {
         this.allDeps = dependencies;
         this.displayDeps = new ArrayList<>(dependencies);
         this.pomPath = pomPath;
         this.projectGav = projectGav;
+        this.versionResolver = versionResolver;
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }
@@ -154,8 +161,7 @@ class UpdatesTui {
 
     private void fetchAllUpdates() {
         for (var dep : allDeps) {
-            CompletableFuture.supplyAsync(
-                            () -> SearchTui.fetchVersionsFromMetadata(dep.groupId, dep.artifactId), httpPool)
+            CompletableFuture.supplyAsync(() -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), httpPool)
                     .thenAccept(versions -> runner.runOnRenderThread(() -> {
                         loadedCount++;
                         String newest = null;
