@@ -76,10 +76,32 @@ class VersionComparatorTest {
     }
 
     @Test
+    void isPreviewDetectsEaAndDev() {
+        assertThat(VersionComparator.isPreview("1.0.0-ea")).isTrue();
+        assertThat(VersionComparator.isPreview("1.0.0-preview")).isTrue();
+        assertThat(VersionComparator.isPreview("1.0.0-dev")).isTrue();
+        assertThat(VersionComparator.isPreview("1.0.0-cr1")).isTrue();
+    }
+
+    @Test
     void isPreviewReturnsFalseForRelease() {
         assertThat(VersionComparator.isPreview("1.0.0")).isFalse();
         assertThat(VersionComparator.isPreview("2.3.4")).isFalse();
         assertThat(VersionComparator.isPreview("33.0.0-jre")).isFalse();
+    }
+
+    @Test
+    void isPreviewDoesNotFalsePositiveOnMinimal() {
+        assertThat(VersionComparator.isPreview("2.0.0-minimal")).isFalse();
+        assertThat(VersionComparator.isPreview("1.0.0-metrics")).isFalse();
+        assertThat(VersionComparator.isPreview("3.0.0-module")).isFalse();
+    }
+
+    @Test
+    void isPreviewDetectsNumberedMilestones() {
+        assertThat(VersionComparator.isPreview("1.0.0-M1")).isTrue();
+        assertThat(VersionComparator.isPreview("1.0.0-m2")).isTrue();
+        assertThat(VersionComparator.isPreview("1.0.0-M10")).isTrue();
     }
 
     @Test

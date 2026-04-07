@@ -176,6 +176,129 @@ class XmlTreeModelTest {
     }
 
     @Test
+    void expandAllExpandsEntireSubtree() {
+        XmlTreeModel model = XmlTreeModel.parse(NESTED_POM);
+
+        // First collapse root to hide everything
+        model.setExpanded(model.root, false);
+        assertThat(model.visibleNodes()).hasSize(1);
+
+        // Now expand all
+        model.expandAll(model.root);
+        var visible = model.visibleNodes();
+        // root + dependencies + 2 deps + their children (3 each for first, 4 for second)
+        assertThat(visible.size()).isGreaterThan(4);
+
+        // All elements should be expanded
+        for (var node : visible) {
+            if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e)) {
+                assertThat(model.isExpanded(e)).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void collapseAllCollapsesEntireSubtree() {
+        XmlTreeModel model = XmlTreeModel.parse(NESTED_POM);
+
+        // First expand all
+        model.expandAll(model.root);
+
+        // Now collapse all
+        model.collapseAll(model.root);
+        assertThat(model.visibleNodes()).hasSize(1); // only root visible
+        assertThat(model.isExpanded(model.root)).isFalse();
+    }
+
+    @Test
+    void renderNodeContainerCollapsed() {
+        XmlTreeModel model = XmlTreeModel.parse(NESTED_POM);
+
+        // Collapse dependencies element
+        Element deps = model.root.childElements().toList().get(0);
+        model.setExpanded(deps, false);
+
+        var line = model.renderNode(deps);
+        String text = line.spans().stream().map(s -> s.content()).reduce("", String::concat);
+        // Collapsed container should have ellipsis
+        assertThat(text).contains("dependencies").contains("\u2026");
+    }
+
+    @Test
+    void renderNodeEmptyElement() {
+        String xml = """
+                <project>
+                  <modules/>
+                </project>
+                """;
+        XmlTreeModel model = XmlTreeModel.parse(xml);
+        Element modules = model.root.childElements().toList().get(0);
+
+        var line = model.renderNode(modules);
+        String text = line.spans().stream().map(s -> s.content()).reduce("", String::concat);
+        assertThat(text).contains("modules").contains("/>");
+    }
+
+    @Test
+    void renderNodeWithAttributes() {
+        String xml = """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                  <plugin>
+                    <configuration combine.children="append"/>
+                  </plugin>
+                </project>
+                """;
+        XmlTreeModel model = XmlTreeModel.parse(xml);
+        model.expandAll(model.root);
+
+        Element plugin = model.root.childElements().toList().get(0);
+        Element config = plugin.childElements().toList().get(0);
+
+        var line = model.renderNode(config);
+        String text = line.spans().stream().map(s -> s.content()).reduce("", String::concat);
+        assertThat(text).contains("combine.children=\"append\"");
+    }
+
+    @Test
+    void renderNodeWithOriginEmptyOrigin() {
+        XmlTreeModel model = XmlTreeModel.parse(SIMPLE_POM);
+        Element groupId = model.root.childElements().toList().get(0);
+
+        var lineWithNull = model.renderNodeWithOrigin(groupId, null);
+        var lineWithEmpty = model.renderNodeWithOrigin(groupId, "");
+        var lineWithoutOrigin = model.renderNode(groupId);
+
+        // Should have same number of spans (no origin annotation added)
+        assertThat(lineWithNull.spans().size())
+                .isEqualTo(lineWithoutOrigin.spans().size());
+        assertThat(lineWithEmpty.spans().size())
+                .isEqualTo(lineWithoutOrigin.spans().size());
+    }
+
+    @Test
+    void renderCommentNode() {
+        String xml = """
+                <project>
+                  <!-- This is a comment -->
+                  <groupId>com.example</groupId>
+                </project>
+                """;
+        XmlTreeModel model = XmlTreeModel.parse(xml);
+        var children = XmlTreeModel.treeChildren(model.root);
+        var commentNode = children.get(0);
+
+        var line = model.renderNode(commentNode);
+        String text = line.spans().stream().map(s -> s.content()).reduce("", String::concat);
+        assertThat(text).contains("<!--").contains("This is a comment").contains("-->");
+    }
+
+    @Test
+    void relativeDepthIsZeroForRoot() {
+        XmlTreeModel model = XmlTreeModel.parse(SIMPLE_POM);
+        assertThat(model.relativeDepth(model.root)).isZero();
+    }
+
+    @Test
     void propertyReferenceInTextContent() {
         String xml = """
                 <project>
