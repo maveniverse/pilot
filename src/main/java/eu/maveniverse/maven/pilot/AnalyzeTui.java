@@ -44,6 +44,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
@@ -53,25 +55,119 @@ class AnalyzeTui {
     static class DepEntry {
         final String groupId;
         final String artifactId;
+        final String classifier;
         final String version;
         final String scope;
         final boolean declared;
-        String pulledBy; // for transitive deps: who pulled this in
+        String pulledBy;
 
-        DepEntry(String groupId, String artifactId, String version, String scope, boolean declared) {
+        /**
+         * Creates a DepEntry representing a dependency row in the TUI.
+         *
+         * @param groupId    the dependency groupId
+         * @param artifactId the dependency artifactId
+         * @param classifier the dependency classifier; null is normalized to an empty string
+         * @param version    the dependency version; null is normalized to an empty string
+         * @param scope      the dependency scope; null is normalized to "compile"
+         * @param declared   true if this entry corresponds to a declared dependency in the POM UI, false for a transitive entry
+         */
+        DepEntry(String groupId, String artifactId, String classifier, String version, String scope, boolean declared) {
             this.groupId = groupId;
             this.artifactId = artifactId;
+            this.classifier = classifier != null ? classifier : "";
             this.version = version != null ? version : "";
             this.scope = scope != null ? scope : "compile";
             this.declared = declared;
         }
 
+        /**
+         * Format the dependency's group and artifact (including the classifier when present).
+         *
+         * @return `groupId:artifactId:classifier` if `classifier` is non-empty, otherwise `groupId:artifactId`.
+         */
         String ga() {
-            return groupId + ":" + artifactId;
+            return hasClassifier() ? groupId + ":" + artifactId + ":" + classifier : groupId + ":" + artifactId;
         }
 
+        /**
+         * Build the dependency coordinates string including version.
+         *
+         * @return the coordinates in the form `groupId:artifactId:version`, with an extra `:classifier` inserted between `artifactId` and `version` when the classifier is non-empty
+         */
         String gav() {
-            return groupId + ":" + artifactId + ":" + version;
+            return ga() + ":" + version;
+        }
+
+        /**
+         * Indicates whether this dependency includes a classifier.
+         *
+         * @return {@code true} if the {@code classifier} is not empty, {@code false} otherwise.
+         */
+        boolean hasClassifier() {
+            return !classifier.isEmpty();
+        }
+    }
+
+    /**
+     * Create and register a declared dependency entry.
+     *
+     * Adds a DepEntry marked as declared to the provided list and records its
+     * groupId:artifactId[:classifier] identifier in the provided set.
+     *
+     * @param declaredGAs set where the dependency's GA (`groupId:artifactId[:classifier]`) will be recorded
+     * @param declared list to append the new declared DepEntry to
+     * @param groupId dependency groupId
+     * @param artifactId dependency artifactId
+     * @param classifier dependency classifier (may be empty)
+     * @param version dependency version
+     * @param scope dependency scope
+     */
+    static void addDeclaredEntry(
+            Set<String> declaredGAs,
+            List<DepEntry> declared,
+            String groupId,
+            String artifactId,
+            String classifier,
+            String version,
+            String scope) {
+        var entry = new DepEntry(groupId, artifactId, classifier, version, scope, true);
+        declaredGAs.add(entry.ga());
+        declared.add(entry);
+    }
+
+    /**
+     * Traverse the resolved dependency tree and add transitive dependencies to {@code result}.
+     *
+     * Each discovered transitive dependency that is not present in {@code declaredGAs} and
+     * has not been seen before (by its GA) is appended to {@code result}. When a dependency
+     * is discovered from a parent node, its {@code pulledBy} field is set to the parent's
+     * {@code groupId:artifactId}.
+     *
+     * @param node the current dependency tree node to traverse
+     * @param declaredGAs set of declared dependency GAs (groupId:artifactId[:classifier]) to exclude
+     * @param seen set used to deduplicate discovered GAs; entries are added as they are recorded
+     * @param result list that will receive new transitive {@code DepEntry} instances
+     */
+    static void collectTransitive(
+            DependencyNode node, Set<String> declaredGAs, Set<String> seen, List<DepEntry> result) {
+        for (DependencyNode child : node.getChildren()) {
+            if (child.getDependency() == null) continue;
+            var art = child.getDependency().getArtifact();
+            var entry = new DepEntry(
+                    art.getGroupId(),
+                    art.getArtifactId(),
+                    art.getClassifier(),
+                    art.getVersion(),
+                    child.getDependency().getScope(),
+                    false);
+            if (!declaredGAs.contains(entry.ga()) && seen.add(entry.ga())) {
+                if (node.getDependency() != null) {
+                    entry.pulledBy = node.getDependency().getArtifact().getGroupId() + ":"
+                            + node.getDependency().getArtifact().getArtifactId();
+                }
+                result.add(entry);
+            }
+            collectTransitive(child, declaredGAs, seen, result);
         }
     }
 
@@ -228,11 +324,11 @@ class AnalyzeTui {
     }
 
     /**
-     * Adds the currently selected transitive dependency to the project's POM and moves it into the declared list.
+     * Add the selected transitive dependency to the project's POM and mark it as declared in memory.
      *
-     * Updates the POM file to declare the dependency, removes the entry from the transitive list, clears its
-     * `pulledBy` field, appends a new declared `DepEntry`, updates the status message, and adjusts the table
-     * selection if the previously selected index becomes out of range.
+     * Updates the POM to declare the dependency, moves the entry from the transitive list into the declared list
+     * (clearing its `pulledBy`), updates the status message, and adjusts the table selection if the previous index
+     * becomes out of range.
      */
     private void addTransitive() {
         int sel = selectedIndex();
@@ -248,7 +344,7 @@ class AnalyzeTui {
             // Move from transitive to declared
             transitive.remove(sel);
             dep.pulledBy = null;
-            declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.version, dep.scope, true));
+            declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true));
             status = "Added " + dep.ga() + " to POM";
             if (sel >= transitive.size() && !transitive.isEmpty()) {
                 tableState.select(transitive.size() - 1);

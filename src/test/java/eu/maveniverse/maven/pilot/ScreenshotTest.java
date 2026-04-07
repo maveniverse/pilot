@@ -215,16 +215,16 @@ class ScreenshotTest {
     @Test
     void dependencyAnalysis() throws Exception {
         List<AnalyzeTui.DepEntry> declared = new ArrayList<>();
-        declared.add(new AnalyzeTui.DepEntry("com.google.guava", "guava", "33.0.0-jre", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("org.slf4j", "slf4j-api", "2.0.9", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("commons-io", "commons-io", "2.15.1", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("org.apache.commons", "commons-text", "1.11.0", "compile", false));
+        declared.add(new AnalyzeTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true));
+        declared.add(new AnalyzeTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0.9", "compile", true));
+        declared.add(new AnalyzeTui.DepEntry("commons-io", "commons-io", "", "2.15.1", "compile", true));
+        declared.add(new AnalyzeTui.DepEntry("org.apache.commons", "commons-text", "", "1.11.0", "compile", false));
 
         List<AnalyzeTui.DepEntry> transitive = new ArrayList<>();
-        var t1 = new AnalyzeTui.DepEntry("com.google.guava", "failureaccess", "1.0.2", "compile", false);
+        var t1 = new AnalyzeTui.DepEntry("com.google.guava", "failureaccess", "", "1.0.2", "compile", false);
         t1.pulledBy = "guava";
         transitive.add(t1);
-        var t2 = new AnalyzeTui.DepEntry("org.checkerframework", "checker-qual", "3.42.0", "compile", false);
+        var t2 = new AnalyzeTui.DepEntry("org.checkerframework", "checker-qual", "", "3.42.0", "compile", false);
         t2.pulledBy = "guava";
         transitive.add(t2);
 
