@@ -319,6 +319,25 @@ class DependencyTreeModelTest {
     }
 
     @Test
+    void fromDependencyNodeScopeIsCaseInsensitive() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var child = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        root.setChildren(List.of(child));
+
+        var model = DependencyTreeModel.fromDependencyNode(root, "COMPILE");
+        assertThat(model.visibleNodes()).hasSize(2);
+    }
+
+    @Test
+    void fromDependencyNodeInvalidScopeThrows() {
+        var root = rootNode("com.example", "app", "1.0.0");
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> {
+            DependencyTreeModel.fromDependencyNode(root, "invalid");
+        });
+    }
+
+    @Test
     void fromDependencyNodeHandlesCycles() {
         var root = rootNode("com.example", "app", "1.0.0");
         var child = depNode("com.example", "lib-a", "1.0", "compile");

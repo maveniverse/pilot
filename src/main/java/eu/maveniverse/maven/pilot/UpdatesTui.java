@@ -57,7 +57,7 @@ class UpdatesTui {
 
     @FunctionalInterface
     interface VersionResolver {
-        List<String> resolveVersions(String groupId, String artifactId);
+        List<String> resolveVersions(String groupId, String artifactId) throws Exception;
     }
 
     static class DependencyInfo {
@@ -108,6 +108,7 @@ class UpdatesTui {
     private String status = "Loading updates\u2026";
     private boolean loading = true;
     private int loadedCount = 0;
+    private int failedCount = 0;
 
     private TuiRunner runner;
 
@@ -161,7 +162,15 @@ class UpdatesTui {
 
     private void fetchAllUpdates() {
         for (var dep : allDeps) {
-            CompletableFuture.supplyAsync(() -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), httpPool)
+            CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return versionResolver.resolveVersions(dep.groupId, dep.artifactId);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            },
+                            httpPool)
                     .thenAccept(versions -> runner.runOnRenderThread(() -> {
                         loadedCount++;
                         String newest = null;
@@ -176,15 +185,28 @@ class UpdatesTui {
                             dep.newestVersion = newest;
                             dep.updateType = VersionComparator.classify(dep.version, newest);
                         }
-                        if (loadedCount >= allDeps.size()) {
-                            loading = false;
-                            applyFilter();
-                            long updates = allDeps.stream()
-                                    .filter(DependencyInfo::hasUpdate)
-                                    .count();
-                            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
-                        }
-                    }));
+                        updateStatusIfDone();
+                    }))
+                    .exceptionally(ex -> {
+                        runner.runOnRenderThread(() -> {
+                            loadedCount++;
+                            failedCount++;
+                            updateStatusIfDone();
+                        });
+                        return null;
+                    });
+        }
+    }
+
+    private void updateStatusIfDone() {
+        if (loadedCount >= allDeps.size()) {
+            loading = false;
+            applyFilter();
+            long updates = allDeps.stream().filter(DependencyInfo::hasUpdate).count();
+            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
+            if (failedCount > 0) {
+                status += "; " + failedCount + " lookup(s) failed";
+            }
         }
     }
 

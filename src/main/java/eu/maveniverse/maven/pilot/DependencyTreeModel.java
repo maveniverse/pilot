@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.eclipse.aether.graph.DependencyNode;
@@ -93,7 +94,15 @@ class DependencyTreeModel {
     }
 
     static DependencyTreeModel fromDependencyNode(DependencyNode rootNode, String scope) {
-        Set<String> includedScopes = scope != null ? SCOPE_INCLUSIONS.get(scope) : null;
+        Set<String> includedScopes = null;
+        if (scope != null) {
+            String normalized = scope.toLowerCase(Locale.ROOT);
+            includedScopes = SCOPE_INCLUSIONS.get(normalized);
+            if (includedScopes == null) {
+                throw new IllegalArgumentException(
+                        "Unsupported scope '" + scope + "'. Supported values: " + SCOPE_INCLUSIONS.keySet());
+            }
+        }
         int[] counter = {0};
         List<TreeNode> conflicts = new ArrayList<>();
         TreeNode root = convertNode(rootNode, 0, counter, new HashSet<>(), conflicts, includedScopes);

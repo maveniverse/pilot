@@ -89,19 +89,15 @@ public class UpdatesMojo extends AbstractMojo {
             // Use the Resolver to fetch available versions, respecting all configured
             // repositories, mirrors, authentication, and proxies.
             UpdatesTui.VersionResolver versionResolver = (groupId, artifactId) -> {
-                try {
-                    VersionRangeRequest request = new VersionRangeRequest();
-                    request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
-                    request.setRepositories(project.getRemoteProjectRepositories());
-                    VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
-                    List<String> versions = result.getVersions().stream()
-                            .map(Object::toString)
-                            .collect(Collectors.toCollection(ArrayList::new));
-                    Collections.reverse(versions); // newest first
-                    return versions;
-                } catch (Exception e) {
-                    return List.of();
-                }
+                VersionRangeRequest request = new VersionRangeRequest();
+                request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
+                request.setRepositories(project.getRemoteProjectRepositories());
+                VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
+                List<String> versions = result.getVersions().stream()
+                        .map(Object::toString)
+                        .collect(Collectors.toCollection(ArrayList::new));
+                Collections.reverse(versions); // newest first
+                return versions;
             };
 
             UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav, versionResolver);
