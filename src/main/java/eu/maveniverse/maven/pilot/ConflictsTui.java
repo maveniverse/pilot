@@ -109,6 +109,11 @@ class ConflictsTui {
 
     private TuiRunner runner;
 
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : -1;
+    }
+
     ConflictsTui(List<ConflictGroup> conflicts, String pomPath, String projectGav) {
         this.conflicts = conflicts;
         this.pomPath = pomPath;
@@ -166,7 +171,7 @@ class ConflictsTui {
     }
 
     private void pinVersion() {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel < 0 || sel >= conflicts.size()) return;
         var group = conflicts.get(sel);
 
@@ -278,7 +283,7 @@ class ConflictsTui {
     }
 
     private void renderDetails(Frame frame, Rect area) {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel < 0 || sel >= conflicts.size()) return;
 
         var group = conflicts.get(sel);

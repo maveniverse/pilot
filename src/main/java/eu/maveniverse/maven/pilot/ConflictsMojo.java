@@ -32,12 +32,8 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
-import org.eclipse.aether.graph.Exclusion;
 
 /**
  * Interactive TUI for dependency conflict resolution.
@@ -64,20 +60,7 @@ public class ConflictsMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRootArtifact(new DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(),
-                    project.getPackaging(), project.getVersion()));
-            collectRequest.setDependencies(
-                    project.getDependencies().stream().map(this::convert).collect(Collectors.toList()));
-            if (project.getDependencyManagement() != null) {
-                collectRequest.setManagedDependencies(project.getDependencyManagement().getDependencies().stream()
-                        .map(this::convert)
-                        .collect(Collectors.toList()));
-            }
-            collectRequest.setRepositories(project.getRemoteProjectRepositories());
-
-            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
 
             // Detect conflicts: same GA with different versions requested
             Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
@@ -130,21 +113,5 @@ public class ConflictsMojo extends AbstractMojo {
             conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
             collectConflicts(child, conflicts, currentPath);
         }
-    }
-
-    private Dependency convert(org.apache.maven.model.Dependency dep) {
-        var artifact = new DefaultArtifact(
-                dep.getGroupId(),
-                dep.getArtifactId(),
-                dep.getClassifier() != null ? dep.getClassifier() : "",
-                dep.getType() != null ? dep.getType() : "jar",
-                dep.getVersion());
-        var d = new Dependency(artifact, dep.getScope(), dep.isOptional());
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            d = d.setExclusions(dep.getExclusions().stream()
-                    .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList()));
-        }
-        return d;
     }
 }

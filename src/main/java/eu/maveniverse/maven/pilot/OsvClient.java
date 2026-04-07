@@ -70,63 +70,67 @@ class OsvClient {
                 """.formatted(version, packageName);
 
         HttpURLConnection conn = (HttpURLConnection) new URL(API_URL).openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Accept", "application/json");
-        conn.setConnectTimeout(10_000);
-        conn.setReadTimeout(10_000);
-        conn.setDoOutput(true);
+        try {
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+            conn.setDoOutput(true);
 
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(requestBody.getBytes(StandardCharsets.UTF_8));
-        }
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(requestBody.getBytes(StandardCharsets.UTF_8));
+            }
 
-        int status = conn.getResponseCode();
-        if (status != 200) {
-            return List.of();
-        }
+            int status = conn.getResponseCode();
+            if (status != 200) {
+                return List.of();
+            }
 
-        List<Vulnerability> vulns = new ArrayList<>();
-        try (InputStream is = conn.getInputStream();
-                JsonReader reader = Json.createReader(is)) {
-            JsonObject response = reader.readObject();
-            JsonArray vulnArray = response.getJsonArray("vulns");
-            if (vulnArray != null) {
-                for (int i = 0; i < vulnArray.size(); i++) {
-                    JsonObject vuln = vulnArray.getJsonObject(i);
+            List<Vulnerability> vulns = new ArrayList<>();
+            try (InputStream is = conn.getInputStream();
+                    JsonReader reader = Json.createReader(is)) {
+                JsonObject response = reader.readObject();
+                JsonArray vulnArray = response.getJsonArray("vulns");
+                if (vulnArray != null) {
+                    for (int i = 0; i < vulnArray.size(); i++) {
+                        JsonObject vuln = vulnArray.getJsonObject(i);
 
-                    String id = vuln.getString("id", "");
-                    String summary = vuln.getString("summary", "");
-                    String published = vuln.getString("published", "");
+                        String id = vuln.getString("id", "");
+                        String summary = vuln.getString("summary", "");
+                        String published = vuln.getString("published", "");
 
-                    // Extract severity from database_specific or severity array
-                    String severity = "UNKNOWN";
-                    if (vuln.containsKey("database_specific")) {
-                        JsonObject dbSpecific = vuln.getJsonObject("database_specific");
-                        if (dbSpecific.containsKey("severity")) {
-                            severity = dbSpecific.getString("severity");
+                        // Extract severity from database_specific or severity array
+                        String severity = "UNKNOWN";
+                        if (vuln.containsKey("database_specific")) {
+                            JsonObject dbSpecific = vuln.getJsonObject("database_specific");
+                            if (dbSpecific.containsKey("severity")) {
+                                severity = dbSpecific.getString("severity");
+                            }
                         }
-                    }
-                    if (vuln.containsKey("severity")) {
-                        JsonArray sevArray = vuln.getJsonArray("severity");
-                        if (sevArray != null && !sevArray.isEmpty()) {
-                            severity = sevArray.getJsonObject(0).getString("score", severity);
+                        if (vuln.containsKey("severity")) {
+                            JsonArray sevArray = vuln.getJsonArray("severity");
+                            if (sevArray != null && !sevArray.isEmpty()) {
+                                severity = sevArray.getJsonObject(0).getString("score", severity);
+                            }
                         }
-                    }
 
-                    List<String> aliases = new ArrayList<>();
-                    if (vuln.containsKey("aliases")) {
-                        JsonArray aliasArray = vuln.getJsonArray("aliases");
-                        for (int j = 0; j < aliasArray.size(); j++) {
-                            aliases.add(aliasArray.getString(j));
+                        List<String> aliases = new ArrayList<>();
+                        if (vuln.containsKey("aliases")) {
+                            JsonArray aliasArray = vuln.getJsonArray("aliases");
+                            for (int j = 0; j < aliasArray.size(); j++) {
+                                aliases.add(aliasArray.getString(j));
+                            }
                         }
-                    }
 
-                    vulns.add(new Vulnerability(id, summary, severity, published, aliases));
+                        vulns.add(new Vulnerability(id, summary, severity, published, aliases));
+                    }
                 }
             }
-        }
 
-        return vulns;
+            return vulns;
+        } finally {
+            conn.disconnect();
+        }
     }
 }

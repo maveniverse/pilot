@@ -91,6 +91,11 @@ class AnalyzeTui {
 
     private TuiRunner runner;
 
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : -1;
+    }
+
     AnalyzeTui(List<DepEntry> declared, List<DepEntry> transitive, String pomPath, String projectGav) {
         this.declared = declared;
         this.transitive = transitive;
@@ -172,7 +177,7 @@ class AnalyzeTui {
     }
 
     private void removeDeclared() {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel < 0 || sel >= declared.size()) return;
         var dep = declared.get(sel);
 
@@ -192,7 +197,7 @@ class AnalyzeTui {
     }
 
     private void addTransitive() {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel < 0 || sel >= transitive.size()) return;
         var dep = transitive.get(sel);
 

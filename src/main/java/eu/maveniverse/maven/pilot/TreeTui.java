@@ -137,7 +137,7 @@ class TreeTui {
         }
 
         if (key.isRight()) {
-            int sel = selected();
+            int sel = selectedIndex();
             if (sel >= 0 && sel < displayNodes.size()) {
                 var node = displayNodes.get(sel);
                 if (node.hasChildren() && !node.expanded) {
@@ -151,7 +151,7 @@ class TreeTui {
             return true;
         }
         if (key.isLeft()) {
-            int sel = selected();
+            int sel = selectedIndex();
             if (sel >= 0 && sel < displayNodes.size()) {
                 var node = displayNodes.get(sel);
                 if (node.expanded && node.hasChildren()) {
@@ -271,7 +271,7 @@ class TreeTui {
     }
 
     private void showReversePath() {
-        int sel = selected();
+        int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;
         var node = displayNodes.get(sel);
         reversePath = model.pathToRoot(node);
@@ -304,15 +304,16 @@ class TreeTui {
     }
 
     private void refreshDisplay() {
-        int selBefore = selected();
+        int selBefore = selectedIndex();
         displayNodes = model.visibleNodes();
         if (selBefore >= displayNodes.size()) {
             tableState.select(Math.max(0, displayNodes.size() - 1));
         }
     }
 
-    private int selected() {
-        return tableState.selected() != null ? tableState.selected() : 0;
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : 0;
     }
 
     // -- Rendering --
@@ -501,7 +502,7 @@ class TreeTui {
 
     private void renderArtifactDetails(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        int sel = selected();
+        int sel = selectedIndex();
         if (sel >= 0 && sel < displayNodes.size()) {
             var node = displayNodes.get(sel);
             String pomKey = node.gav();
@@ -570,7 +571,7 @@ class TreeTui {
     }
 
     private void fetchPomInfoIfNeeded() {
-        int sel = selected();
+        int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;
         var node = displayNodes.get(sel);
         String pomKey = node.gav();

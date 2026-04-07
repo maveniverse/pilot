@@ -87,6 +87,11 @@ class PomTui {
 
     private TuiRunner runner;
 
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : 0;
+    }
+
     PomTui(String rawPom, String effectivePom, String fileName) {
         this(rawPom, XmlTreeModel.parse(effectivePom), new IdentityHashMap<>(), fileName, Map.of());
     }
@@ -190,7 +195,7 @@ class PomTui {
             return true;
         }
 
-        int sel = tableState.selected() != null ? tableState.selected() : 0;
+        int sel = selectedIndex();
         if (sel >= 0 && sel < visible.size()) {
             var node = visible.get(sel);
             if (key.isRight()) {
@@ -486,7 +491,7 @@ class PomTui {
      */
     private SnippetInfo getSelectedOriginSnippet() {
         if (view != View.EFFECTIVE) return null;
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         var visible = effectiveModel.visibleNodes();
         if (sel < 0 || sel >= visible.size()) return null;
 

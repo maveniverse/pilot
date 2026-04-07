@@ -105,6 +105,11 @@ class UpdatesTui {
 
     private TuiRunner runner;
 
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : -1;
+    }
+
     UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav) {
         this.allDeps = dependencies;
         this.displayDeps = new ArrayList<>(dependencies);
@@ -227,7 +232,7 @@ class UpdatesTui {
     }
 
     private void toggleSelection() {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel >= 0 && sel < displayDeps.size()) {
             var dep = displayDeps.get(sel);
             if (dep.hasUpdate()) {
@@ -431,7 +436,7 @@ class UpdatesTui {
 
     private void renderPomInfo(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel >= 0 && sel < displayDeps.size()) {
             var dep = displayDeps.get(sel);
             String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
@@ -458,7 +463,7 @@ class UpdatesTui {
     }
 
     private void fetchPomInfoIfNeeded() {
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         if (sel < 0 || sel >= displayDeps.size()) return;
         var dep = displayDeps.get(sel);
         String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;

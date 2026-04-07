@@ -129,6 +129,11 @@ class SearchTui {
     private final SearchClient client;
     private TuiRunner runner;
 
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : 0;
+    }
+
     SearchTui(SearchClient client, String initialQuery, List<String[]> initialResults, int totalFound) {
         this.client = client;
         this.searchBuffer = new StringBuilder(initialQuery != null ? initialQuery : "");
@@ -277,9 +282,9 @@ class SearchTui {
             return true;
         }
         if (key.isDown()) {
-            int before = tableState.selected() != null ? tableState.selected() : 0;
+            int before = selectedIndex();
             tableState.selectNext(artifacts.size());
-            int after = tableState.selected() != null ? tableState.selected() : 0;
+            int after = selectedIndex();
             if (before == after && artifacts.size() < totalFound) {
                 // At the very bottom and prefetch hasn't arrived yet — block
                 fetchMoreResultsSync();
@@ -291,17 +296,17 @@ class SearchTui {
             return true;
         }
         if (key.isLeft()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             cycleVersion(selected, -1);
             return true;
         }
         if (key.isRight()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             cycleVersion(selected, +1);
             return true;
         }
         if (key.isSelect() || key.isConfirm()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             selectArtifact(selected);
             return true;
         }
@@ -395,7 +400,7 @@ class SearchTui {
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
-        int selected = tableState.selected() != null ? tableState.selected() : 0;
+        int selected = selectedIndex();
         for (int i = 0; i < artifacts.size(); i++) {
             String[] a = artifacts.get(i);
             String version = getDisplayVersion(i, i == selected);
@@ -770,49 +775,53 @@ class SearchTui {
             String pomUrl = "https://repo1.maven.org/maven2/" + path;
 
             HttpURLConnection conn = (HttpURLConnection) new URL(pomUrl).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5_000);
-            conn.setReadTimeout(5_000);
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5_000);
+                conn.setReadTimeout(5_000);
 
-            if (conn.getResponseCode() != 200) {
-                return new PomInfo(null, null, null, null, null, null);
-            }
-
-            // Capture Last-Modified as publication date
-            String date = null;
-            long lastModified = conn.getLastModified();
-            if (lastModified > 0) {
-                date = java.time.Instant.ofEpochMilli(lastModified)
-                        .atZone(java.time.ZoneId.systemDefault())
-                        .toLocalDate()
-                        .toString();
-            }
-
-            try (InputStream is = conn.getInputStream()) {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                DocumentBuilder db = dbf.newDocumentBuilder();
-                Document doc = db.parse(is);
-                Element root = doc.getDocumentElement();
-
-                String name = getChildText(root, "name");
-                String description = getChildText(root, "description");
-                String url = getChildText(root, "url");
-
-                String org = null;
-                NodeList orgNodes = root.getElementsByTagName("organization");
-                if (orgNodes.getLength() > 0) {
-                    org = getChildText((Element) orgNodes.item(0), "name");
+                if (conn.getResponseCode() != 200) {
+                    return new PomInfo(null, null, null, null, null, null);
                 }
 
-                String license = null;
-                NodeList licNodes = root.getElementsByTagName("license");
-                if (licNodes.getLength() > 0) {
-                    license = getChildText((Element) licNodes.item(0), "name");
+                // Capture Last-Modified as publication date
+                String date = null;
+                long lastModified = conn.getLastModified();
+                if (lastModified > 0) {
+                    date = java.time.Instant.ofEpochMilli(lastModified)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate()
+                            .toString();
                 }
 
-                return new PomInfo(name, description, url, org, license, date);
+                try (InputStream is = conn.getInputStream()) {
+                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+                    dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+                    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                    DocumentBuilder db = dbf.newDocumentBuilder();
+                    Document doc = db.parse(is);
+                    Element root = doc.getDocumentElement();
+
+                    String name = getChildText(root, "name");
+                    String description = getChildText(root, "description");
+                    String url = getChildText(root, "url");
+
+                    String org = null;
+                    NodeList orgNodes = root.getElementsByTagName("organization");
+                    if (orgNodes.getLength() > 0) {
+                        org = getChildText((Element) orgNodes.item(0), "name");
+                    }
+
+                    String license = null;
+                    NodeList licNodes = root.getElementsByTagName("license");
+                    if (licNodes.getLength() > 0) {
+                        license = getChildText((Element) licNodes.item(0), "name");
+                    }
+
+                    return new PomInfo(name, description, url, org, license, date);
+                }
+            } finally {
+                conn.disconnect();
             }
         } catch (Exception e) {
             return new PomInfo(null, null, null, null, null, null);
@@ -892,32 +901,36 @@ class SearchTui {
             String metaUrl = "https://repo1.maven.org/maven2/" + path;
 
             HttpURLConnection conn = (HttpURLConnection) new URL(metaUrl).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5_000);
-            conn.setReadTimeout(5_000);
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5_000);
+                conn.setReadTimeout(5_000);
 
-            if (conn.getResponseCode() != 200) {
-                return versions;
-            }
+                if (conn.getResponseCode() != 200) {
+                    return versions;
+                }
 
-            try (InputStream is = conn.getInputStream()) {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                DocumentBuilder db = dbf.newDocumentBuilder();
-                Document doc = db.parse(is);
+                try (InputStream is = conn.getInputStream()) {
+                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+                    dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+                    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                    DocumentBuilder db = dbf.newDocumentBuilder();
+                    Document doc = db.parse(is);
 
-                NodeList versionNodes = doc.getElementsByTagName("version");
-                for (int i = 0; i < versionNodes.getLength(); i++) {
-                    String v = versionNodes.item(i).getTextContent();
-                    if (v != null && !v.trim().isEmpty()) {
-                        versions.add(v.trim());
+                    NodeList versionNodes = doc.getElementsByTagName("version");
+                    for (int i = 0; i < versionNodes.getLength(); i++) {
+                        String v = versionNodes.item(i).getTextContent();
+                        if (v != null && !v.trim().isEmpty()) {
+                            versions.add(v.trim());
+                        }
                     }
                 }
-            }
 
-            // Reverse so newest versions come first
-            java.util.Collections.reverse(versions);
+                // Reverse so newest versions come first
+                java.util.Collections.reverse(versions);
+            } finally {
+                conn.disconnect();
+            }
         } catch (Exception e) {
             // return whatever we have
         }
