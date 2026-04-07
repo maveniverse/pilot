@@ -67,6 +67,15 @@ public class PomMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
+    /**
+     * Displays the project's effective POM in an interactive terminal UI annotated with source origins.
+     *
+     * <p>The goal reads the project's POM and its resolved parents, constructs the effective model,
+     * maps XML elements to origin locations (including parent POMs when available), and launches the
+     * PomTui to present the annotated POM to the user.</p>
+     *
+     * @throws MojoExecutionException if the POM cannot be read, parsed, or displayed
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
@@ -129,8 +138,17 @@ public class PomMojo extends AbstractMojo {
     }
 
     /**
-     * Walks the Maven Model and XmlTree in parallel, attaching InputLocation-based
-     * OriginInfo directly to each node via the identity map.
+     * Attach origin metadata to XML elements by traversing the XML tree in parallel with a Maven model
+     * InputLocationTracker and recording InputLocation-derived OriginInfo into the provided identity map.
+     *
+     * Populates `map` with entries that associate each visited `Element` node to a `PomTui.OriginInfo`
+     * derived from the tracker's `InputLocation` (or from item trackers for list entries).
+     *
+     * @param map               identity map to receive Element -> OriginInfo associations
+     * @param xmlElement        root XML element whose subtree will be traversed
+     * @param tracker           Maven model InputLocationTracker that provides source locations for fields
+     * @param rawLines          the raw lines of the current POM file (used when an origin refers to this POM)
+     * @param parentPomContents mapping from parent modelId ("groupId:artifactId:version") to that parent's raw lines
      */
     private void attachOrigins(
             IdentityHashMap<Node, PomTui.OriginInfo> map,

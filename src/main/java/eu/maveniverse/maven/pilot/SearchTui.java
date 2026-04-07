@@ -129,11 +129,30 @@ class SearchTui {
     private final SearchClient client;
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table row index, defaulting to 0 when no row is selected.
+     *
+     * @return the selected row index, or 0 if no selection exists
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : 0;
     }
 
+    /**
+     * Initializes a SearchTui instance and its interactive state from optional initial data.
+     *
+     * Sets up the search buffer and cursor from {@code initialQuery} (accepting {@code null}),
+     * records the trimmed last searched query, and, if {@code initialResults} is non-empty,
+     * copies them into the internal artifacts list, initializes per-row version indices,
+     * records {@code totalFound}, updates the status message, and selects the first table row.
+     * If no initial results are supplied, sets the status to "Type to search".
+     *
+     * @param client the SearchClient used for performing remote queries
+     * @param initialQuery an optional initial search string (may be {@code null})
+     * @param initialResults an optional initial list of artifact rows (may be {@code null} or empty)
+     * @param totalFound the total number of results corresponding to {@code initialResults}
+     */
     SearchTui(SearchClient client, String initialQuery, List<String[]> initialResults, int totalFound) {
         this.client = client;
         this.searchBuffer = new StringBuilder(initialQuery != null ? initialQuery : "");
@@ -257,6 +276,16 @@ class SearchTui {
         return false;
     }
 
+    /**
+     * Handle a key event when the UI is in the table focus, performing navigation,
+     * selection, version cycling, or switching back to the search editor as needed.
+     *
+     * Handles: quit (`q`), typing (moves focus to search and inserts the character),
+     * up/down navigation (moves selection and may fetch or prefetch results/POMs),
+     * left/right version cycling, and confirm/select to choose the artifact.
+     *
+     * @return `true` if the key was handled (event consumed), `false` otherwise.
+     */
     private boolean handleTableKeys(KeyEvent key) {
         if (artifacts.isEmpty()) {
             return false;
@@ -371,6 +400,16 @@ class SearchTui {
         frame.renderWidget(searchLine, area);
     }
 
+    /**
+     * Render the search results area: either a centered empty-state message or a table of artifacts.
+     *
+     * <p>If there are no artifacts, displays a centered "Searching…" or "No results" message.
+     * Otherwise renders a three-column table (groupId, artifactId, version) with the current
+     * selection highlighted and the total/result count shown in the block title.
+     *
+     * @param frame the TUI frame to render widgets into
+     * @param area the rectangular region within the frame reserved for the results table
+     */
     private void renderResultsTable(Frame frame, Rect area) {
         Style borderStyle =
                 focus == Focus.TABLE ? Style.create().cyan() : Style.create().fg(Color.DARK_GRAY);
@@ -768,6 +807,15 @@ class SearchTui {
                 }));
     }
 
+    /**
+     * Fetches a POM file from Maven Central for the given coordinates and returns extracted metadata.
+     *
+     * The returned PomInfo holds the POM's name, description, URL, organization name, license name,
+     * and publication date (ISO YYYY-MM-DD) when available.
+     *
+     * @return a PomInfo containing `name`, `description`, `url`, `organization`, `license`, and publication date;
+     *         returns a PomInfo with all fields set to `null` if the POM cannot be retrieved or parsed
+     */
     static PomInfo fetchPomFromCentral(String groupId, String artifactId, String version) {
         try {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-"
@@ -891,8 +939,11 @@ class SearchTui {
     }
 
     /**
-     * Fetches available versions from Maven Central's maven-metadata.xml,
-     * returned in reverse order (newest first).
+     * Obtains artifact versions from Maven Central's maven-metadata.xml.
+     *
+     * @param groupId    the artifact's groupId (dot-separated)
+     * @param artifactId the artifact's artifactId
+     * @return a list of version strings with the newest versions first; may be empty if none are found or on error
      */
     static List<String> fetchVersionsFromMetadata(String groupId, String artifactId) {
         List<String> versions = new ArrayList<>();

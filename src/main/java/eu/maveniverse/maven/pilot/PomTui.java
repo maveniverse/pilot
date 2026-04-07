@@ -87,15 +87,42 @@ class PomTui {
 
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table row index, using zero when no selection exists.
+     *
+     * @return the selected row index, or 0 if nothing is selected
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : 0;
     }
 
+    /**
+     * Create a PomTui backed by the provided raw and effective POM XML texts.
+     *
+     * The constructor parses the effective POM into the internal model, initializes origin and parent-POM lookups as empty, and prepares the raw POM for the raw view; the initial selection is set to the first row.
+     *
+     * @param rawPom      the raw POM XML text used for the Raw view and origin fallback search
+     * @param effectivePom the effective POM XML text used to build the Effective view
+     * @param fileName    a label for the source (displayed in headers and used when reporting origin snippets)
+     */
     PomTui(String rawPom, String effectivePom, String fileName) {
         this(rawPom, XmlTreeModel.parse(effectivePom), new IdentityHashMap<>(), fileName, Map.of());
     }
 
+    /**
+     * Creates a PomTui for viewing a raw POM and its effective model in the terminal UI.
+     *
+     * Parses the provided raw POM into the internal raw model, stores the effective model and
+     * origin mapping (or an empty map if `null`), splits the raw POM into lines for later
+     * origin lookups, and selects the initial table row (index 0).
+     *
+     * @param rawPom             the raw POM XML text
+     * @param effectiveModel     the pre-parsed effective POM model to display
+     * @param originMap          mapping of nodes to origin information; may be `null` to indicate empty
+     * @param fileName           a label used as the source name when the raw POM is shown in origin snippets
+     * @param parentPomContents  optional map of parent POM source names to their lines; may be `null` to indicate none
+     */
     PomTui(
             String rawPom,
             XmlTreeModel effectiveModel,
@@ -125,6 +152,16 @@ class PomTui {
         }
     }
 
+    /**
+     * Handle keyboard input events and perform corresponding UI actions such as navigation,
+     * search entry/processing, toggling between Raw and Effective views, expanding/collapsing
+     * nodes, and quitting the runner.
+     *
+     * @param event  the input event to handle; only {@code KeyEvent} instances are processed
+     * @param runner the UI runner, used here to request quitting when appropriate
+     * @return       {@code true} if the event was handled (no further processing needed),
+     *               {@code false} if the event was not handled by this method
+     */
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -262,6 +299,14 @@ class PomTui {
         return false;
     }
 
+    /**
+     * Updates the list of visible-node indices that match the current search buffer
+     * and adjusts the active match index and table selection accordingly.
+     *
+     * <p>If the search buffer is empty, clears matches and resets the active index.
+     * Otherwise computes matching visible-node indices, sets the active match to
+     * the first result (if any) and selects that row in {@code tableState}.</p>
+     */
     private void updateSearchMatches() {
         String query = searchBuffer.toString().toLowerCase();
         if (query.isEmpty()) {
@@ -284,6 +329,16 @@ class PomTui {
         }
     }
 
+    /**
+     * Determines whether the given node's searchable text contains the provided query.
+     *
+     * For a Comment node the searchable text is the comment content; for an Element node it is
+     * the element name concatenated with its trimmed text content. Other node types are not searched.
+     *
+     * @param node  the node to test
+     * @param query the lowercased search substring to match against the node's searchable text
+     * @return      `true` if the node's searchable text contains `query`, `false` otherwise
+     */
     private boolean nodeMatchesSearch(Node node, String query) {
         String text;
         if (node instanceof Comment comment) {
@@ -296,11 +351,23 @@ class PomTui {
         return text.toLowerCase().contains(query);
     }
 
+    /**
+     * Chooses the XML tree model that should be used for rendering and interaction.
+     *
+     * @return the raw model when the view is RAW, otherwise the effective model
+     */
     private XmlTreeModel currentModel() {
         return view == View.RAW ? rawModel : effectiveModel;
     }
 
-    // -- Rendering --
+    /**
+     * Render the complete TUI into the given frame.
+     *
+     * Renders a header, the XML tree view, an optional origin snippet detail (only when in Effective view and a snippet exists),
+     * and a footer, laying out vertical regions and allocating extra rows for the detail section when shown.
+     *
+     * @param frame the frame to render the UI into
+     */
 
     void render(Frame frame) {
         SnippetInfo snippet = getSelectedOriginSnippet();
@@ -371,6 +438,16 @@ class PomTui {
         frame.renderWidget(header, area);
     }
 
+    /**
+     * Render the current XML tree view (raw or effective) into the provided frame area.
+     *
+     * Renders a titled, bordered table of the model's visible nodes, highlights rows that
+     * match the active or in-progress search query, and shows a centered "Empty" placeholder
+     * when there are no visible nodes.
+     *
+     * @param frame the frame used for drawing widgets
+     * @param area the rectangular area inside the frame to render the tree into
+     */
     private void renderXmlTree(Frame frame, Rect area) {
         var model = currentModel();
         String title = view == View.RAW ? " " + fileName + " " : " Effective POM ";
@@ -485,9 +562,14 @@ class PomTui {
     }
 
     /**
-     * Find origin info for the selected effective POM node.
-     * Uses the IdentityHashMap populated by PomMojo's parallel Model/XmlTree walk,
-     * then falls back to raw POM text search.
+     * Locate the source snippet for the currently selected effective POM node.
+     *
+     * Attempts to resolve origin information in three steps: use the identity-mapped
+     * OriginInfo for the selected node when available; otherwise search the raw POM
+     * text for a matching element; finally search configured parent POM contents.
+     *
+     * @return the SnippetInfo containing formatted source lines and their source name,
+     *         or `null` if no origin snippet can be determined
      */
     private SnippetInfo getSelectedOriginSnippet() {
         if (view != View.EFFECTIVE) return null;
@@ -522,6 +604,17 @@ class PomTui {
         return null;
     }
 
+    /**
+     * Builds a formatted snippet of source lines surrounding a matched line for display.
+     *
+     * The snippet includes the matched line plus up to two lines of context before and after,
+     * each prefixed with a 1-based, four-wide line number and a separator. The matched line
+     * is additionally prefixed with an arrow marker.
+     *
+     * @param lines the source lines to extract the snippet from
+     * @param matchLine the zero-based index of the matched line within `lines`
+     * @return a list of formatted strings representing the snippet, in display order
+     */
     private List<String> buildSnippet(String[] lines, int matchLine) {
         List<String> snippet = new ArrayList<>();
         int start = Math.max(0, matchLine - 2);
@@ -534,6 +627,17 @@ class PomTui {
         return snippet;
     }
 
+    /**
+     * Finds the first line index in the provided source lines that contains the element's opening tag.
+     *
+     * <p>For non-element nodes returns -1. For an element that is a leaf, matches lines containing
+     * the exact opening tag `<name>`. For an element with children, matches lines containing either
+     * `<name>` or an opening tag followed by attributes like `<name `.</p>
+     *
+     * @param node  the node to locate in the source lines; only {@link Element} nodes are considered
+     * @param lines the source text split into lines to search
+     * @return the zero-based index of the first matching line, or -1 if no match is found or the node is not an element
+     */
     private int findInLines(Node node, String[] lines) {
         if (!(node instanceof Element element)) return -1;
         if (XmlTreeModel.isLeaf(element)) {

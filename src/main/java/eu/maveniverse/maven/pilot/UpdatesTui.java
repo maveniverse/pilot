@@ -105,11 +105,26 @@ class UpdatesTui {
 
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table row index, or -1 if none is selected.
+     *
+     * @return the selected row index, or -1 when no selection exists
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : -1;
     }
 
+    /**
+     * Creates a new UpdatesTui initialized with the given dependency list and target POM.
+     *
+     * Initializes internal display list as a copy of `dependencies`, stores the POM path and
+     * project GAV for display, and selects the first row if there are any dependencies.
+     *
+     * @param dependencies list of dependencies to show and manage
+     * @param pomPath path to the POM file that updates will be applied to
+     * @param projectGav human-readable project identifier shown in the UI
+     */
     UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav) {
         this.allDeps = dependencies;
         this.displayDeps = new ArrayList<>(dependencies);
@@ -166,6 +181,22 @@ class UpdatesTui {
         }
     }
 
+    /**
+     * Handle keyboard input for the updates TUI and perform the mapped action.
+     *
+     * Supported key bindings:
+     * - Ctrl+C, Escape, or `q` : quit the UI
+     * - Up / Down             : move table selection
+     * - Space                 : toggle selection for the current row
+     * - `a`                   : select all visible updatable dependencies
+     * - `n`                   : deselect all visible dependencies
+     * - Enter                 : apply selected updates to the POM
+     * - `1` / `2` / `3` / `4` : set filter to ALL / PATCH / MINOR / MAJOR respectively
+     *
+     * @param event  the input event to handle; non-key events are ignored
+     * @param runner the TUI runner instance used to control the UI (e.g. to quit)
+     * @return       `true` if the event was handled and triggered an action, `false` otherwise
+     */
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -231,6 +262,12 @@ class UpdatesTui {
         return false;
     }
 
+    /**
+     * Toggle the selected state of the currently highlighted dependency when an update is available.
+     *
+     * If the table has a valid selected row and that dependency has an available update, flips its
+     * `selected` flag; otherwise does nothing.
+     */
     private void toggleSelection() {
         int sel = selectedIndex();
         if (sel >= 0 && sel < displayDeps.size()) {
@@ -434,6 +471,17 @@ class UpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
 
+    /**
+     * Renders a single-line POM metadata summary for the currently selected dependency.
+     *
+     * If cached POM info with a project name is available, renders the project name (bold cyan)
+     * and, when present, the license (green) and organization (dim), separated by a dark-gray divider.
+     * Otherwise renders the dependency's "groupId:artifactId" in cyan and appends " (managed)" in dim
+     * if the dependency is managed.
+     *
+     * @param frame the frame to render into
+     * @param area the rectangular area within the frame to use for rendering
+     */
     private void renderPomInfo(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         int sel = selectedIndex();
@@ -462,6 +510,14 @@ class UpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
+    /**
+     * Fetches and caches POM metadata for the currently selected dependency if it is not already cached.
+     *
+     * If the selected index is invalid or the cache already contains an entry for the dependency (key
+     * "groupId:artifactId:version"), the method returns immediately. Otherwise it inserts a placeholder
+     * cache entry to prevent duplicate fetches, starts an asynchronous fetch using the internal HTTP
+     * pool, and updates the cache on the renderer thread when the fetch completes.
+     */
     private void fetchPomInfoIfNeeded() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= displayDeps.size()) return;

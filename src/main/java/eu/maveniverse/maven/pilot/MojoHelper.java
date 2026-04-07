@@ -32,10 +32,16 @@ import org.eclipse.aether.graph.Exclusion;
  */
 final class MojoHelper {
 
-    private MojoHelper() {}
+    /**
+ * Private constructor to prevent instantiation of this utility class.
+ */
+private MojoHelper() {}
 
     /**
-     * Converts a Maven model Dependency to an Aether Dependency.
+     * Convert a Maven model Dependency into an Aether Dependency.
+     *
+     * @param dep the Maven model Dependency to convert
+     * @return an Aether Dependency with the same coordinates, scope and optional flag; if the Maven dependency's classifier is null it becomes an empty string, if its type is null it defaults to "jar", and any Maven exclusions are mapped to Aether exclusions
      */
     static Dependency convertDependency(org.apache.maven.model.Dependency dep) {
         var artifact = new DefaultArtifact(
@@ -54,7 +60,10 @@ final class MojoHelper {
     }
 
     /**
-     * Converts a list of Maven model Dependencies to Aether Dependencies.
+     * Convert a list of Maven model Dependency objects into Aether Dependency objects.
+     *
+     * @param deps the Maven dependencies to convert; if {@code null} an empty list is returned
+     * @return a list of corresponding Aether {@code Dependency} objects (empty if {@code deps} is {@code null} or empty)
      */
     static List<Dependency> convertDependencies(List<org.apache.maven.model.Dependency> deps) {
         if (deps == null) {
@@ -64,8 +73,10 @@ final class MojoHelper {
     }
 
     /**
-     * Builds a CollectRequest from a MavenProject with root artifact, dependencies,
-     * managed dependencies, and remote repositories.
+     * Build a CollectRequest populated from the given MavenProject.
+     *
+     * @param project the Maven project whose artifact, dependencies, managed dependencies, and remote repositories will populate the request
+     * @return a CollectRequest with the project's root artifact, converted dependencies, managed dependencies (if present), and repositories
      */
     static CollectRequest buildCollectRequest(MavenProject project) {
         CollectRequest collectRequest = new CollectRequest();

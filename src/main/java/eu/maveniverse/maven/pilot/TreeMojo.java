@@ -58,6 +58,11 @@ public class TreeMojo extends AbstractMojo {
     @Parameter(property = "scope", defaultValue = "compile")
     private String scope;
 
+    /**
+     * Builds the project's dependency tree model and launches the interactive tree TUI for the current Maven project.
+     *
+     * @throws MojoExecutionException if dependency collection or TUI execution fails
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {

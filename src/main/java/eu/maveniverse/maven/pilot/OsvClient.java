@@ -55,7 +55,15 @@ class OsvClient {
     }
 
     /**
-     * Query OSV.dev for vulnerabilities affecting a Maven artifact.
+     * Query OSV.dev for vulnerabilities affecting the specified Maven artifact version.
+     *
+     * Sends a POST request to the OSV API for the package named "groupId:artifactId" and the provided version.
+     *
+     * @param groupId the Maven groupId of the artifact
+     * @param artifactId the Maven artifactId
+     * @param version the artifact version to query for known vulnerabilities
+     * @return a list of Vulnerability entries returned by OSV; an empty list is returned when the API responds with a non-200 status or when no vulnerabilities are found
+     * @throws IOException if an I/O error occurs while communicating with the OSV API
      */
     List<Vulnerability> query(String groupId, String artifactId, String version) throws IOException {
         String packageName = groupId + ":" + artifactId;

@@ -109,11 +109,26 @@ class ConflictsTui {
 
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table-row index, or -1 when no selection exists.
+     *
+     * @return the selected index, or -1 if no row is selected
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : -1;
     }
 
+    /**
+     * Creates a ConflictsTui configured with the provided conflict groups, POM path, and project GAV.
+     *
+     * Initializes the status message to reflect the number of provided conflict groups and selects
+     * the first row when the list of conflicts is not empty.
+     *
+     * @param conflicts list of conflict groups to display
+     * @param pomPath path to the project's POM file used for pinning resolved versions
+     * @param projectGav project coordinates shown in the header
+     */
     ConflictsTui(List<ConflictGroup> conflicts, String pomPath, String projectGav) {
         this.conflicts = conflicts;
         this.pomPath = pomPath;
@@ -138,6 +153,14 @@ class ConflictsTui {
         }
     }
 
+    /**
+     * Handle keyboard events and execute corresponding TUI actions such as navigation, toggling details,
+     * pinning a group's resolved version, or quitting the runner.
+     *
+     * @param event  the input event to handle
+     * @param runner the TUI runner used to control application lifecycle (e.g., to quit)
+     * @return `true` if the event was handled and should not be processed further, `false` otherwise
+     */
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -170,6 +193,14 @@ class ConflictsTui {
         return false;
     }
 
+    /**
+     * Pins the currently selected conflict group's resolved version into the project's POM
+     * dependencyManagement section and updates the TUI status message.
+     *
+     * If no row is selected or the selection is out of range, the method returns without action.
+     * On success the status is set to indicate the GA and pinned version; on failure the status
+     * contains the error message.
+     */
     private void pinVersion() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= conflicts.size()) return;
@@ -229,6 +260,14 @@ class ConflictsTui {
         frame.renderWidget(header, area);
     }
 
+    /**
+     * Renders the conflicts section: header with counts and a table listing each dependency group,
+     * an icon for conflict status, resolved version, and requested versions; when no conflicts are
+     * present renders a centered success message.
+     *
+     * @param frame the terminal frame to draw into
+     * @param area the rectangular region to render the conflicts widget
+     */
     private void renderConflicts(Frame frame, Rect area) {
         long conflictCount =
                 conflicts.stream().filter(ConflictGroup::hasConflict).count();
@@ -282,6 +321,17 @@ class ConflictsTui {
         frame.renderStatefulWidget(table, area, tableState);
     }
 
+    /**
+     * Render the details pane for the currently selected conflict group.
+     *
+     * <p>If no valid row is selected, the method returns without rendering.
+     * When a group is selected, a rounded, yellow-tinted block titled
+     * "<ga> — Dependency Paths" is rendered containing a table with one row
+     * per entry. Each row presents the requested version in bold, the text
+     * " via " dimmed, the dependency path in dark gray, and—when the
+     * requested version differs from the resolved version—an appended
+     * "→ resolved <resolvedVersion>" fragment in yellow.
+     */
     private void renderDetails(Frame frame, Rect area) {
         int sel = selectedIndex();
         if (sel < 0 || sel >= conflicts.size()) return;

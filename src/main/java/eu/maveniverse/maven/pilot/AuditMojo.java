@@ -56,6 +56,13 @@ public class AuditMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
+    /**
+     * Runs the interactive license and security audit dashboard for the current Maven project.
+     *
+     * Collects the project's transitive dependencies, builds audit entries, and launches the AuditTui UI.
+     *
+     * @throws MojoExecutionException if dependency collection or the audit UI fails to run
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
@@ -74,6 +81,14 @@ public class AuditMojo extends AbstractMojo {
         }
     }
 
+    /**
+     * Recursively walks the Maven dependency tree and appends unique non-root artifacts to the provided entries list.
+     *
+     * @param node the current dependency tree node to process
+     * @param entries mutable list that will be populated with AuditTui.AuditEntry for each discovered artifact
+     * @param seen a set of `"groupId:artifactId"` keys used to suppress duplicate artifacts across the tree
+     * @param isRoot true when the current node is the root project node (the root node itself is not recorded)
+     */
     private void collectEntries(
             DependencyNode node, List<AuditTui.AuditEntry> entries, Set<String> seen, boolean isRoot) {
         if (!isRoot && node.getDependency() != null) {

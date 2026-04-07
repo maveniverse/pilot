@@ -119,6 +119,16 @@ class TreeTui {
         return handleTreeKeys(key);
     }
 
+    /**
+     * Handle keyboard input while in the tree view (navigation, expansion, and mode actions).
+     *
+     * Processes movement (up/down/left/right), expand/collapse, switching to filter or reverse-path modes,
+     * cycling conflicts, expanding/collapsing all nodes, and quit. Updates selection, node expansion state,
+     * and may trigger background metadata fetches or UI refreshes.
+     *
+     * @param key the key event to handle
+     * @return `true` if the key was handled by the tree view, `false` otherwise
+     */
     private boolean handleTreeKeys(KeyEvent key) {
         if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
             runner.quit();
@@ -249,6 +259,11 @@ class TreeTui {
         }
     }
 
+    /**
+     * Advances the internal conflict pointer to the next conflicting node, makes that node visible, and selects it in the table.
+     *
+     * <p>If there are no conflicts, this method has no effect.</p>
+     */
     private void cycleConflict() {
         if (model.conflicts.isEmpty()) return;
         conflictIndex = (conflictIndex + 1) % model.conflicts.size();
@@ -270,6 +285,13 @@ class TreeTui {
         }
     }
 
+    /**
+     * Switches the view to the reverse-path mode for the currently selected node.
+     *
+     * If a valid node is selected, computes the path from that node to the tree root,
+     * stores it in {@code reversePath}, and sets the UI mode to {@code REVERSE_PATH}.
+     * If no valid selection exists, no state is changed.
+     */
     private void showReversePath() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;
@@ -296,6 +318,11 @@ class TreeTui {
         }
     }
 
+    /**
+     * Collapse the given tree node and all of its descendants.
+     *
+     * @param node the tree node to collapse; its {@code expanded} flag (and that of every descendant) will be set to {@code false}
+     */
     private void collapseNode(DependencyTreeModel.TreeNode node) {
         node.expanded = false;
         for (var child : node.children) {
@@ -303,6 +330,12 @@ class TreeTui {
         }
     }
 
+    /**
+     * Refreshes the list of nodes shown in the UI from the model and preserves a valid selection.
+     *
+     * Saves the current selected index, replaces {@code displayNodes} with {@code model.visibleNodes()},
+     * and if the previous selection is now out of range selects the last available row (or 0 if the list is empty).
+     */
     private void refreshDisplay() {
         int selBefore = selectedIndex();
         displayNodes = model.visibleNodes();
@@ -311,6 +344,11 @@ class TreeTui {
         }
     }
 
+    /**
+     * Get the currently selected row index from the table state, defaulting to zero when no selection is set.
+     *
+     * @return `0` if no selection is set, otherwise the selected row index.
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : 0;
@@ -500,6 +538,16 @@ class TreeTui {
         renderKeyBindings(frame, rows.get(2));
     }
 
+    /**
+     * Renders the selected artifact's details into the given area of the frame.
+     *
+     * If cached POM metadata for the selected node exists and contains a name, renders the artifact
+     * name and, when available, its license, organization, and date. Otherwise renders the node's
+     * GAV and, if applicable, its scope.
+     *
+     * @param frame the frame to render into
+     * @param area the rectangle area within the frame where details are drawn
+     */
     private void renderArtifactDetails(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         int sel = selectedIndex();
@@ -535,6 +583,16 @@ class TreeTui {
         frame.renderWidget(line, area);
     }
 
+    /**
+     * Renders the single-line key binding hint bar for the current UI mode.
+     *
+     * Displays mode-specific key labels and short action hints (Filter, Navigate,
+     * Expand/Collapse, Conflicts, Reverse, Quit) and paints them into the given
+     * area of the frame.
+     *
+     * @param frame the frame to render widgets into
+     * @param area the rectangular area within the frame where the key hints are drawn
+     */
     private void renderKeyBindings(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
@@ -570,6 +628,13 @@ class TreeTui {
         frame.renderWidget(line, area);
     }
 
+    /**
+     * Ensures POM metadata for the currently selected dependency is being fetched and cached.
+     *
+     * If the selected row corresponds to a node whose GAV is not already cached, inserts a
+     * placeholder entry and starts an asynchronous fetch from Maven Central. When the fetch
+     * completes the retrieved `PomInfo` is stored in the cache on the render thread.
+     */
     private void fetchPomInfoIfNeeded() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;

@@ -41,23 +41,52 @@ class XmlTreeModel {
     final Element root;
     private final Set<Node> expandedNodes = Collections.newSetFromMap(new IdentityHashMap<>());
 
+    /**
+     * Create an XmlTreeModel backed by the provided XML document and initialize its expansion state.
+     *
+     * @param document the parsed XML document whose root element will be used as the model's root
+     */
     private XmlTreeModel(Document document) {
         this.root = document.root();
         initExpandState(root);
     }
 
+    /**
+     * Create an XmlTreeModel from the given XML string.
+     *
+     * @param xml the XML document as a string
+     * @return an XmlTreeModel representing the parsed document root with initial expansion state
+     */
     static XmlTreeModel parse(String xml) {
         return new XmlTreeModel(Document.of(xml));
     }
 
+    /**
+     * Compute a node's depth relative to the tree model root.
+     *
+     * @param node the node whose relative depth to compute
+     * @return the node's depth minus the root's depth (0 for the root)
+     */
     int relativeDepth(Node node) {
         return node.depth() - root.depth();
     }
 
+    /**
+     * Checks whether a node is currently expanded in the tree model.
+     *
+     * @param node the node whose expansion state to query
+     * @return `true` if the node is currently expanded in the model, `false` otherwise
+     */
     boolean isExpanded(Node node) {
         return expandedNodes.contains(node);
     }
 
+    /**
+     * Sets the expansion state for the given node in the tree model.
+     *
+     * @param node the node whose expansion state will be updated
+     * @param expanded `true` to mark the node as expanded, `false` to mark it as collapsed
+     */
     void setExpanded(Node node, boolean expanded) {
         if (expanded) {
             expandedNodes.add(node);
@@ -66,18 +95,35 @@ class XmlTreeModel {
         }
     }
 
+    /**
+     * Mark the given element and all of its descendant elements as expanded.
+     *
+     * @param node the root element whose subtree should be expanded
+     */
     void expandAll(Element node) {
         expandedNodes.add(node);
         node.childElements().forEach(this::expandAll);
     }
 
+    /**
+     * Collapses the given element and all of its descendant elements in the tree.
+     *
+     * Removes the element and every descendant from the model's expansion state so they will render as collapsed.
+     *
+     * @param node the element to collapse along with its child elements
+     */
     void collapseAll(Element node) {
         expandedNodes.remove(node);
         node.childElements().forEach(this::collapseAll);
     }
 
     /**
-     * Returns visible nodes respecting expand/collapse state.
+     * Produce the list of document nodes that are currently visible in the tree view.
+     *
+     * The list is in tree/document order and includes an element node followed by its
+     * visible descendants (comments and elements) according to the model's expand/collapse state.
+     *
+     * @return a list of visible {@code Node} instances in tree/document order
      */
     List<Node> visibleNodes() {
         List<Node> visible = new ArrayList<>();
@@ -85,6 +131,13 @@ class XmlTreeModel {
         return visible;
     }
 
+    /**
+     * Appends the provided element and any of its visible descendant nodes to the given list,
+     * respecting the model's expansion state.
+     *
+     * @param element the element whose visible subtree should be collected
+     * @param visible the list to append visible nodes to
+     */
     private void collectVisible(Element element, List<Node> visible) {
         visible.add(element);
         if (isExpanded(element)) {
@@ -99,8 +152,12 @@ class XmlTreeModel {
     }
 
     /**
-     * Returns the children of an element that are visible in the tree
-     * (elements and comments, skipping text nodes).
+     * List the element's child nodes that should be shown in the tree.
+     *
+     * <p>Includes only child nodes that are Element or Comment; text nodes and other node types are omitted.</p>
+     *
+     * @param element the parent element whose children are being queried
+     * @return a list of the element's children that are either `Element` or `Comment`, in document order
      */
     static List<Node> treeChildren(Element element) {
         return element.children()
@@ -108,14 +165,34 @@ class XmlTreeModel {
                 .toList();
     }
 
+    /**
+     * Determines whether the given element has any child elements or comment nodes.
+     *
+     * @param element the element to inspect
+     * @return {@code true} if the element has at least one child that is an {@code Element} or {@code Comment}, {@code false} otherwise
+     */
     static boolean hasTreeChildren(Element element) {
         return element.children().anyMatch(n -> n instanceof Element || n instanceof Comment);
     }
 
+    /**
+     * Determines whether an element is a leaf node: it has no child elements and contains non-empty trimmed text.
+     *
+     * @param element the element to check
+     * @return `true` if the element has no child elements and its trimmed text content is not empty, `false` otherwise
+     */
     static boolean isLeaf(Element element) {
         return !element.hasChildElements() && !element.textContentTrimmedOr("").isEmpty();
     }
 
+    /**
+     * Initializes expansion state for an element subtree.
+     *
+     * Adds the element to the model's expanded set when its depth relative to the model root is less than 2,
+     * then applies the same rule recursively to each child element.
+     *
+     * @param element the subtree root whose expansion state should be initialized
+     */
     private void initExpandState(Element element) {
         if (relativeDepth(element) < 2) {
             expandedNodes.add(element);
@@ -124,7 +201,18 @@ class XmlTreeModel {
     }
 
     /**
-     * Create a syntax-highlighted line for an XML node.
+     * Render an XML node as a syntax-colored Line suitable for display in the tree.
+     *
+     * Produces a Line composed of styled spans representing the given node:
+     * - Comment nodes render as "<!-- ... -->" in dark gray.
+     * - Element nodes render with indentation, an expand/collapse glyph when they have tree children,
+     *   blue tag names, cyan attributes, and plain text content styling. Leaf elements are rendered
+     *   inline as "<tag ...>text</tag>" and include the element's trimmed text content; if the text
+     *   begins with "${" it is colored yellow. Container elements render an opening tag and, when
+     *   collapsed, a dim ellipsis ("…") followed by the closing tag. Empty elements render as self-closing.
+     *
+     * @param node the DOM node to render; expected to be an Element or a Comment
+     * @return a Line containing styled spans that visually represent the node
      */
     Line renderNode(Node node) {
         List<Span> spans = new ArrayList<>();
@@ -202,7 +290,12 @@ class XmlTreeModel {
     }
 
     /**
-     * Create a syntax-highlighted line with origin annotation.
+     * Render the given node as a syntax-highlighted line and, when provided,
+     * append an origin annotation.
+     *
+     * @param node   the DOM node to render
+     * @param origin optional origin text to append; when non-empty it is added as "← {origin}" in yellow and dim after two spaces
+     * @return       a Line representing the rendered node with the optional origin annotation
      */
     Line renderNodeWithOrigin(Node node, String origin) {
         List<Span> spans = new ArrayList<>(renderNode(node).spans());
@@ -215,6 +308,15 @@ class XmlTreeModel {
         return Line.from(spans);
     }
 
+    /**
+     * Builds a space-separated attribute string for an element, excluding XML namespace declarations.
+     *
+     * <p>Attributes are formatted as `key="value"` and joined with single spaces. Attributes whose
+     * names start with `"xmlns"` are omitted.</p>
+     *
+     * @param element the element whose attributes to format
+     * @return a space-separated `key="value"` string of attributes, or `null` if no attributes remain after filtering
+     */
     private static String formatAttributes(Element element) {
         Map<String, String> attrs = element.attributes();
         if (attrs.isEmpty()) return null;

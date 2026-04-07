@@ -71,6 +71,13 @@ class CentralSearchClient implements SearchTui.SearchClient {
         return sb.toString();
     }
 
+    /**
+     * Execute an HTTP GET against the provided search URL and parse the response as JSON.
+     *
+     * @param url the full HTTP URL to query (including query parameters)
+     * @return the root {@code JsonObject} parsed from the response body
+     * @throws IOException if the HTTP response code is not 200 or an I/O error occurs while performing the request or reading the response
+     */
     private JsonObject executeSearch(String url) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         try {

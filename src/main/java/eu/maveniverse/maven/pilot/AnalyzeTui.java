@@ -91,11 +91,28 @@ class AnalyzeTui {
 
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table row index.
+     *
+     * @return `-1` if no row is selected, otherwise the selected row index.
+     */
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : -1;
     }
 
+    /**
+     * Create a new AnalyzeTui bound to the given dependency lists and POM metadata.
+     *
+     * Initializes the backing declared and transitive dependency lists, the POM file path,
+     * and the displayed project GAV. Sets the status message to "<declared.size()> declared, <transitive.size()> transitive dependencies".
+     * If the declared list is non-empty, selects the first row in the table.
+     *
+     * @param declared   the list of declared (direct) dependencies shown in the Declared view
+     * @param transitive the list of transitive dependencies shown in the Transitive view
+     * @param pomPath    filesystem path to the target POM file that will be edited when modifying dependencies
+     * @param projectGav the project GAV string displayed in the UI header
+     */
     AnalyzeTui(List<DepEntry> declared, List<DepEntry> transitive, String pomPath, String projectGav) {
         this.declared = declared;
         this.transitive = transitive;
@@ -168,6 +185,12 @@ class AnalyzeTui {
         return view == View.DECLARED ? declared : transitive;
     }
 
+    /**
+     * Perform the context-appropriate mutation for the currently selected dependency.
+     *
+     * If the view is DECLARED, removes the selected declared dependency from the POM;
+     * if the view is TRANSITIVE, adds the selected transitive dependency to the POM.
+     */
     private void fixSelected() {
         if (view == View.DECLARED) {
             removeDeclared();
@@ -176,6 +199,14 @@ class AnalyzeTui {
         }
     }
 
+    /**
+     * Remove the currently selected dependency from the declared list and persist that removal to the POM.
+     *
+     * If no row is selected or the selection is out of range this method does nothing. When a valid declared
+     * dependency is selected it is removed from the POM on disk, removed from the in-memory `declared` list,
+     * the status message is updated to reflect success, and the table selection is adjusted to remain within bounds.
+     * If an error occurs while modifying the POM the status is set to a failure message containing the exception text.
+     */
     private void removeDeclared() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= declared.size()) return;
@@ -196,6 +227,13 @@ class AnalyzeTui {
         }
     }
 
+    /**
+     * Adds the currently selected transitive dependency to the project's POM and moves it into the declared list.
+     *
+     * Updates the POM file to declare the dependency, removes the entry from the transitive list, clears its
+     * `pulledBy` field, appends a new declared `DepEntry`, updates the status message, and adjusts the table
+     * selection if the previously selected index becomes out of range.
+     */
     private void addTransitive() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= transitive.size()) return;

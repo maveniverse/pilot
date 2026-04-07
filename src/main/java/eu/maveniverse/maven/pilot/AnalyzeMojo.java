@@ -60,6 +60,12 @@ public class AnalyzeMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
+    /**
+     * Performs dependency analysis: collects declared dependencies from the project POM, resolves the full transitive
+     * dependency tree, identifies transitive (undeclared) dependencies, and presents the results using the Analyze TUI.
+     *
+     * @throws MojoExecutionException if dependency collection, traversal, or the TUI run fails
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
@@ -91,6 +97,19 @@ public class AnalyzeMojo extends AbstractMojo {
         }
     }
 
+    /**
+     * Traverse a resolved dependency tree and collect dependencies that are present in the tree
+     * but not declared in the project's POM.
+     *
+     * For each discovered undeclared dependency this method adds an AnalyzeTui.DepEntry to
+     * {@code result} and records its GA in {@code seen} to avoid duplicates.
+     *
+     * @param node the dependency tree node to traverse
+     * @param declaredGAs set of declared `groupId:artifactId` values to skip
+     * @param seen mutable set used to deduplicate discovered GAs; entries will be added as discovered
+     * @param result mutable list that will be populated with undeclared dependency entries
+     * @param pulledBy the `groupId:artifactId` of the dependency that pulled the current node (recursion context)
+     */
     private void collectTransitive(
             DependencyNode node,
             Set<String> declaredGAs,
