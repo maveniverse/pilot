@@ -161,8 +161,13 @@ class UpdatesTui {
     }
 
     private void fetchAllUpdates() {
+        fetchUpdates(runner::runOnRenderThread, httpPool);
+    }
+
+    CompletableFuture<Void> fetchUpdates(java.util.function.Consumer<Runnable> renderThread, ExecutorService executor) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (var dep : allDeps) {
-            CompletableFuture.supplyAsync(
+            var future = CompletableFuture.supplyAsync(
                             () -> {
                                 try {
                                     return versionResolver.resolveVersions(dep.groupId, dep.artifactId);
@@ -170,20 +175,22 @@ class UpdatesTui {
                                     throw new RuntimeException(e);
                                 }
                             },
-                            httpPool)
-                    .thenAccept(versions -> runner.runOnRenderThread(() -> {
+                            executor)
+                    .thenAccept(versions -> renderThread.accept(() -> {
                         applyVersionResult(dep, versions);
                         updateStatusIfDone();
                     }))
                     .exceptionally(ex -> {
-                        runner.runOnRenderThread(() -> {
+                        renderThread.accept(() -> {
                             loadedCount++;
                             failedCount++;
                             updateStatusIfDone();
                         });
                         return null;
                     });
+            futures.add(future);
         }
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
     /**

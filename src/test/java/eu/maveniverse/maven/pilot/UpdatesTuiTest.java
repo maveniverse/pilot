@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 
 class UpdatesTuiTest {
@@ -184,5 +185,77 @@ class UpdatesTuiTest {
 
         // Empty version should accept any non-preview version
         assertThat(dep.newestVersion).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void fetchUpdatesSuccess() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
+        deps.add(new UpdatesTui.DependencyInfo("com.example", "other", "2.0", "compile", "jar"));
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+            if ("lib".equals(a)) return List.of("2.0.0", "1.5.0", "1.0.0");
+            return List.of("2.0.0");
+        });
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            tui.fetchUpdates(Runnable::run, executor).join();
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(deps.get(0).newestVersion).isEqualTo("2.0.0");
+        assertThat(deps.get(0).updateType).isEqualTo(VersionComparator.UpdateType.MAJOR);
+        assertThat(tui.loadedCount).isEqualTo(2);
+        assertThat(tui.loading).isFalse();
+        assertThat(tui.status).contains("update(s) available");
+    }
+
+    @Test
+    void fetchUpdatesWithFailure() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+            throw new Exception("network error");
+        });
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            tui.fetchUpdates(Runnable::run, executor).join();
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(tui.failedCount).isEqualTo(1);
+        assertThat(tui.loadedCount).isEqualTo(1);
+        assertThat(tui.loading).isFalse();
+        assertThat(tui.status).contains("1 lookup(s) failed");
+    }
+
+    @Test
+    void fetchUpdatesMixedSuccessAndFailure() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
+        deps.add(new UpdatesTui.DependencyInfo("com.example", "broken", "1.0", "compile", "jar"));
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+            if ("broken".equals(a)) throw new Exception("timeout");
+            return List.of("2.0.0", "1.0.0");
+        });
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            tui.fetchUpdates(Runnable::run, executor).join();
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(tui.loadedCount).isEqualTo(2);
+        assertThat(tui.failedCount).isEqualTo(1);
+        assertThat(tui.loading).isFalse();
+        assertThat(deps.get(0).newestVersion).isEqualTo("2.0.0");
+        assertThat(deps.get(1).newestVersion).isNull();
     }
 }
