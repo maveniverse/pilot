@@ -235,58 +235,56 @@ class XmlTreeModel {
 
         Style tagStyle = Style.create().fg(Color.BLUE);
         Style attrStyle = Style.create().fg(Color.CYAN);
-        Style textStyle = Style.create();
-
-        String attrs = formatAttributes(element);
 
         if (isLeaf(element)) {
-            // Inline element: <tag>value</tag>
-            spans.add(Span.styled("<", tagStyle));
-            spans.add(Span.styled(element.name(), tagStyle));
-            if (attrs != null) {
-                spans.add(Span.raw(" "));
-                spans.add(Span.styled(attrs, attrStyle));
-            }
-            spans.add(Span.styled(">", tagStyle));
-
-            String text = element.textContentTrimmedOr("");
-            if (text.startsWith("${")) {
-                spans.add(Span.styled(text, Style.create().fg(Color.YELLOW)));
-            } else {
-                spans.add(Span.styled(text, textStyle));
-            }
-
-            spans.add(Span.styled("</", tagStyle));
-            spans.add(Span.styled(element.name(), tagStyle));
-            spans.add(Span.styled(">", tagStyle));
+            renderLeafElement(spans, element, tagStyle, attrStyle);
         } else if (hasTreeChildren(element)) {
-            // Container element
-            spans.add(Span.styled("<", tagStyle));
-            spans.add(Span.styled(element.name(), tagStyle));
-            if (attrs != null) {
-                spans.add(Span.raw(" "));
-                spans.add(Span.styled(attrs, attrStyle));
-            }
-            spans.add(Span.styled(">", tagStyle));
-
-            if (!isExpanded(element)) {
-                spans.add(Span.raw(" \u2026 ").dim());
-                spans.add(Span.styled("</", tagStyle));
-                spans.add(Span.styled(element.name(), tagStyle));
-                spans.add(Span.styled(">", tagStyle));
-            }
+            renderContainerElement(spans, element, tagStyle, attrStyle);
         } else {
-            // Empty element
-            spans.add(Span.styled("<", tagStyle));
-            spans.add(Span.styled(element.name(), tagStyle));
-            if (attrs != null) {
-                spans.add(Span.raw(" "));
-                spans.add(Span.styled(attrs, attrStyle));
-            }
-            spans.add(Span.styled("/>", tagStyle));
+            renderEmptyElement(spans, element, tagStyle, attrStyle);
         }
 
         return Line.from(spans);
+    }
+
+    private void renderLeafElement(List<Span> spans, Element element, Style tagStyle, Style attrStyle) {
+        addTagOpen(spans, element, tagStyle, attrStyle, ">");
+        String text = element.textContentTrimmedOr("");
+        if (text.startsWith("${")) {
+            spans.add(Span.styled(text, Style.create().fg(Color.YELLOW)));
+        } else {
+            spans.add(Span.styled(text, Style.create()));
+        }
+        addTagClose(spans, element, tagStyle);
+    }
+
+    private void renderContainerElement(List<Span> spans, Element element, Style tagStyle, Style attrStyle) {
+        addTagOpen(spans, element, tagStyle, attrStyle, ">");
+        if (!isExpanded(element)) {
+            spans.add(Span.raw(" \u2026 ").dim());
+            addTagClose(spans, element, tagStyle);
+        }
+    }
+
+    private void renderEmptyElement(List<Span> spans, Element element, Style tagStyle, Style attrStyle) {
+        addTagOpen(spans, element, tagStyle, attrStyle, "/>");
+    }
+
+    private void addTagOpen(List<Span> spans, Element element, Style tagStyle, Style attrStyle, String closeToken) {
+        spans.add(Span.styled("<", tagStyle));
+        spans.add(Span.styled(element.name(), tagStyle));
+        String attrs = formatAttributes(element);
+        if (attrs != null) {
+            spans.add(Span.raw(" "));
+            spans.add(Span.styled(attrs, attrStyle));
+        }
+        spans.add(Span.styled(closeToken, tagStyle));
+    }
+
+    private void addTagClose(List<Span> spans, Element element, Style tagStyle) {
+        spans.add(Span.styled("</", tagStyle));
+        spans.add(Span.styled(element.name(), tagStyle));
+        spans.add(Span.styled(">", tagStyle));
     }
 
     /**

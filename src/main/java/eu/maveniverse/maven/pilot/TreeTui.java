@@ -345,13 +345,13 @@ class TreeTui {
     }
 
     /**
-     * Get the currently selected row index from the table state, defaulting to zero when no selection is set.
+     * Get the currently selected row index from the table state, defaulting to -1 when no selection is set.
      *
-     * @return `0` if no selection is set, otherwise the selected row index.
+     * @return `-1` if no selection is set, otherwise the selected row index.
      */
     private int selectedIndex() {
         Integer sel = tableState.selected();
-        return sel != null ? sel : 0;
+        return sel != null ? sel : -1;
     }
 
     // -- Rendering --

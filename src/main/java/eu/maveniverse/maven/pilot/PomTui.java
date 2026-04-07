@@ -368,7 +368,6 @@ class PomTui {
      *
      * @param frame the frame to render the UI into
      */
-
     void render(Frame frame) {
         SnippetInfo snippet = getSelectedOriginSnippet();
         boolean showDetail = view == View.EFFECTIVE && snippet != null;
@@ -628,28 +627,50 @@ class PomTui {
     }
 
     /**
-     * Finds the first line index in the provided source lines that contains the element's opening tag.
+     * Finds the line index in the provided source lines that contains the element's opening tag.
      *
-     * <p>For non-element nodes returns -1. For an element that is a leaf, matches lines containing
-     * the exact opening tag `<name>`. For an element with children, matches lines containing either
-     * `<name>` or an opening tag followed by attributes like `<name `.</p>
+     * <p>Matches all tag forms: {@code <name>}, {@code <name ...>}, {@code <name/>}, and {@code <name />}.
+     * When the element has same-named siblings under its parent, returns the Nth matching line
+     * corresponding to this element's position among those siblings.</p>
      *
      * @param node  the node to locate in the source lines; only {@link Element} nodes are considered
      * @param lines the source text split into lines to search
-     * @return the zero-based index of the first matching line, or -1 if no match is found or the node is not an element
+     * @return the zero-based index of the matching line, or -1 if no match is found or the node is not an element
      */
     private int findInLines(Node node, String[] lines) {
         if (!(node instanceof Element element)) return -1;
-        if (XmlTreeModel.isLeaf(element)) {
-            String search = "<" + element.name() + ">";
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains(search)) return i;
+        String name = element.name();
+
+        // Match all opening-tag forms
+        String tagOpen = "<" + name + ">";
+        String tagOpenAttr = "<" + name + " ";
+        String tagSelfClose = "<" + name + "/>";
+        String tagSelfCloseSpace = "<" + name + " />";
+
+        // Compute occurrence index among same-named siblings
+        int occurrenceIndex = 0;
+        Node parent = element.parent();
+        if (parent instanceof Element parentElement) {
+            for (Node sibling : XmlTreeModel.treeChildren(parentElement)) {
+                if (sibling == element) break;
+                if (sibling instanceof Element se && se.name().equals(name)) {
+                    occurrenceIndex++;
+                }
             }
-        } else if (XmlTreeModel.hasTreeChildren(element)) {
-            String search1 = "<" + element.name() + ">";
-            String search2 = "<" + element.name() + " ";
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains(search1) || lines[i].contains(search2)) return i;
+        }
+
+        // Find the Nth matching line
+        int matchCount = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.contains(tagOpen)
+                    || line.contains(tagOpenAttr)
+                    || line.contains(tagSelfClose)
+                    || line.contains(tagSelfCloseSpace)) {
+                if (matchCount == occurrenceIndex) {
+                    return i;
+                }
+                matchCount++;
             }
         }
         return -1;

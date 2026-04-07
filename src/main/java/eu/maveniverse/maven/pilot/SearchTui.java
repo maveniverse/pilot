@@ -130,13 +130,13 @@ class SearchTui {
     private TuiRunner runner;
 
     /**
-     * Get the currently selected table row index, defaulting to 0 when no row is selected.
+     * Get the currently selected table row index, defaulting to -1 when no row is selected.
      *
-     * @return the selected row index, or 0 if no selection exists
+     * @return the selected row index, or -1 if no selection exists
      */
     private int selectedIndex() {
         Integer sel = tableState.selected();
-        return sel != null ? sel : 0;
+        return sel != null ? sel : -1;
     }
 
     /**
@@ -471,8 +471,8 @@ class SearchTui {
 
     private void renderArtifactDetails(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        if (!artifacts.isEmpty() && tableState.selected() != null) {
-            int sel = tableState.selected();
+        int sel = selectedIndex();
+        if (!artifacts.isEmpty() && sel >= 0) {
             String[] a = artifacts.get(sel);
             String version = getDisplayVersionPlain(sel);
             String pomKey = a[0] + ":" + a[1] + ":" + version;
@@ -781,10 +781,10 @@ class SearchTui {
     // -- POM info fetching --------------------------------------------------
 
     private void fetchPomInfoIfNeeded() {
-        if (artifacts.isEmpty() || tableState.selected() == null) {
+        int sel = selectedIndex();
+        if (artifacts.isEmpty() || sel < 0) {
             return;
         }
-        int sel = tableState.selected();
         String[] a = artifacts.get(sel);
         String version = getDisplayVersionPlain(sel);
         String pomKey = a[0] + ":" + a[1] + ":" + version;

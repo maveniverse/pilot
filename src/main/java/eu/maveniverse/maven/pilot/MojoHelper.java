@@ -20,7 +20,6 @@ package eu.maveniverse.maven.pilot;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
@@ -33,9 +32,9 @@ import org.eclipse.aether.graph.Exclusion;
 final class MojoHelper {
 
     /**
- * Private constructor to prevent instantiation of this utility class.
- */
-private MojoHelper() {}
+     * Private constructor to prevent instantiation of this utility class.
+     */
+    private MojoHelper() {}
 
     /**
      * Convert a Maven model Dependency into an Aether Dependency.
@@ -54,7 +53,7 @@ private MojoHelper() {}
         if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
             d = d.setExclusions(dep.getExclusions().stream()
                     .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList()));
+                    .toList());
         }
         return d;
     }
@@ -69,7 +68,7 @@ private MojoHelper() {}
         if (deps == null) {
             return Collections.emptyList();
         }
-        return deps.stream().map(MojoHelper::convertDependency).collect(Collectors.toList());
+        return deps.stream().map(MojoHelper::convertDependency).toList();
     }
 
     /**
