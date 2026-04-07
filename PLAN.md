@@ -10,7 +10,7 @@ All core goals are implemented and working:
 | `pilot:tree` | Browse dependency tree with expand/collapse, conflicts, reverse path | Done |
 | `pilot:pom` | POM viewer with Raw/Effective switching and origin detail | Done |
 | `pilot:updates` | Show available dependency updates with patch/minor/major classification | Done |
-| `pilot:analyze` | Unused/undeclared dependency analysis | Done |
+| `pilot:dependencies` | Unused/undeclared dependency analysis | Done |
 | `pilot:conflicts` | Conflict resolution with version pinning | Done |
 | `pilot:audit` | License and security (CVE) dashboard | Done |
 
@@ -93,7 +93,7 @@ Current test coverage:
 - `VersionComparatorTest` — 14 unit tests for version classification
 - `XmlTreeModelTest` — 10 unit tests for XML parsing and tree operations
 - `PomDemoTest` — TUI integration test for POM viewer
-- `AnalyzeDemoTest` — TUI integration test for dependency analysis
+- `DependenciesDemoTest` — TUI integration test for dependency analysis
 - `ConflictsDemoTest` — TUI integration test for conflict resolution
 - `UpdatesDemoTest` — TUI integration test for updates screen
 
