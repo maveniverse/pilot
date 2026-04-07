@@ -119,4 +119,70 @@ class UpdatesTuiTest {
         assertThat(dep.scope).isEqualTo("compile");
         assertThat(dep.type).isEqualTo("jar");
     }
+
+    @Test
+    void applyVersionResultFindsNewest() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of("2.0.0", "1.5.0", "1.0.0"));
+
+        assertThat(dep.newestVersion).isEqualTo("2.0.0");
+        assertThat(dep.updateType).isEqualTo(VersionComparator.UpdateType.MAJOR);
+        assertThat(tui.loadedCount).isEqualTo(1);
+    }
+
+    @Test
+    void applyVersionResultSkipsPreview() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of("2.0.0-beta1", "2.0.0-alpha1", "1.1.0"));
+
+        assertThat(dep.newestVersion).isEqualTo("1.1.0");
+        assertThat(dep.updateType).isEqualTo(VersionComparator.UpdateType.MINOR);
+    }
+
+    @Test
+    void applyVersionResultNoUpdate() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "2.0", "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of("1.5.0", "1.0.0"));
+
+        assertThat(dep.newestVersion).isNull();
+        assertThat(dep.updateType).isNull();
+    }
+
+    @Test
+    void applyVersionResultEmptyVersions() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of());
+
+        assertThat(dep.newestVersion).isNull();
+        assertThat(tui.loadedCount).isEqualTo(1);
+    }
+
+    @Test
+    void applyVersionResultWithEmptyCurrentVersion() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", null, "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of("2.0.0", "1.0.0"));
+
+        // Empty version should accept any non-preview version
+        assertThat(dep.newestVersion).isEqualTo("2.0.0");
+    }
 }

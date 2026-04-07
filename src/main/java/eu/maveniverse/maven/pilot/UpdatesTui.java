@@ -172,19 +172,7 @@ class UpdatesTui {
                             },
                             httpPool)
                     .thenAccept(versions -> runner.runOnRenderThread(() -> {
-                        loadedCount++;
-                        String newest = null;
-                        for (String v : versions) {
-                            if (VersionComparator.isPreview(v)) continue;
-                            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
-                                newest = v;
-                                break; // versions are newest-first
-                            }
-                        }
-                        if (newest != null) {
-                            dep.newestVersion = newest;
-                            dep.updateType = VersionComparator.classify(dep.version, newest);
-                        }
+                        applyVersionResult(dep, versions);
                         updateStatusIfDone();
                     }))
                     .exceptionally(ex -> {
@@ -195,6 +183,25 @@ class UpdatesTui {
                         });
                         return null;
                     });
+        }
+    }
+
+    /**
+     * Apply resolved versions to a dependency, selecting the newest non-preview version.
+     */
+    void applyVersionResult(DependencyInfo dep, List<String> versions) {
+        loadedCount++;
+        String newest = null;
+        for (String v : versions) {
+            if (VersionComparator.isPreview(v)) continue;
+            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
+                newest = v;
+                break; // versions are newest-first
+            }
+        }
+        if (newest != null) {
+            dep.newestVersion = newest;
+            dep.updateType = VersionComparator.classify(dep.version, newest);
         }
     }
 
