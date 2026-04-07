@@ -59,7 +59,9 @@ class AnalyzeTui {
         final String version;
         final String scope;
         final boolean declared;
-        String pulledBy; /**
+        String pulledBy;
+
+        /**
          * Creates a DepEntry representing a dependency row in the TUI.
          *
          * @param groupId    the dependency groupId
@@ -69,7 +71,6 @@ class AnalyzeTui {
          * @param scope      the dependency scope; null is normalized to "compile"
          * @param declared   true if this entry corresponds to a declared dependency in the POM UI, false for a transitive entry
          */
-
         DepEntry(String groupId, String artifactId, String classifier, String version, String scope, boolean declared) {
             this.groupId = groupId;
             this.artifactId = artifactId;
