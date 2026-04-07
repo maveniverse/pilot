@@ -43,12 +43,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * Interactive TUI for viewing and applying dependency updates.
@@ -58,6 +60,15 @@ class UpdatesTui {
     @FunctionalInterface
     interface VersionResolver {
         List<String> resolveVersions(String groupId, String artifactId);
+    }
+
+    /**
+     * Convert a list of version objects to strings ordered newest-first.
+     */
+    static List<String> versionsNewestFirst(List<?> versions) {
+        List<String> result = versions.stream().map(Object::toString).collect(Collectors.toCollection(ArrayList::new));
+        Collections.reverse(result);
+        return result;
     }
 
     static class DependencyInfo {

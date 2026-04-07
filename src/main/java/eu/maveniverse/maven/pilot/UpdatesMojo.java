@@ -19,9 +19,7 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.plugin.AbstractMojo;
@@ -95,11 +93,7 @@ public class UpdatesMojo extends AbstractMojo {
                     request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
                     request.setRepositories(project.getRemoteProjectRepositories());
                     VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
-                    List<String> versions = result.getVersions().stream()
-                            .map(Object::toString)
-                            .collect(Collectors.toCollection(ArrayList::new));
-                    Collections.reverse(versions); // newest first
-                    return versions;
+                    return UpdatesTui.versionsNewestFirst(result.getVersions());
                 } catch (VersionRangeResolutionException e) {
                     throw new IllegalStateException("Failed to resolve versions for " + groupId + ":" + artifactId, e);
                 }

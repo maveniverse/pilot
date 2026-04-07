@@ -257,4 +257,37 @@ class UpdatesTuiTest {
         assertThat(deps.get(0).newestVersion).isEqualTo("2.0.0");
         assertThat(deps.get(1).newestVersion).isNull();
     }
+
+    @Test
+    void versionsNewestFirstReversesOrder() {
+        var result = UpdatesTui.versionsNewestFirst(List.of("1.0", "2.0", "3.0"));
+        assertThat(result).containsExactly("3.0", "2.0", "1.0");
+    }
+
+    @Test
+    void versionsNewestFirstEmptyList() {
+        var result = UpdatesTui.versionsNewestFirst(List.of());
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void versionsNewestFirstConvertsToString() {
+        // Simulates Version objects that have toString()
+        var result = UpdatesTui.versionsNewestFirst(List.of(1, 2, 3));
+        assertThat(result).containsExactly("3", "2", "1");
+    }
+
+    @Test
+    void applyVersionResultAllPreviews() {
+        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
+        deps.add(dep);
+
+        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        tui.applyVersionResult(dep, List.of("2.0.0-SNAPSHOT", "1.5.0-beta1", "1.2.0-alpha1"));
+
+        assertThat(dep.newestVersion).isNull();
+        assertThat(dep.updateType).isNull();
+        assertThat(tui.loadedCount).isEqualTo(1);
+    }
 }
