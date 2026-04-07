@@ -206,6 +206,6 @@ class AnalyzeTuiTest {
                 .filter(e -> e.ga().equals("dev.tamboui:tamboui-core:test-fixtures"))
                 .findFirst();
         assertThat(classified).isPresent();
-        assertThat(classified.get().classifier).isEqualTo("test-fixtures");
+        assertThat(classified.orElseThrow().classifier).isEqualTo("test-fixtures");
     }
 }
