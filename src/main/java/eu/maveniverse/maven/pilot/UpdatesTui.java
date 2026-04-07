@@ -43,17 +43,33 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * Interactive TUI for viewing and applying dependency updates.
  */
 class UpdatesTui {
+
+    @FunctionalInterface
+    interface VersionResolver {
+        List<String> resolveVersions(String groupId, String artifactId);
+    }
+
+    /**
+     * Convert a list of version objects to strings ordered newest-first.
+     */
+    static List<String> versionsNewestFirst(List<?> versions) {
+        List<String> result = versions.stream().map(Object::toString).collect(Collectors.toCollection(ArrayList::new));
+        Collections.reverse(result);
+        return result;
+    }
 
     static class DependencyInfo {
         final String groupId;
@@ -94,14 +110,16 @@ class UpdatesTui {
     private List<DependencyInfo> displayDeps;
     private final String pomPath;
     private final String projectGav;
+    private final VersionResolver versionResolver;
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = Executors.newFixedThreadPool(5);
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
 
     private Filter filter = Filter.ALL;
-    private String status = "Loading updates\u2026";
-    private boolean loading = true;
-    private int loadedCount = 0;
+    String status = "Loading updates\u2026";
+    boolean loading = true;
+    int loadedCount = 0;
+    int failedCount = 0;
 
     private TuiRunner runner;
 
@@ -125,11 +143,12 @@ class UpdatesTui {
      * @param pomPath path to the POM file that updates will be applied to
      * @param projectGav human-readable project identifier shown in the UI
      */
-    UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav) {
+    UpdatesTui(List<DependencyInfo> dependencies, String pomPath, String projectGav, VersionResolver versionResolver) {
         this.allDeps = dependencies;
         this.displayDeps = new ArrayList<>(dependencies);
         this.pomPath = pomPath;
         this.projectGav = projectGav;
+        this.versionResolver = versionResolver;
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }
@@ -153,32 +172,59 @@ class UpdatesTui {
     }
 
     private void fetchAllUpdates() {
+        fetchUpdates(runner::runOnRenderThread, httpPool);
+    }
+
+    CompletableFuture<Void> fetchUpdates(java.util.function.Consumer<Runnable> renderThread, ExecutorService executor) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (var dep : allDeps) {
-            CompletableFuture.supplyAsync(
-                            () -> SearchTui.fetchVersionsFromMetadata(dep.groupId, dep.artifactId), httpPool)
-                    .thenAccept(versions -> runner.runOnRenderThread(() -> {
-                        loadedCount++;
-                        String newest = null;
-                        for (String v : versions) {
-                            if (VersionComparator.isPreview(v)) continue;
-                            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
-                                newest = v;
-                                break; // versions are newest-first
-                            }
-                        }
-                        if (newest != null) {
-                            dep.newestVersion = newest;
-                            dep.updateType = VersionComparator.classify(dep.version, newest);
-                        }
-                        if (loadedCount >= allDeps.size()) {
-                            loading = false;
-                            applyFilter();
-                            long updates = allDeps.stream()
-                                    .filter(DependencyInfo::hasUpdate)
-                                    .count();
-                            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
-                        }
-                    }));
+            var future = CompletableFuture.supplyAsync(
+                            () -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), executor)
+                    .thenAccept(versions -> renderThread.accept(() -> {
+                        applyVersionResult(dep, versions);
+                        updateStatusIfDone();
+                    }))
+                    .exceptionally(ex -> {
+                        renderThread.accept(() -> {
+                            loadedCount++;
+                            failedCount++;
+                            updateStatusIfDone();
+                        });
+                        return null;
+                    });
+            futures.add(future);
+        }
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+    }
+
+    /**
+     * Apply resolved versions to a dependency, selecting the newest non-preview version.
+     */
+    void applyVersionResult(DependencyInfo dep, List<String> versions) {
+        loadedCount++;
+        String newest = null;
+        for (String v : versions) {
+            if (VersionComparator.isPreview(v)) continue;
+            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
+                newest = v;
+                break; // versions are newest-first
+            }
+        }
+        if (newest != null) {
+            dep.newestVersion = newest;
+            dep.updateType = VersionComparator.classify(dep.version, newest);
+        }
+    }
+
+    void updateStatusIfDone() {
+        if (loadedCount >= allDeps.size()) {
+            loading = false;
+            applyFilter();
+            long updates = allDeps.stream().filter(DependencyInfo::hasUpdate).count();
+            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
+            if (failedCount > 0) {
+                status += "; " + failedCount + " lookup(s) failed";
+            }
         }
     }
 

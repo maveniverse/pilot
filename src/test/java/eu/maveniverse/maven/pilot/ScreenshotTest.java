@@ -198,7 +198,7 @@ class ScreenshotTest {
         d5.updateType = VersionComparator.UpdateType.MINOR;
         deps.add(d5);
 
-        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0", (g, a) -> List.of());
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();

@@ -20,6 +20,7 @@ package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
 import java.util.List;
+import javax.inject.Inject;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -27,6 +28,12 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.resolution.VersionRangeRequest;
+import org.eclipse.aether.resolution.VersionRangeResolutionException;
+import org.eclipse.aether.resolution.VersionRangeResult;
 
 /**
  * Interactive TUI showing which dependencies have newer versions available.
@@ -43,6 +50,16 @@ public class UpdatesMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
+    private RepositorySystemSession repoSession;
+
+    private final RepositorySystem repoSystem;
+
+    @Inject
+    UpdatesMojo(RepositorySystem repoSystem) {
+        this.repoSystem = repoSystem;
+    }
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -72,7 +89,21 @@ public class UpdatesMojo extends AbstractMojo {
             String pomPath = project.getFile().getAbsolutePath();
             String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
 
-            UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav);
+            // Use the Resolver to fetch available versions, respecting all configured
+            // repositories, mirrors, authentication, and proxies.
+            UpdatesTui.VersionResolver versionResolver = (groupId, artifactId) -> {
+                try {
+                    VersionRangeRequest request = new VersionRangeRequest();
+                    request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
+                    request.setRepositories(project.getRemoteProjectRepositories());
+                    VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
+                    return UpdatesTui.versionsNewestFirst(result.getVersions());
+                } catch (VersionRangeResolutionException e) {
+                    throw new IllegalStateException("Failed to resolve versions for " + groupId + ":" + artifactId, e);
+                }
+            };
+
+            UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav, versionResolver);
             tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to check updates: " + e.getMessage(), e);

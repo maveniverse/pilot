@@ -36,10 +36,11 @@ import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.DependencyNode;
 
 /**
- * Interactive dependency analysis — shows unused declared and used undeclared dependencies.
+ * Interactive TUI showing declared vs transitive dependency overview.
  *
- * <p>Note: This is a heuristic analysis based on the dependency tree structure.
- * For bytecode-level analysis, use maven-dependency-analyzer.</p>
+ * <p>Displays two views: declared dependencies (from the POM) and transitive
+ * dependencies (pulled in indirectly). Allows promoting transitive dependencies
+ * to declared, or removing declared dependencies from the POM.</p>
  *
  * <p>Usage:</p>
  * <pre>
@@ -61,8 +62,9 @@ public class AnalyzeMojo extends AbstractMojo {
     private RepositorySystem repoSystem;
 
     /**
-     * Performs dependency analysis: collects declared dependencies from the project POM, resolves the full transitive
-     * dependency tree, identifies transitive (undeclared) dependencies, and presents the results using the Analyze TUI.
+     * Collects declared dependencies from the project POM, resolves the full transitive
+     * dependency tree, and presents a side-by-side view of declared vs transitive dependencies
+     * using the Analyze TUI.
      *
      * @throws MojoExecutionException if dependency collection, traversal, or the TUI run fails
      */

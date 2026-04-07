@@ -19,9 +19,9 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.eclipse.aether.graph.DependencyNode;
@@ -47,7 +47,7 @@ class DependencyTreeModel {
             this.groupId = groupId;
             this.artifactId = artifactId;
             this.version = version;
-            this.scope = scope != null ? scope : "compile";
+            this.scope = scope != null ? scope : SCOPE_COMPILE;
             this.optional = optional;
             this.depth = depth;
             this.children = new ArrayList<>();
@@ -81,20 +81,49 @@ class DependencyTreeModel {
         this.totalNodes = totalNodes;
     }
 
-    static DependencyTreeModel fromDependencyNode(DependencyNode rootNode) {
-        Map<String, String> resolvedVersions = new HashMap<>();
-        int[] counter = {0};
-        TreeNode root = convertNode(rootNode, 0, resolvedVersions, counter, new HashSet<>());
+    /**
+     * Scopes included for each resolution scope, following Maven Resolver conventions.
+     */
+    private static final String SCOPE_COMPILE = "compile";
 
-        // Detect conflicts: where requested != resolved
+    private static final String SCOPE_RUNTIME = "runtime";
+    private static final String SCOPE_TEST = "test";
+    private static final String SCOPE_PROVIDED = "provided";
+    private static final String SCOPE_SYSTEM = "system";
+
+    private static final Map<String, Set<String>> SCOPE_INCLUSIONS = Map.of(
+            SCOPE_COMPILE, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, ""),
+            SCOPE_RUNTIME, Set.of(SCOPE_COMPILE, SCOPE_RUNTIME, ""),
+            SCOPE_TEST, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, SCOPE_RUNTIME, SCOPE_TEST, ""));
+
+    static DependencyTreeModel fromDependencyNode(DependencyNode rootNode) {
+        return fromDependencyNode(rootNode, null);
+    }
+
+    static DependencyTreeModel fromDependencyNode(DependencyNode rootNode, String scope) {
+        Set<String> includedScopes = null;
+        if (scope != null) {
+            String normalized = scope.toLowerCase(Locale.ROOT);
+            includedScopes = SCOPE_INCLUSIONS.get(normalized);
+            if (includedScopes == null) {
+                throw new IllegalArgumentException(
+                        "Unsupported scope '" + scope + "'. Supported values: " + SCOPE_INCLUSIONS.keySet());
+            }
+        }
+        int[] counter = {0};
         List<TreeNode> conflicts = new ArrayList<>();
-        collectConflicts(root, resolvedVersions, conflicts);
+        TreeNode root = convertNode(rootNode, 0, counter, new HashSet<>(), conflicts, includedScopes);
 
         return new DependencyTreeModel(root, conflicts, counter[0]);
     }
 
     private static TreeNode convertNode(
-            DependencyNode node, int depth, Map<String, String> resolvedVersions, int[] counter, Set<String> visited) {
+            DependencyNode node,
+            int depth,
+            int[] counter,
+            Set<String> visited,
+            List<TreeNode> conflicts,
+            Set<String> includedScopes) {
         counter[0]++;
 
         String groupId, artifactId, version, scope;
@@ -121,33 +150,33 @@ class DependencyTreeModel {
 
         TreeNode treeNode = new TreeNode(groupId, artifactId, version, scope, optional, depth);
 
-        String ga = treeNode.ga();
-        resolvedVersions.putIfAbsent(ga, version);
+        // Read conflict data from the Resolver's ConflictResolver transformer.
+        // After conflict resolution, losing nodes have their version replaced with
+        // the winner's version, and the original requested version is stored in
+        // "conflict.originalVersion" node data.
+        if (node.getData().get("conflict.originalVersion") instanceof String originalVersion) {
+            treeNode.requestedVersion = originalVersion;
+            conflicts.add(treeNode);
+        }
 
         // Guard against cycles
-        String nodeKey = ga + ":" + version;
+        String nodeKey = treeNode.ga() + ":" + version;
         if (!visited.add(nodeKey)) {
             return treeNode;
         }
 
         for (DependencyNode child : node.getChildren()) {
-            treeNode.children.add(convertNode(child, depth + 1, resolvedVersions, counter, visited));
+            if (includedScopes != null && child.getDependency() != null) {
+                String childScope = child.getDependency().getScope();
+                if (childScope != null && !includedScopes.contains(childScope)) {
+                    continue;
+                }
+            }
+            treeNode.children.add(convertNode(child, depth + 1, counter, visited, conflicts, includedScopes));
         }
 
         visited.remove(nodeKey);
         return treeNode;
-    }
-
-    private static void collectConflicts(
-            TreeNode node, Map<String, String> resolvedVersions, List<TreeNode> conflicts) {
-        String resolvedVersion = resolvedVersions.get(node.ga());
-        if (resolvedVersion != null && !resolvedVersion.equals(node.version) && node.depth > 0) {
-            node.requestedVersion = node.version;
-            conflicts.add(node);
-        }
-        for (TreeNode child : node.children) {
-            collectConflicts(child, resolvedVersions, conflicts);
-        }
     }
 
     /**

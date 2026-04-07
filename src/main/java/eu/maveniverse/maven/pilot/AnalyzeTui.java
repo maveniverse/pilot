@@ -46,7 +46,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Interactive TUI for dependency analysis.
+ * Interactive TUI showing declared vs transitive dependency overview.
  */
 class AnalyzeTui {
 
@@ -272,7 +272,7 @@ class AnalyzeTui {
 
     private void renderHeader(Frame frame, Rect area) {
         Block block = Block.builder()
-                .title(" Pilot \u2014 Dependency Analysis ")
+                .title(" Pilot \u2014 Dependency Overview ")
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(Style.create().cyan())
                 .build();
