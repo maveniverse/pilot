@@ -55,7 +55,7 @@ class UpdatesDemoTest {
         d4.updateType = VersionComparator.UpdateType.MINOR;
         deps.add(d4);
 
-        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0", (g, a) -> List.of());
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
 
