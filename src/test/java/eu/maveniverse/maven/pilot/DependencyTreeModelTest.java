@@ -20,7 +20,12 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.graph.DefaultDependencyNode;
+import org.eclipse.aether.graph.Dependency;
 import org.junit.jupiter.api.Test;
 
 class DependencyTreeModelTest {
@@ -177,5 +182,158 @@ class DependencyTreeModelTest {
 
         var results = model.filter("nonexistent");
         assertThat(results).isEmpty();
+    }
+
+    // -- fromDependencyNode tests --
+
+    private DefaultDependencyNode depNode(String g, String a, String v, String scope) {
+        var artifact = new DefaultArtifact(g, a, "", "jar", v);
+        var dependency = new Dependency(artifact, scope);
+        return new DefaultDependencyNode(dependency);
+    }
+
+    private DefaultDependencyNode rootNode(String g, String a, String v) {
+        var artifact = new DefaultArtifact(g, a, "", "jar", v);
+        return new DefaultDependencyNode(artifact);
+    }
+
+    @Test
+    void fromDependencyNodeDetectsConflictsViaOriginalVersion() {
+        // Root -> child1 (guava:33.0) -> grandchild (failureaccess:1.0.2, conflict: originally requested 1.0.1)
+        var root = rootNode("com.example", "app", "1.0.0");
+        var child = depNode("com.google.guava", "guava", "33.0.0-jre", "compile");
+        var conflicting = depNode("com.google.guava", "failureaccess", "1.0.2", "compile");
+
+        // Simulate Resolver's ConflictResolver: losing node has version replaced
+        // and original version stored in data
+        Map<Object, Object> data = new HashMap<>();
+        data.put("conflict.originalVersion", "1.0.1");
+        conflicting.setData(data);
+
+        child.setChildren(List.of(conflicting));
+        root.setChildren(List.of(child));
+
+        var model = DependencyTreeModel.fromDependencyNode(root);
+
+        assertThat(model.conflicts).hasSize(1);
+        var conflict = model.conflicts.get(0);
+        assertThat(conflict.ga()).isEqualTo("com.google.guava:failureaccess");
+        assertThat(conflict.version).isEqualTo("1.0.2"); // resolved (winner) version
+        assertThat(conflict.requestedVersion).isEqualTo("1.0.1"); // original requested version
+        assertThat(conflict.isConflict()).isTrue();
+    }
+
+    @Test
+    void fromDependencyNodeNoConflictWithoutOriginalVersion() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var child = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        root.setChildren(List.of(child));
+
+        var model = DependencyTreeModel.fromDependencyNode(root);
+
+        assertThat(model.conflicts).isEmpty();
+        // Node should not have requestedVersion set
+        var nodes = model.visibleNodes();
+        var childNode = nodes.get(1);
+        assertThat(childNode.requestedVersion).isNull();
+        assertThat(childNode.isConflict()).isFalse();
+    }
+
+    @Test
+    void fromDependencyNodeScopeFilterCompile() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var compileChild = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        var testChild = depNode("org.junit", "junit", "5.10.0", "test");
+        var runtimeChild = depNode("com.example", "runtime-lib", "1.0", "runtime");
+        var providedChild = depNode("javax.servlet", "servlet-api", "4.0", "provided");
+        root.setChildren(List.of(compileChild, testChild, runtimeChild, providedChild));
+
+        var model = DependencyTreeModel.fromDependencyNode(root, "compile");
+
+        // compile scope includes: compile, provided, system — excludes test, runtime
+        var visible = model.visibleNodes();
+        var childGas =
+                visible.stream().skip(1).map(DependencyTreeModel.TreeNode::ga).toList();
+        assertThat(childGas).contains("org.slf4j:slf4j-api", "javax.servlet:servlet-api");
+        assertThat(childGas).doesNotContain("org.junit:junit", "com.example:runtime-lib");
+    }
+
+    @Test
+    void fromDependencyNodeScopeFilterRuntime() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var compileChild = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        var testChild = depNode("org.junit", "junit", "5.10.0", "test");
+        var runtimeChild = depNode("com.example", "runtime-lib", "1.0", "runtime");
+        var providedChild = depNode("javax.servlet", "servlet-api", "4.0", "provided");
+        root.setChildren(List.of(compileChild, testChild, runtimeChild, providedChild));
+
+        var model = DependencyTreeModel.fromDependencyNode(root, "runtime");
+
+        // runtime scope includes: compile, runtime — excludes test, provided
+        var visible = model.visibleNodes();
+        var childGas =
+                visible.stream().skip(1).map(DependencyTreeModel.TreeNode::ga).toList();
+        assertThat(childGas).contains("org.slf4j:slf4j-api", "com.example:runtime-lib");
+        assertThat(childGas).doesNotContain("org.junit:junit", "javax.servlet:servlet-api");
+    }
+
+    @Test
+    void fromDependencyNodeScopeFilterTest() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var compileChild = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        var testChild = depNode("org.junit", "junit", "5.10.0", "test");
+        var runtimeChild = depNode("com.example", "runtime-lib", "1.0", "runtime");
+        root.setChildren(List.of(compileChild, testChild, runtimeChild));
+
+        var model = DependencyTreeModel.fromDependencyNode(root, "test");
+
+        // test scope includes all scopes
+        var visible = model.visibleNodes();
+        assertThat(visible).hasSize(4); // root + 3 children
+    }
+
+    @Test
+    void fromDependencyNodeNoScopeFilterShowsAll() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var compileChild = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        var testChild = depNode("org.junit", "junit", "5.10.0", "test");
+        root.setChildren(List.of(compileChild, testChild));
+
+        var model = DependencyTreeModel.fromDependencyNode(root, null);
+
+        var visible = model.visibleNodes();
+        assertThat(visible).hasSize(3); // root + both children
+    }
+
+    @Test
+    void fromDependencyNodeCountsNodesCorrectly() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var child = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        var grandchild = depNode("org.slf4j", "slf4j-impl", "2.0.9", "runtime");
+        child.setChildren(List.of(grandchild));
+        root.setChildren(List.of(child));
+
+        var model = DependencyTreeModel.fromDependencyNode(root);
+
+        assertThat(model.totalNodes).isEqualTo(3);
+    }
+
+    @Test
+    void fromDependencyNodeHandlesCycles() {
+        var root = rootNode("com.example", "app", "1.0.0");
+        var child = depNode("com.example", "lib-a", "1.0", "compile");
+        // Create a cycle: lib-a -> lib-b -> lib-a (same GA:version)
+        var grandchild = depNode("com.example", "lib-b", "1.0", "compile");
+        var cycle = depNode("com.example", "lib-a", "1.0", "compile");
+        grandchild.setChildren(List.of(cycle));
+        child.setChildren(List.of(grandchild));
+        root.setChildren(List.of(child));
+
+        // Should not stack overflow
+        var model = DependencyTreeModel.fromDependencyNode(root);
+        assertThat(model.root).isNotNull();
+        // The cycle node should have no children (cycle broken)
+        var cycleNode = model.root.children.get(0).children.get(0).children.get(0);
+        assertThat(cycleNode.children).isEmpty();
     }
 }
