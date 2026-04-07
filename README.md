@@ -12,7 +12,7 @@ Pilot is a Maven plugin that replaces hard-to-read CLI output with interactive, 
 | `pilot:tree` | Browse the resolved dependency tree with expand/collapse, conflict highlighting, and reverse path lookup |
 | `pilot:pom` | View raw and effective POM with syntax highlighting, collapsible XML nodes, and origin tracking |
 | `pilot:updates` | Check for dependency updates with patch/minor/major classification and batch POM editing |
-| `pilot:analyze` | Find unused declared and used-but-undeclared dependencies, fix with one keypress |
+| `pilot:dependencies` | Find unused declared and used-but-undeclared dependencies, fix with one keypress |
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
 | `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies |
 
@@ -39,7 +39,7 @@ mvn pilot:updates
 mvn pilot:pom
 
 # Analyze dependency hygiene
-mvn pilot:analyze
+mvn pilot:dependencies
 
 # Detect and resolve version conflicts
 mvn pilot:conflicts
@@ -80,11 +80,11 @@ Scans all dependencies for newer versions. Updates are color-coded: green (patch
 
 **Keys:** `Space` — toggle, `a` — select all, `n` — deselect all, `Enter` — apply, `1-4` — filter by type
 
-### Dependency Analysis (`pilot:analyze`)
+### Dependency Analysis (`pilot:dependencies`)
 
 Two views: **Declared** dependencies (remove unused ones) and **Transitive** dependencies (promote undeclared ones). One-keypress fixes modify your POM directly.
 
-![pilot:analyze](docs/images/analyze.svg)
+![pilot:dependencies](docs/images/dependencies.svg)
 
 **Keys:** `Tab` — switch view, `d` — remove declared, `a` — add transitive, `Enter` — fix selected
 

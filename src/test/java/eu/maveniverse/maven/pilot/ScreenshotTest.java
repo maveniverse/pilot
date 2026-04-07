@@ -214,21 +214,32 @@ class ScreenshotTest {
 
     @Test
     void dependencyAnalysis() throws Exception {
-        List<AnalyzeTui.DepEntry> declared = new ArrayList<>();
-        declared.add(new AnalyzeTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0.9", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("commons-io", "commons-io", "", "2.15.1", "compile", true));
-        declared.add(new AnalyzeTui.DepEntry("org.apache.commons", "commons-text", "", "1.11.0", "compile", false));
+        List<DependenciesTui.DepEntry> declared = new ArrayList<>();
+        var d1 = new DependenciesTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true);
+        d1.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
+        declared.add(d1);
+        var d2 = new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0.9", "compile", true);
+        d2.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
+        declared.add(d2);
+        var d3 = new DependenciesTui.DepEntry("commons-io", "commons-io", "", "2.15.1", "compile", true);
+        d3.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
+        declared.add(d3);
+        var d4 = new DependenciesTui.DepEntry("org.apache.commons", "commons-text", "", "1.11.0", "compile", false);
+        d4.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
+        declared.add(d4);
 
-        List<AnalyzeTui.DepEntry> transitive = new ArrayList<>();
-        var t1 = new AnalyzeTui.DepEntry("com.google.guava", "failureaccess", "", "1.0.2", "compile", false);
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
+        var t1 = new DependenciesTui.DepEntry("com.google.guava", "failureaccess", "", "1.0.2", "compile", false);
         t1.pulledBy = "guava";
+        t1.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
         transitive.add(t1);
-        var t2 = new AnalyzeTui.DepEntry("org.checkerframework", "checker-qual", "", "3.42.0", "compile", false);
+        var t2 = new DependenciesTui.DepEntry("org.checkerframework", "checker-qual", "", "3.42.0", "compile", false);
         t2.pulledBy = "guava";
+        t2.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
         transitive.add(t2);
 
-        AnalyzeTui tui = new AnalyzeTui(declared, transitive, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        DependenciesTui tui =
+                new DependenciesTui(declared, transitive, "/tmp/test-pom.xml", "com.example:demo:1.0.0", true);
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
@@ -236,7 +247,7 @@ class ScreenshotTest {
             pilot.pause();
         }
 
-        saveSvg("analyze", renderToSvg(tui::render, "pilot:analyze"));
+        saveSvg("dependencies", renderToSvg(tui::render, "pilot:dependencies"));
     }
 
     @Test

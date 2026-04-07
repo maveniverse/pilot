@@ -50,16 +50,29 @@ import org.eclipse.aether.graph.DependencyNode;
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
  */
-class AnalyzeTui {
+class DependenciesTui {
+
+    private static final String COMPILE_SCOPE = "compile";
+    private static final String COL_GA = "groupId:artifactId";
+    private static final String COL_VERSION = "version";
+    private static final String COL_SCOPE = "scope";
+    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
+
+    // Maven 3 scopes (modelVersion 4.0.0)
+    private static final List<String> SCOPES_3X = List.of(COMPILE_SCOPE, "provided", "runtime", "test");
+    // Maven 4 scopes (modelVersion 4.1.0+), see org.apache.maven.api.DependencyScope
+    private static final List<String> SCOPES_4X =
+            List.of(COMPILE_SCOPE, "compile-only", "provided", "runtime", "test", "test-only", "test-runtime");
 
     static class DepEntry {
         final String groupId;
         final String artifactId;
         final String classifier;
         final String version;
-        final String scope;
+        String scope;
         final boolean declared;
-        String pulledBy;
+        String pulledBy; // for transitive deps: who pulled this in
+        DependencyUsageAnalyzer.UsageStatus usageStatus; // set after bytecode analysis
 
         /**
          * Creates a DepEntry representing a dependency row in the TUI.
@@ -76,7 +89,7 @@ class AnalyzeTui {
             this.artifactId = artifactId;
             this.classifier = classifier != null ? classifier : "";
             this.version = version != null ? version : "";
-            this.scope = scope != null ? scope : "compile";
+            this.scope = scope != null ? scope : COMPILE_SCOPE;
             this.declared = declared;
         }
 
@@ -180,12 +193,11 @@ class AnalyzeTui {
     private final List<DepEntry> transitive;
     private final String pomPath;
     private final String projectGav;
+    private final boolean bytecodeAnalyzed;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
     private String status;
-
-    private TuiRunner runner;
 
     /**
      * Get the currently selected table row index.
@@ -198,7 +210,7 @@ class AnalyzeTui {
     }
 
     /**
-     * Create a new AnalyzeTui bound to the given dependency lists and POM metadata.
+     * Create a new DependenciesTui bound to the given dependency lists and POM metadata.
      *
      * Initializes the backing declared and transitive dependency lists, the POM file path,
      * and the displayed project GAV. Sets the status message to "<declared.size()> declared, <transitive.size()> transitive dependencies".
@@ -209,14 +221,39 @@ class AnalyzeTui {
      * @param pomPath    filesystem path to the target POM file that will be edited when modifying dependencies
      * @param projectGav the project GAV string displayed in the UI header
      */
-    AnalyzeTui(List<DepEntry> declared, List<DepEntry> transitive, String pomPath, String projectGav) {
+    DependenciesTui(List<DepEntry> declared, List<DepEntry> transitive, String pomPath, String projectGav) {
+        this(declared, transitive, pomPath, projectGav, false);
+    }
+
+    DependenciesTui(
+            List<DepEntry> declared,
+            List<DepEntry> transitive,
+            String pomPath,
+            String projectGav,
+            boolean bytecodeAnalyzed) {
         this.declared = declared;
         this.transitive = transitive;
         this.pomPath = pomPath;
         this.projectGav = projectGav;
-        this.status = declared.size() + " declared, " + transitive.size() + " transitive dependencies";
+        this.bytecodeAnalyzed = bytecodeAnalyzed;
+        updateStatus();
         if (!declared.isEmpty()) {
             tableState.select(0);
+        }
+    }
+
+    private void updateStatus() {
+        if (bytecodeAnalyzed) {
+            long unused = declared.stream()
+                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
+                    .count();
+            long usedTransitive = transitive.stream()
+                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
+                    .count();
+            this.status = declared.size() + " declared (" + unused + " unused), " + transitive.size() + " transitive ("
+                    + usedTransitive + " used)";
+        } else {
+            this.status = declared.size() + " declared, " + transitive.size() + " transitive dependencies";
         }
     }
 
@@ -227,7 +264,6 @@ class AnalyzeTui {
                 .tickRate(Duration.ofMillis(100))
                 .build();
         try {
-            runner = configured.runner();
             configured.run();
         } finally {
             configured.close();
@@ -274,6 +310,11 @@ class AnalyzeTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('s')) {
+            changeScope();
+            return true;
+        }
+
         return false;
     }
 
@@ -314,7 +355,7 @@ class AnalyzeTui {
             editor.dependencies().deleteDependency(Coordinates.of(dep.groupId, dep.artifactId, dep.version));
             Files.writeString(Path.of(pomPath), editor.toXml());
             declared.remove(sel);
-            status = "Removed " + dep.ga() + " from POM";
+            updateStatus();
             if (sel >= declared.size() && !declared.isEmpty()) {
                 tableState.select(declared.size() - 1);
             }
@@ -345,13 +386,100 @@ class AnalyzeTui {
             transitive.remove(sel);
             dep.pulledBy = null;
             declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true));
-            status = "Added " + dep.ga() + " to POM";
+            updateStatus();
             if (sel >= transitive.size() && !transitive.isEmpty()) {
                 tableState.select(transitive.size() - 1);
             }
         } catch (Exception e) {
             status = "Failed to add: " + e.getMessage();
         }
+    }
+
+    private boolean isOk(DepEntry dep) {
+        // For declared deps, USED = ok. For transitive deps, UNUSED = ok (not directly referenced).
+        return dep.declared
+                ? dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED
+                : dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED;
+    }
+
+    private String usageIcon(DepEntry dep) {
+        if (dep.usageStatus == null) {
+            return " ";
+        }
+        if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
+            return "?";
+        }
+        return isOk(dep) ? "\u2713" : "\u2717";
+    }
+
+    private Style usageRowStyle(DepEntry dep) {
+        if (dep.usageStatus == null || dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
+            return Style.create().fg(dep.usageStatus == null ? null : Color.DARK_GRAY);
+        }
+        return isOk(dep) ? Style.create() : Style.create().fg(Color.YELLOW);
+    }
+
+    /**
+     * Cycle the scope of the currently selected declared dependency and persist to POM.
+     */
+    private void changeScope() {
+        if (view != View.DECLARED) return;
+        int sel = selectedIndex();
+        if (sel < 0 || sel >= declared.size()) return;
+        var dep = declared.get(sel);
+
+        try {
+            String pomContent = Files.readString(Path.of(pomPath));
+            Document doc = Document.of(pomContent);
+
+            List<String> scopes = getScopesForModel(doc);
+            if (!scopes.contains(dep.scope)) {
+                // Unknown scope (e.g. "system") — include it in the cycling list
+                scopes = new ArrayList<>(scopes);
+                scopes.add(dep.scope);
+            }
+            int current = scopes.indexOf(dep.scope);
+            String newScope = scopes.get((current + 1) % scopes.size());
+            PomEditor editor = new PomEditor(doc);
+            Coordinates coords = Coordinates.of(dep.groupId, dep.artifactId, dep.version);
+
+            // Find the <dependency> element matching this GA
+            doc.root()
+                    .childElement("dependencies")
+                    .flatMap(deps -> deps.childElements("dependency")
+                            .filter(coords.predicateGA())
+                            .findFirst())
+                    .ifPresentOrElse(
+                            el -> {
+                                try {
+                                    if (COMPILE_SCOPE.equals(newScope)) {
+                                        // Remove <scope> element — compile is the default
+                                        el.childElement(COL_SCOPE).ifPresent(el::removeChild);
+                                    } else {
+                                        editor.updateOrCreateChildElement(el, COL_SCOPE, newScope);
+                                    }
+                                    Files.writeString(Path.of(pomPath), doc.toXml());
+                                    dep.scope = newScope;
+                                    updateStatus();
+                                } catch (Exception e) {
+                                    status = "Failed to change scope: " + e.getMessage();
+                                }
+                            },
+                            () -> status = "Dependency " + dep.ga() + " not found in POM");
+        } catch (Exception e) {
+            status = "Failed to change scope: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Determine which scope list to use based on the POM's modelVersion.
+     */
+    private static List<String> getScopesForModel(Document doc) {
+        String modelVersion = doc.root()
+                .childElement("modelVersion")
+                .map(e -> e.textContentTrimmedOr("4.0.0"))
+                .orElse("4.0.0");
+        return modelVersion.compareTo("4.1.0") >= 0 ? SCOPES_4X : SCOPES_3X;
     }
 
     // -- Rendering --
@@ -376,12 +504,31 @@ class AnalyzeTui {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.DECLARED ? "\u25B8 " : "  ") + "Declared: " + declared.size() + "]")
+
+        String declaredLabel = "Declared: " + declared.size();
+        if (bytecodeAnalyzed) {
+            long unused = declared.stream()
+                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
+                    .count();
+            if (unused > 0) {
+                declaredLabel += " (" + unused + " unused)";
+            }
+        }
+        spans.add(Span.raw("[" + (view == View.DECLARED ? HIGHLIGHT_SYMBOL : "  ") + declaredLabel + "]")
                 .fg(view == View.DECLARED ? Color.YELLOW : Color.DARK_GRAY));
         spans.add(Span.raw("  "));
-        spans.add(
-                Span.raw("[" + (view == View.TRANSITIVE ? "\u25B8 " : "  ") + "Transitive: " + transitive.size() + "]")
-                        .fg(view == View.TRANSITIVE ? Color.YELLOW : Color.DARK_GRAY));
+
+        String transitiveLabel = "Transitive: " + transitive.size();
+        if (bytecodeAnalyzed) {
+            long used = transitive.stream()
+                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
+                    .count();
+            if (used > 0) {
+                transitiveLabel += " (" + used + " used)";
+            }
+        }
+        spans.add(Span.raw("[" + (view == View.TRANSITIVE ? HIGHLIGHT_SYMBOL : "  ") + transitiveLabel + "]")
+                .fg(view == View.TRANSITIVE ? Color.YELLOW : Color.DARK_GRAY));
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
@@ -412,43 +559,75 @@ class AnalyzeTui {
             return;
         }
 
-        Row header;
-        if (view == View.DECLARED) {
-            header = Row.from("groupId:artifactId", "version", "scope")
-                    .style(Style.create().bold().yellow());
-        } else {
-            header = Row.from("groupId:artifactId", "version", "scope", "pulled by")
-                    .style(Style.create().bold().yellow());
-        }
-
         List<Row> rows = new ArrayList<>();
         for (var dep : deps) {
-            if (view == View.DECLARED) {
-                rows.add(Row.from(dep.ga(), dep.version, dep.scope));
-            } else {
-                String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
-                rows.add(Row.from(dep.ga(), dep.version, dep.scope, via));
-            }
+            rows.add(buildRow(dep));
         }
 
-        Table.Builder tableBuilder = Table.builder()
-                .header(header)
+        Table table = Table.builder()
+                .header(buildTableHeader())
                 .rows(rows)
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
-                .block(block);
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
+                .block(block)
+                .widths(getTableWidths())
+                .build();
 
-        if (view == View.DECLARED) {
-            tableBuilder.widths(Constraint.percentage(50), Constraint.percentage(25), Constraint.percentage(25));
-        } else {
-            tableBuilder.widths(
+        frame.renderStatefulWidget(table, area, tableState);
+    }
+
+    private Row buildTableHeader() {
+        boolean showTransitiveCol = view == View.TRANSITIVE;
+        Style headerStyle = Style.create().bold().yellow();
+        if (bytecodeAnalyzed) {
+            return showTransitiveCol
+                    ? Row.from("", COL_GA, COL_VERSION, COL_SCOPE, "pulled by").style(headerStyle)
+                    : Row.from("", COL_GA, COL_VERSION, COL_SCOPE).style(headerStyle);
+        }
+        return showTransitiveCol
+                ? Row.from(COL_GA, COL_VERSION, COL_SCOPE, "pulled by").style(headerStyle)
+                : Row.from(COL_GA, COL_VERSION, COL_SCOPE).style(headerStyle);
+    }
+
+    private Row buildRow(DepEntry dep) {
+        String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
+        if (bytecodeAnalyzed) {
+            String icon = usageIcon(dep);
+            Row row = (view == View.DECLARED)
+                    ? Row.from(icon, dep.ga(), dep.version, dep.scope)
+                    : Row.from(icon, dep.ga(), dep.version, dep.scope, via);
+            return row.style(usageRowStyle(dep));
+        }
+        return (view == View.DECLARED)
+                ? Row.from(dep.ga(), dep.version, dep.scope)
+                : Row.from(dep.ga(), dep.version, dep.scope, via);
+    }
+
+    private Constraint[] getTableWidths() {
+        if (bytecodeAnalyzed) {
+            return (view == View.DECLARED)
+                    ? new Constraint[] {
+                        Constraint.length(4),
+                        Constraint.percentage(46),
+                        Constraint.percentage(25),
+                        Constraint.percentage(25)
+                    }
+                    : new Constraint[] {
+                        Constraint.length(4),
+                        Constraint.percentage(33),
+                        Constraint.percentage(17),
+                        Constraint.percentage(17),
+                        Constraint.percentage(33)
+                    };
+        }
+        return (view == View.DECLARED)
+                ? new Constraint[] {Constraint.percentage(50), Constraint.percentage(25), Constraint.percentage(25)}
+                : new Constraint[] {
                     Constraint.percentage(35),
                     Constraint.percentage(15),
                     Constraint.percentage(15),
-                    Constraint.percentage(35));
-        }
-
-        frame.renderStatefulWidget(tableBuilder.build(), area, tableState);
+                    Constraint.percentage(35)
+                };
     }
 
     private void renderInfoBar(Frame frame, Rect area) {
@@ -470,7 +649,9 @@ class AnalyzeTui {
         spans.add(Span.raw(":Switch view  "));
         if (view == View.DECLARED) {
             spans.add(Span.raw("d/Enter").bold());
-            spans.add(Span.raw(":Remove from POM  "));
+            spans.add(Span.raw(":Delete  "));
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Change scope  "));
         } else {
             spans.add(Span.raw("a/Enter").bold());
             spans.add(Span.raw(":Add to POM  "));
