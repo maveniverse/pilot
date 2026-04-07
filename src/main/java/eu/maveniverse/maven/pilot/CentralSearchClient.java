@@ -24,7 +24,7 @@ import jakarta.json.JsonReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
@@ -59,7 +59,7 @@ class CentralSearchClient implements SearchTui.SearchClient {
         }
         StringBuilder sb = new StringBuilder();
         for (String token : q.split("\\s+")) {
-            if (sb.length() > 0) {
+            if (!sb.isEmpty()) {
                 sb.append(' ');
             }
             if (token.startsWith("*") || token.endsWith("*")) {
@@ -71,21 +71,33 @@ class CentralSearchClient implements SearchTui.SearchClient {
         return sb.toString();
     }
 
+    /**
+     * Execute an HTTP GET against the provided search URL and parse the response as JSON.
+     *
+     * @param url the full HTTP URL to query (including query parameters)
+     * @return the root {@code JsonObject} parsed from the response body
+     * @throws IOException if the HTTP response code is not 200 or an I/O error occurs while performing the request or reading the response
+     */
     private JsonObject executeSearch(String url) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setRequestMethod("GET");
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setConnectTimeout(10_000);
-        connection.setReadTimeout(10_000);
+        HttpURLConnection connection =
+                (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(10_000);
 
-        int status = connection.getResponseCode();
-        if (status != 200) {
-            throw new IOException("Search API returned HTTP " + status);
-        }
+            int status = connection.getResponseCode();
+            if (status != 200) {
+                throw new IOException("Search API returned HTTP " + status);
+            }
 
-        try (InputStream is = connection.getInputStream();
-                JsonReader reader = Json.createReader(is)) {
-            return reader.readObject();
+            try (InputStream is = connection.getInputStream();
+                    JsonReader reader = Json.createReader(is)) {
+                return reader.readObject();
+            }
+        } finally {
+            connection.disconnect();
         }
     }
 }

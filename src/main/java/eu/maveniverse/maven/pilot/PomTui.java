@@ -37,6 +37,9 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import eu.maveniverse.domtrip.Comment;
+import eu.maveniverse.domtrip.Element;
+import eu.maveniverse.domtrip.Node;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -69,7 +72,7 @@ class PomTui {
 
     private final XmlTreeModel rawModel;
     private final XmlTreeModel effectiveModel;
-    private final IdentityHashMap<XmlTreeModel.XmlNode, OriginInfo> originMap;
+    private final IdentityHashMap<Node, OriginInfo> originMap;
     private final String fileName;
     private final String[] rawPomLines;
     private final Map<String, String[]> parentPomContents;
@@ -84,17 +87,48 @@ class PomTui {
 
     private TuiRunner runner;
 
-    PomTui(String rawPom, String effectivePom, String fileName) throws Exception {
+    /**
+     * Get the currently selected table row index.
+     *
+     * @return the selected row index, or -1 if nothing is selected
+     */
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : -1;
+    }
+
+    /**
+     * Create a PomTui backed by the provided raw and effective POM XML texts.
+     *
+     * The constructor parses the effective POM into the internal model, initializes origin and parent-POM lookups as empty, and prepares the raw POM for the raw view; the initial selection is set to the first row.
+     *
+     * @param rawPom      the raw POM XML text used for the Raw view and origin fallback search
+     * @param effectivePom the effective POM XML text used to build the Effective view
+     * @param fileName    a label for the source (displayed in headers and used when reporting origin snippets)
+     */
+    PomTui(String rawPom, String effectivePom, String fileName) {
         this(rawPom, XmlTreeModel.parse(effectivePom), new IdentityHashMap<>(), fileName, Map.of());
     }
 
+    /**
+     * Creates a PomTui for viewing a raw POM and its effective model in the terminal UI.
+     *
+     * Parses the provided raw POM into the internal raw model, stores the effective model and
+     * origin mapping (or an empty map if `null`), splits the raw POM into lines for later
+     * origin lookups, and selects the initial table row (index 0).
+     *
+     * @param rawPom             the raw POM XML text
+     * @param effectiveModel     the pre-parsed effective POM model to display
+     * @param originMap          mapping of nodes to origin information; may be `null` to indicate empty
+     * @param fileName           a label used as the source name when the raw POM is shown in origin snippets
+     * @param parentPomContents  optional map of parent POM source names to their lines; may be `null` to indicate none
+     */
     PomTui(
             String rawPom,
             XmlTreeModel effectiveModel,
-            IdentityHashMap<XmlTreeModel.XmlNode, OriginInfo> originMap,
+            IdentityHashMap<Node, OriginInfo> originMap,
             String fileName,
-            Map<String, String[]> parentPomContents)
-            throws Exception {
+            Map<String, String[]> parentPomContents) {
         this.rawModel = XmlTreeModel.parse(rawPom);
         this.effectiveModel = effectiveModel;
         this.originMap = originMap != null ? originMap : new IdentityHashMap<>();
@@ -118,6 +152,16 @@ class PomTui {
         }
     }
 
+    /**
+     * Handle keyboard input events and perform corresponding UI actions such as navigation,
+     * search entry/processing, toggling between Raw and Effective views, expanding/collapsing
+     * nodes, and quitting the runner.
+     *
+     * @param event  the input event to handle; only {@code KeyEvent} instances are processed
+     * @param runner the UI runner, used here to request quitting when appropriate
+     * @return       {@code true} if the event was handled (no further processing needed),
+     *               {@code false} if the event was not handled by this method
+     */
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -188,23 +232,23 @@ class PomTui {
             return true;
         }
 
-        int sel = tableState.selected() != null ? tableState.selected() : 0;
+        int sel = selectedIndex();
         if (sel >= 0 && sel < visible.size()) {
             var node = visible.get(sel);
             if (key.isRight()) {
-                if (node.hasChildren() && !node.expanded) {
-                    node.expanded = true;
+                if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e) && !model.isExpanded(e)) {
+                    model.setExpanded(e, true);
                 } else {
                     tableState.selectNext(visible.size());
                 }
                 return true;
             }
             if (key.isLeft()) {
-                if (node.expanded && node.hasChildren()) {
-                    node.expanded = false;
+                if (node instanceof Element e && model.isExpanded(e) && XmlTreeModel.hasTreeChildren(e)) {
+                    model.setExpanded(e, false);
                 } else {
                     for (int i = sel - 1; i >= 0; i--) {
-                        if (visible.get(i).depth < node.depth) {
+                        if (visible.get(i).depth() < node.depth()) {
                             tableState.select(i);
                             break;
                         }
@@ -215,12 +259,12 @@ class PomTui {
         }
 
         if (key.isCharIgnoreCase('e')) {
-            expandAll(model.root);
+            model.expandAll(model.root);
             return true;
         }
         if (key.isCharIgnoreCase('w')) {
-            collapseAll(model.root);
-            model.root.expanded = true;
+            model.collapseAll(model.root);
+            model.setExpanded(model.root, true);
             return true;
         }
 
@@ -255,6 +299,14 @@ class PomTui {
         return false;
     }
 
+    /**
+     * Updates the list of visible-node indices that match the current search buffer
+     * and adjusts the active match index and table selection accordingly.
+     *
+     * <p>If the search buffer is empty, clears matches and resets the active index.
+     * Otherwise computes matching visible-node indices, sets the active match to
+     * the first result (if any) and selects that row in {@code tableState}.</p>
+     */
     private void updateSearchMatches() {
         String query = searchBuffer.toString().toLowerCase();
         if (query.isEmpty()) {
@@ -277,27 +329,45 @@ class PomTui {
         }
     }
 
-    private boolean nodeMatchesSearch(XmlTreeModel.XmlNode node, String query) {
-        String text = node.tagName + (node.textContent != null ? node.textContent : "");
+    /**
+     * Determines whether the given node's searchable text contains the provided query.
+     *
+     * For a Comment node the searchable text is the comment content; for an Element node it is
+     * the element name concatenated with its trimmed text content. Other node types are not searched.
+     *
+     * @param node  the node to test
+     * @param query the lowercased search substring to match against the node's searchable text
+     * @return      `true` if the node's searchable text contains `query`, `false` otherwise
+     */
+    private boolean nodeMatchesSearch(Node node, String query) {
+        String text;
+        if (node instanceof Comment comment) {
+            text = comment.content();
+        } else if (node instanceof Element element) {
+            text = element.name() + element.textContentTrimmedOr("");
+        } else {
+            return false;
+        }
         return text.toLowerCase().contains(query);
     }
 
+    /**
+     * Chooses the XML tree model that should be used for rendering and interaction.
+     *
+     * @return the raw model when the view is RAW, otherwise the effective model
+     */
     private XmlTreeModel currentModel() {
         return view == View.RAW ? rawModel : effectiveModel;
     }
 
-    private void expandAll(XmlTreeModel.XmlNode node) {
-        node.expanded = true;
-        for (var child : node.children) expandAll(child);
-    }
-
-    private void collapseAll(XmlTreeModel.XmlNode node) {
-        node.expanded = false;
-        for (var child : node.children) collapseAll(child);
-    }
-
-    // -- Rendering --
-
+    /**
+     * Render the complete TUI into the given frame.
+     *
+     * Renders a header, the XML tree view, an optional origin snippet detail (only when in Effective view and a snippet exists),
+     * and a footer, laying out vertical regions and allocating extra rows for the detail section when shown.
+     *
+     * @param frame the frame to render the UI into
+     */
     void render(Frame frame) {
         SnippetInfo snippet = getSelectedOriginSnippet();
         boolean showDetail = view == View.EFFECTIVE && snippet != null;
@@ -367,6 +437,16 @@ class PomTui {
         frame.renderWidget(header, area);
     }
 
+    /**
+     * Render the current XML tree view (raw or effective) into the provided frame area.
+     *
+     * Renders a titled, bordered table of the model's visible nodes, highlights rows that
+     * match the active or in-progress search query, and shows a centered "Empty" placeholder
+     * when there are no visible nodes.
+     *
+     * @param frame the frame used for drawing widgets
+     * @param area the rectangular area inside the frame to render the tree into
+     */
     private void renderXmlTree(Frame frame, Rect area) {
         var model = currentModel();
         String title = view == View.RAW ? " " + fileName + " " : " Effective POM ";
@@ -388,7 +468,7 @@ class PomTui {
         String searchQuery = searchMode ? searchBuffer.toString().toLowerCase() : activeSearch;
         List<Row> rows = new ArrayList<>();
         for (var node : visible) {
-            Line line = XmlTreeModel.renderNode(node);
+            Line line = model.renderNode(node);
 
             if (searchQuery != null && !searchQuery.isEmpty() && nodeMatchesSearch(node, searchQuery)) {
                 rows.add(Row.from(Cell.from(line)).style(Style.create().bg(Color.DARK_GRAY)));
@@ -481,18 +561,23 @@ class PomTui {
     }
 
     /**
-     * Find origin info for the selected effective POM node.
-     * Uses the IdentityHashMap populated by PomMojo's parallel Model/XmlTree walk,
-     * then falls back to raw POM text search.
+     * Locate the source snippet for the currently selected effective POM node.
+     *
+     * Attempts to resolve origin information in three steps: use the identity-mapped
+     * OriginInfo for the selected node when available; otherwise search the raw POM
+     * text for a matching element; finally search configured parent POM contents.
+     *
+     * @return the SnippetInfo containing formatted source lines and their source name,
+     *         or `null` if no origin snippet can be determined
      */
     private SnippetInfo getSelectedOriginSnippet() {
         if (view != View.EFFECTIVE) return null;
-        int sel = tableState.selected() != null ? tableState.selected() : -1;
+        int sel = selectedIndex();
         var visible = effectiveModel.visibleNodes();
         if (sel < 0 || sel >= visible.size()) return null;
 
         var node = visible.get(sel);
-        if (node.isComment || node.tagName.isEmpty()) return null;
+        if (!(node instanceof Element)) return null;
 
         // Direct lookup via IdentityHashMap — no path building needed
         OriginInfo origin = originMap.get(node);
@@ -518,6 +603,17 @@ class PomTui {
         return null;
     }
 
+    /**
+     * Builds a formatted snippet of source lines surrounding a matched line for display.
+     *
+     * The snippet includes the matched line plus up to two lines of context before and after,
+     * each prefixed with a 1-based, four-wide line number and a separator. The matched line
+     * is additionally prefixed with an arrow marker.
+     *
+     * @param lines the source lines to extract the snippet from
+     * @param matchLine the zero-based index of the matched line within `lines`
+     * @return a list of formatted strings representing the snippet, in display order
+     */
     private List<String> buildSnippet(String[] lines, int matchLine) {
         List<String> snippet = new ArrayList<>();
         int start = Math.max(0, matchLine - 2);
@@ -530,17 +626,51 @@ class PomTui {
         return snippet;
     }
 
-    private int findInLines(XmlTreeModel.XmlNode node, String[] lines) {
-        if (node.isLeaf() && node.textContent != null) {
-            String search = "<" + node.tagName + ">";
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains(search)) return i;
+    /**
+     * Finds the line index in the provided source lines that contains the element's opening tag.
+     *
+     * <p>Matches all tag forms: {@code <name>}, {@code <name ...>}, {@code <name/>}, and {@code <name />}.
+     * When the element has same-named siblings under its parent, returns the Nth matching line
+     * corresponding to this element's position among those siblings.</p>
+     *
+     * @param node  the node to locate in the source lines; only {@link Element} nodes are considered
+     * @param lines the source text split into lines to search
+     * @return the zero-based index of the matching line, or -1 if no match is found or the node is not an element
+     */
+    private int findInLines(Node node, String[] lines) {
+        if (!(node instanceof Element element)) return -1;
+        String name = element.name();
+
+        // Match all opening-tag forms
+        String tagOpen = "<" + name + ">";
+        String tagOpenAttr = "<" + name + " ";
+        String tagSelfClose = "<" + name + "/>";
+        String tagSelfCloseSpace = "<" + name + " />";
+
+        // Compute occurrence index among same-named siblings
+        int occurrenceIndex = 0;
+        Node parent = element.parent();
+        if (parent instanceof Element parentElement) {
+            for (Node sibling : XmlTreeModel.treeChildren(parentElement)) {
+                if (sibling == element) break;
+                if (sibling instanceof Element se && se.name().equals(name)) {
+                    occurrenceIndex++;
+                }
             }
-        } else if (node.hasChildren()) {
-            String search1 = "<" + node.tagName + ">";
-            String search2 = "<" + node.tagName + " ";
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains(search1) || lines[i].contains(search2)) return i;
+        }
+
+        // Find the Nth matching line
+        int matchCount = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.contains(tagOpen)
+                    || line.contains(tagOpenAttr)
+                    || line.contains(tagSelfClose)
+                    || line.contains(tagSelfCloseSpace)) {
+                if (matchCount == occurrenceIndex) {
+                    return i;
+                }
+                matchCount++;
             }
         }
         return -1;

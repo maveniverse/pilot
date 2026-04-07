@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.plugin.AbstractMojo;
@@ -33,11 +32,8 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.DependencyNode;
-import org.eclipse.aether.graph.Exclusion;
 
 /**
  * Interactive dependency analysis — shows unused declared and used undeclared dependencies.
@@ -64,6 +60,12 @@ public class AnalyzeMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
+    /**
+     * Performs dependency analysis: collects declared dependencies from the project POM, resolves the full transitive
+     * dependency tree, identifies transitive (undeclared) dependencies, and presents the results using the Analyze TUI.
+     *
+     * @throws MojoExecutionException if dependency collection, traversal, or the TUI run fails
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
@@ -78,20 +80,7 @@ public class AnalyzeMojo extends AbstractMojo {
             }
 
             // Resolve full transitive tree
-            CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRootArtifact(new DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(),
-                    project.getPackaging(), project.getVersion()));
-            collectRequest.setDependencies(
-                    project.getDependencies().stream().map(this::convert).collect(Collectors.toList()));
-            if (project.getDependencyManagement() != null) {
-                collectRequest.setManagedDependencies(project.getDependencyManagement().getDependencies().stream()
-                        .map(this::convert)
-                        .collect(Collectors.toList()));
-            }
-            collectRequest.setRepositories(project.getRemoteProjectRepositories());
-
-            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
 
             // Find transitive (undeclared) dependencies
             Set<String> transitiveGAs = new HashSet<>();
@@ -108,6 +97,19 @@ public class AnalyzeMojo extends AbstractMojo {
         }
     }
 
+    /**
+     * Traverse a resolved dependency tree and collect dependencies that are present in the tree
+     * but not declared in the project's POM.
+     *
+     * For each discovered undeclared dependency this method adds an AnalyzeTui.DepEntry to
+     * {@code result} and records its GA in {@code seen} to avoid duplicates.
+     *
+     * @param node the dependency tree node to traverse
+     * @param declaredGAs set of declared `groupId:artifactId` values to skip
+     * @param seen mutable set used to deduplicate discovered GAs; entries will be added as discovered
+     * @param result mutable list that will be populated with undeclared dependency entries
+     * @param pulledBy the `groupId:artifactId` of the dependency that pulled the current node (recursion context)
+     */
     private void collectTransitive(
             DependencyNode node,
             Set<String> declaredGAs,
@@ -137,21 +139,5 @@ public class AnalyzeMojo extends AbstractMojo {
 
             collectTransitive(child, declaredGAs, seen, result, ga);
         }
-    }
-
-    private org.eclipse.aether.graph.Dependency convert(Dependency dep) {
-        var artifact = new DefaultArtifact(
-                dep.getGroupId(),
-                dep.getArtifactId(),
-                dep.getClassifier() != null ? dep.getClassifier() : "",
-                dep.getType() != null ? dep.getType() : "jar",
-                dep.getVersion());
-        var d = new org.eclipse.aether.graph.Dependency(artifact, dep.getScope(), dep.isOptional());
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            d = d.setExclusions(dep.getExclusions().stream()
-                    .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList()));
-        }
-        return d;
     }
 }

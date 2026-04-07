@@ -40,15 +40,19 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
@@ -129,6 +133,30 @@ class SearchTui {
     private final SearchClient client;
     private TuiRunner runner;
 
+    /**
+     * Get the currently selected table row index, defaulting to -1 when no row is selected.
+     *
+     * @return the selected row index, or -1 if no selection exists
+     */
+    private int selectedIndex() {
+        Integer sel = tableState.selected();
+        return sel != null ? sel : -1;
+    }
+
+    /**
+     * Initializes a SearchTui instance and its interactive state from optional initial data.
+     *
+     * Sets up the search buffer and cursor from {@code initialQuery} (accepting {@code null}),
+     * records the trimmed last searched query, and, if {@code initialResults} is non-empty,
+     * copies them into the internal artifacts list, initializes per-row version indices,
+     * records {@code totalFound}, updates the status message, and selects the first table row.
+     * If no initial results are supplied, sets the status to "Type to search".
+     *
+     * @param client the SearchClient used for performing remote queries
+     * @param initialQuery an optional initial search string (may be {@code null})
+     * @param initialResults an optional initial list of artifact rows (may be {@code null} or empty)
+     * @param totalFound the total number of results corresponding to {@code initialResults}
+     */
     SearchTui(SearchClient client, String initialQuery, List<String[]> initialResults, int totalFound) {
         this.client = client;
         this.searchBuffer = new StringBuilder(initialQuery != null ? initialQuery : "");
@@ -157,6 +185,7 @@ class SearchTui {
         } finally {
             configured.close();
             httpPool.shutdownNow();
+            httpPool.awaitTermination(5, TimeUnit.SECONDS);
         }
         return selectedGav;
     }
@@ -164,10 +193,9 @@ class SearchTui {
     // -- Event handling -----------------------------------------------------
 
     boolean handleEvent(Event event, TuiRunner runner) {
-        if (!(event instanceof KeyEvent)) {
+        if (!(event instanceof KeyEvent key)) {
             return true; // re-render on tick/resize so async updates are visible
         }
-        KeyEvent key = (KeyEvent) event;
 
         if (key.isCtrlC()) {
             runner.quit();
@@ -252,6 +280,16 @@ class SearchTui {
         return false;
     }
 
+    /**
+     * Handle a key event when the UI is in the table focus, performing navigation,
+     * selection, version cycling, or switching back to the search editor as needed.
+     *
+     * Handles: quit (`q`), typing (moves focus to search and inserts the character),
+     * up/down navigation (moves selection and may fetch or prefetch results/POMs),
+     * left/right version cycling, and confirm/select to choose the artifact.
+     *
+     * @return `true` if the key was handled (event consumed), `false` otherwise.
+     */
     private boolean handleTableKeys(KeyEvent key) {
         if (artifacts.isEmpty()) {
             return false;
@@ -277,9 +315,9 @@ class SearchTui {
             return true;
         }
         if (key.isDown()) {
-            int before = tableState.selected() != null ? tableState.selected() : 0;
+            int before = selectedIndex();
             tableState.selectNext(artifacts.size());
-            int after = tableState.selected() != null ? tableState.selected() : 0;
+            int after = selectedIndex();
             if (before == after && artifacts.size() < totalFound) {
                 // At the very bottom and prefetch hasn't arrived yet — block
                 fetchMoreResultsSync();
@@ -291,17 +329,17 @@ class SearchTui {
             return true;
         }
         if (key.isLeft()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             cycleVersion(selected, -1);
             return true;
         }
         if (key.isRight()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             cycleVersion(selected, +1);
             return true;
         }
         if (key.isSelect() || key.isConfirm()) {
-            int selected = tableState.selected() != null ? tableState.selected() : 0;
+            int selected = selectedIndex();
             selectArtifact(selected);
             return true;
         }
@@ -366,6 +404,16 @@ class SearchTui {
         frame.renderWidget(searchLine, area);
     }
 
+    /**
+     * Render the search results area: either a centered empty-state message or a table of artifacts.
+     *
+     * <p>If there are no artifacts, displays a centered "Searching…" or "No results" message.
+     * Otherwise renders a three-column table (groupId, artifactId, version) with the current
+     * selection highlighted and the total/result count shown in the block title.
+     *
+     * @param frame the TUI frame to render widgets into
+     * @param area the rectangular region within the frame reserved for the results table
+     */
     private void renderResultsTable(Frame frame, Rect area) {
         Style borderStyle =
                 focus == Focus.TABLE ? Style.create().cyan() : Style.create().fg(Color.DARK_GRAY);
@@ -395,7 +443,7 @@ class SearchTui {
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
-        int selected = tableState.selected() != null ? tableState.selected() : 0;
+        int selected = selectedIndex();
         for (int i = 0; i < artifacts.size(); i++) {
             String[] a = artifacts.get(i);
             String version = getDisplayVersion(i, i == selected);
@@ -427,8 +475,8 @@ class SearchTui {
 
     private void renderArtifactDetails(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        if (!artifacts.isEmpty() && tableState.selected() != null) {
-            int sel = tableState.selected();
+        int sel = selectedIndex();
+        if (!artifacts.isEmpty() && sel >= 0) {
             String[] a = artifacts.get(sel);
             String version = getDisplayVersionPlain(sel);
             String pomKey = a[0] + ":" + a[1] + ":" + version;
@@ -618,7 +666,7 @@ class SearchTui {
                         }
                         String k = g + ":" + artId;
                         if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, vers.isEmpty() ? java.util.Collections.singletonList("") : vers);
+                            versionCache.put(k, vers.isEmpty() ? Collections.singletonList("") : vers);
                         }
                     }));
         }
@@ -737,10 +785,10 @@ class SearchTui {
     // -- POM info fetching --------------------------------------------------
 
     private void fetchPomInfoIfNeeded() {
-        if (artifacts.isEmpty() || tableState.selected() == null) {
+        int sel = selectedIndex();
+        if (artifacts.isEmpty() || sel < 0) {
             return;
         }
-        int sel = tableState.selected();
         String[] a = artifacts.get(sel);
         String version = getDisplayVersionPlain(sel);
         String pomKey = a[0] + ":" + a[1] + ":" + version;
@@ -763,67 +811,86 @@ class SearchTui {
                 }));
     }
 
+    /**
+     * Fetches a POM file from Maven Central for the given coordinates and returns extracted metadata.
+     *
+     * The returned PomInfo holds the POM's name, description, URL, organization name, license name,
+     * and publication date (ISO YYYY-MM-DD) when available.
+     *
+     * @return a PomInfo containing `name`, `description`, `url`, `organization`, `license`, and publication date;
+     *         returns a PomInfo with all fields set to `null` if the POM cannot be retrieved or parsed
+     */
     static PomInfo fetchPomFromCentral(String groupId, String artifactId, String version) {
         try {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-"
                     + version + ".pom";
             String pomUrl = "https://repo1.maven.org/maven2/" + path;
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(pomUrl).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5_000);
-            conn.setReadTimeout(5_000);
+            HttpURLConnection conn =
+                    (HttpURLConnection) URI.create(pomUrl).toURL().openConnection();
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5_000);
+                conn.setReadTimeout(5_000);
 
-            if (conn.getResponseCode() != 200) {
-                return new PomInfo(null, null, null, null, null, null);
-            }
-
-            // Capture Last-Modified as publication date
-            String date = null;
-            long lastModified = conn.getLastModified();
-            if (lastModified > 0) {
-                date = java.time.Instant.ofEpochMilli(lastModified)
-                        .atZone(java.time.ZoneId.systemDefault())
-                        .toLocalDate()
-                        .toString();
-            }
-
-            try (InputStream is = conn.getInputStream()) {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                DocumentBuilder db = dbf.newDocumentBuilder();
-                Document doc = db.parse(is);
-                Element root = doc.getDocumentElement();
-
-                String name = getChildText(root, "name");
-                String description = getChildText(root, "description");
-                String url = getChildText(root, "url");
-
-                String org = null;
-                NodeList orgNodes = root.getElementsByTagName("organization");
-                if (orgNodes.getLength() > 0) {
-                    org = getChildText((Element) orgNodes.item(0), "name");
+                if (conn.getResponseCode() != 200) {
+                    return new PomInfo(null, null, null, null, null, null);
                 }
 
-                String license = null;
-                NodeList licNodes = root.getElementsByTagName("license");
-                if (licNodes.getLength() > 0) {
-                    license = getChildText((Element) licNodes.item(0), "name");
+                // Capture Last-Modified as publication date
+                String date = null;
+                long lastModified = conn.getLastModified();
+                if (lastModified > 0) {
+                    date = Instant.ofEpochMilli(lastModified)
+                            .atZone(ZoneId.systemDefault())
+                            .toLocalDate()
+                            .toString();
                 }
 
-                return new PomInfo(name, description, url, org, license, date);
+                try (InputStream is = conn.getInputStream()) {
+                    DocumentBuilder db = createSafeDocumentBuilder();
+                    Document doc = db.parse(is);
+                    Element root = doc.getDocumentElement();
+
+                    String name = getChildText(root, "name");
+                    String description = getChildText(root, "description");
+                    String url = getChildText(root, "url");
+
+                    String org = null;
+                    NodeList orgNodes = root.getElementsByTagName("organization");
+                    if (orgNodes.getLength() > 0) {
+                        org = getChildText((Element) orgNodes.item(0), "name");
+                    }
+
+                    String license = null;
+                    NodeList licNodes = root.getElementsByTagName("license");
+                    if (licNodes.getLength() > 0) {
+                        license = getChildText((Element) licNodes.item(0), "name");
+                    }
+
+                    return new PomInfo(name, description, url, org, license, date);
+                }
+            } finally {
+                conn.disconnect();
             }
         } catch (Exception e) {
             return new PomInfo(null, null, null, null, null, null);
         }
     }
 
+    private static DocumentBuilder createSafeDocumentBuilder() throws Exception {
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        return dbf.newDocumentBuilder();
+    }
+
     private static String getChildText(Element parent, String tagName) {
         NodeList list = parent.getChildNodes();
         for (int i = 0; i < list.getLength(); i++) {
-            if (list.item(i) instanceof Element) {
-                Element el = (Element) list.item(i);
+            if (list.item(i) instanceof Element el) {
                 if (el.getTagName().equals(tagName)) {
                     String text = el.getTextContent();
                     return (text != null && !text.trim().isEmpty()) ? text.trim() : null;
@@ -869,8 +936,8 @@ class SearchTui {
             String ts = "";
             if (doc.containsKey("timestamp")) {
                 long millis = doc.getJsonNumber("timestamp").longValue();
-                ts = java.time.Instant.ofEpochMilli(millis)
-                        .atZone(java.time.ZoneId.systemDefault())
+                ts = Instant.ofEpochMilli(millis)
+                        .atZone(ZoneId.systemDefault())
                         .toLocalDate()
                         .toString();
             }
@@ -882,8 +949,11 @@ class SearchTui {
     }
 
     /**
-     * Fetches available versions from Maven Central's maven-metadata.xml,
-     * returned in reverse order (newest first).
+     * Obtains artifact versions from Maven Central's maven-metadata.xml.
+     *
+     * @param groupId    the artifact's groupId (dot-separated)
+     * @param artifactId the artifact's artifactId
+     * @return a list of version strings with the newest versions first; may be empty if none are found or on error
      */
     static List<String> fetchVersionsFromMetadata(String groupId, String artifactId) {
         List<String> versions = new ArrayList<>();
@@ -891,33 +961,35 @@ class SearchTui {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/maven-metadata.xml";
             String metaUrl = "https://repo1.maven.org/maven2/" + path;
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(metaUrl).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5_000);
-            conn.setReadTimeout(5_000);
+            HttpURLConnection conn =
+                    (HttpURLConnection) URI.create(metaUrl).toURL().openConnection();
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5_000);
+                conn.setReadTimeout(5_000);
 
-            if (conn.getResponseCode() != 200) {
-                return versions;
-            }
+                if (conn.getResponseCode() != 200) {
+                    return versions;
+                }
 
-            try (InputStream is = conn.getInputStream()) {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                DocumentBuilder db = dbf.newDocumentBuilder();
-                Document doc = db.parse(is);
+                try (InputStream is = conn.getInputStream()) {
+                    DocumentBuilder db = createSafeDocumentBuilder();
+                    Document doc = db.parse(is);
 
-                NodeList versionNodes = doc.getElementsByTagName("version");
-                for (int i = 0; i < versionNodes.getLength(); i++) {
-                    String v = versionNodes.item(i).getTextContent();
-                    if (v != null && !v.trim().isEmpty()) {
-                        versions.add(v.trim());
+                    NodeList versionNodes = doc.getElementsByTagName("version");
+                    for (int i = 0; i < versionNodes.getLength(); i++) {
+                        String v = versionNodes.item(i).getTextContent();
+                        if (v != null && !v.trim().isEmpty()) {
+                            versions.add(v.trim());
+                        }
                     }
                 }
-            }
 
-            // Reverse so newest versions come first
-            java.util.Collections.reverse(versions);
+                // Reverse so newest versions come first
+                Collections.reverse(versions);
+            } finally {
+                conn.disconnect();
+            }
         } catch (Exception e) {
             // return whatever we have
         }

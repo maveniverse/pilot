@@ -119,6 +119,7 @@ class AuditTui {
         } finally {
             configured.close();
             httpPool.shutdownNow();
+            httpPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
         }
     }
 
@@ -324,11 +325,11 @@ class AuditTui {
     private Style getLicenseStyle(String license) {
         if (license == null) return Style.create();
         String lower = license.toLowerCase();
-        // Flag potentially restrictive licenses
-        if (lower.contains("gpl") && !lower.contains("lgpl")) {
+        // Flag potentially restrictive licenses (check AGPL before GPL since "agpl" contains "gpl")
+        if (lower.contains("agpl")) {
             return Style.create().fg(Color.RED);
         }
-        if (lower.contains("agpl")) {
+        if (lower.contains("gpl") && !lower.contains("lgpl")) {
             return Style.create().fg(Color.RED);
         }
         if (lower.contains("apache") || lower.contains("mit") || lower.contains("bsd")) {

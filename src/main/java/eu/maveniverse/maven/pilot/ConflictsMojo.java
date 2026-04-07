@@ -32,12 +32,8 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
-import org.eclipse.aether.graph.Exclusion;
 
 /**
  * Interactive TUI for dependency conflict resolution.
@@ -61,23 +57,19 @@ public class ConflictsMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
+    /**
+     * Analyze the project's dependency graph for version conflicts and launch an interactive TUI to review and resolve them.
+     *
+     * <p>The goal collects dependency information, groups occurrences by groupId:artifactId (GA), detects GAs with
+     * multiple occurrences or where a requested version differs from the resolved version, builds conflict groups,
+     * and starts the ConflictsTui with the project's POM path and GAV.</p>
+     *
+     * @throws MojoExecutionException if dependency collection or conflict analysis fails
+     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRootArtifact(new DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(),
-                    project.getPackaging(), project.getVersion()));
-            collectRequest.setDependencies(
-                    project.getDependencies().stream().map(this::convert).collect(Collectors.toList()));
-            if (project.getDependencyManagement() != null) {
-                collectRequest.setManagedDependencies(project.getDependencyManagement().getDependencies().stream()
-                        .map(this::convert)
-                        .collect(Collectors.toList()));
-            }
-            collectRequest.setRepositories(project.getRemoteProjectRepositories());
-
-            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
 
             // Detect conflicts: same GA with different versions requested
             Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
@@ -101,6 +93,19 @@ public class ConflictsMojo extends AbstractMojo {
         }
     }
 
+    /**
+     * Recursively traverses a dependency subtree and records each dependency occurrence keyed by its
+     * "groupId:artifactId" (GA), including a human-readable path to that occurrence.
+     *
+     * Each recorded entry captures groupId, artifactId, the requested version (using
+     * `conflict.originalVersion` when present), the resolved version, the dependency scope, and the
+     * path from the project root joined with " → ".
+     *
+     * @param node the current dependency node whose children will be processed
+     * @param conflicts a map from GA ("groupId:artifactId") to a list of ConflictEntry occurrences
+     * @param path the GA path from the project root to the parent of `node`; the method appends the
+     *             current child GA when recording entries
+     */
     private void collectConflicts(
             DependencyNode node, Map<String, List<ConflictsTui.ConflictEntry>> conflicts, List<String> path) {
         for (DependencyNode child : node.getChildren()) {
@@ -130,21 +135,5 @@ public class ConflictsMojo extends AbstractMojo {
             conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
             collectConflicts(child, conflicts, currentPath);
         }
-    }
-
-    private Dependency convert(org.apache.maven.model.Dependency dep) {
-        var artifact = new DefaultArtifact(
-                dep.getGroupId(),
-                dep.getArtifactId(),
-                dep.getClassifier() != null ? dep.getClassifier() : "",
-                dep.getType() != null ? dep.getType() : "jar",
-                dep.getVersion());
-        var d = new Dependency(artifact, dep.getScope(), dep.isOptional());
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            d = d.setExclusions(dep.getExclusions().stream()
-                    .map(e -> new Exclusion(e.getGroupId(), e.getArtifactId(), "*", "*"))
-                    .collect(Collectors.toList()));
-        }
-        return d;
     }
 }
