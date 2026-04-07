@@ -105,10 +105,10 @@ class UpdatesTui {
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
 
     private Filter filter = Filter.ALL;
-    private String status = "Loading updates\u2026";
-    private boolean loading = true;
-    private int loadedCount = 0;
-    private int failedCount = 0;
+    String status = "Loading updates\u2026";
+    boolean loading = true;
+    int loadedCount = 0;
+    int failedCount = 0;
 
     private TuiRunner runner;
 
@@ -198,7 +198,7 @@ class UpdatesTui {
         }
     }
 
-    private void updateStatusIfDone() {
+    void updateStatusIfDone() {
         if (loadedCount >= allDeps.size()) {
             loading = false;
             applyFilter();
