@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
 class UpdatesTuiTest {
 
     @Test
-    void versionResolverInterface() throws Exception {
+    void versionResolverInterface() {
         UpdatesTui.VersionResolver resolver = (g, a) -> List.of("2.0", "1.5", "1.0");
         List<String> versions = resolver.resolveVersions("com.example", "lib");
         assertThat(versions).containsExactly("2.0", "1.5", "1.0");

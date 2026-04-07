@@ -54,8 +54,12 @@ public class UpdatesMojo extends AbstractMojo {
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
 
+    private final RepositorySystem repoSystem;
+
     @Inject
-    private RepositorySystem repoSystem;
+    UpdatesMojo(RepositorySystem repoSystem) {
+        this.repoSystem = repoSystem;
+    }
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {

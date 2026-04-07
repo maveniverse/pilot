@@ -47,7 +47,7 @@ class DependencyTreeModel {
             this.groupId = groupId;
             this.artifactId = artifactId;
             this.version = version;
-            this.scope = scope != null ? scope : "compile";
+            this.scope = scope != null ? scope : SCOPE_COMPILE;
             this.optional = optional;
             this.depth = depth;
             this.children = new ArrayList<>();
