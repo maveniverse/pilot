@@ -19,6 +19,7 @@
 package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.HashMap;
 import java.util.List;
@@ -334,9 +335,8 @@ class DependencyTreeModelTest {
     void fromDependencyNodeInvalidScopeThrows() {
         var root = rootNode("com.example", "app", "1.0.0");
 
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> {
-            DependencyTreeModel.fromDependencyNode(root, "invalid");
-        });
+        assertThatThrownBy(() -> DependencyTreeModel.fromDependencyNode(root, "invalid"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

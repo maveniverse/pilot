@@ -57,7 +57,7 @@ class UpdatesTui {
 
     @FunctionalInterface
     interface VersionResolver {
-        List<String> resolveVersions(String groupId, String artifactId) throws Exception;
+        List<String> resolveVersions(String groupId, String artifactId);
     }
 
     static class DependencyInfo {
@@ -168,14 +168,7 @@ class UpdatesTui {
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (var dep : allDeps) {
             var future = CompletableFuture.supplyAsync(
-                            () -> {
-                                try {
-                                    return versionResolver.resolveVersions(dep.groupId, dep.artifactId);
-                                } catch (Exception e) {
-                                    throw new RuntimeException(e);
-                                }
-                            },
-                            executor)
+                            () -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), executor)
                     .thenAccept(versions -> renderThread.accept(() -> {
                         applyVersionResult(dep, versions);
                         updateStatusIfDone();

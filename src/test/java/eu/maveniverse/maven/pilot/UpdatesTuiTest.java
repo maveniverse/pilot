@@ -38,10 +38,10 @@ class UpdatesTuiTest {
     @Test
     void versionResolverThrowingException() {
         UpdatesTui.VersionResolver resolver = (g, a) -> {
-            throw new Exception("repo unavailable");
+            throw new IllegalStateException("repo unavailable");
         };
         assertThatThrownBy(() -> resolver.resolveVersions("com.example", "lib"))
-                .isInstanceOf(Exception.class)
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessage("repo unavailable");
     }
 
@@ -217,7 +217,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
 
         var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
-            throw new Exception("network error");
+            throw new IllegalStateException("network error");
         });
 
         var executor = Executors.newSingleThreadExecutor();
@@ -240,7 +240,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "broken", "1.0", "compile", "jar"));
 
         var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
-            if ("broken".equals(a)) throw new Exception("timeout");
+            if ("broken".equals(a)) throw new IllegalStateException("timeout");
             return List.of("2.0.0", "1.0.0");
         });
 

@@ -34,6 +34,7 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.resolution.VersionRangeRequest;
+import org.eclipse.aether.resolution.VersionRangeResolutionException;
 import org.eclipse.aether.resolution.VersionRangeResult;
 
 /**
@@ -89,15 +90,19 @@ public class UpdatesMojo extends AbstractMojo {
             // Use the Resolver to fetch available versions, respecting all configured
             // repositories, mirrors, authentication, and proxies.
             UpdatesTui.VersionResolver versionResolver = (groupId, artifactId) -> {
-                VersionRangeRequest request = new VersionRangeRequest();
-                request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
-                request.setRepositories(project.getRemoteProjectRepositories());
-                VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
-                List<String> versions = result.getVersions().stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toCollection(ArrayList::new));
-                Collections.reverse(versions); // newest first
-                return versions;
+                try {
+                    VersionRangeRequest request = new VersionRangeRequest();
+                    request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
+                    request.setRepositories(project.getRemoteProjectRepositories());
+                    VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
+                    List<String> versions = result.getVersions().stream()
+                            .map(Object::toString)
+                            .collect(Collectors.toCollection(ArrayList::new));
+                    Collections.reverse(versions); // newest first
+                    return versions;
+                } catch (VersionRangeResolutionException e) {
+                    throw new IllegalStateException("Failed to resolve versions for " + groupId + ":" + artifactId, e);
+                }
             };
 
             UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav, versionResolver);
