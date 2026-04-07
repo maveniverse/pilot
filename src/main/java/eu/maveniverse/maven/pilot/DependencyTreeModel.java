@@ -84,10 +84,17 @@ class DependencyTreeModel {
     /**
      * Scopes included for each resolution scope, following Maven Resolver conventions.
      */
+    private static final String SCOPE_COMPILE = "compile";
+
+    private static final String SCOPE_RUNTIME = "runtime";
+    private static final String SCOPE_TEST = "test";
+    private static final String SCOPE_PROVIDED = "provided";
+    private static final String SCOPE_SYSTEM = "system";
+
     private static final Map<String, Set<String>> SCOPE_INCLUSIONS = Map.of(
-            "compile", Set.of("compile", "provided", "system", ""),
-            "runtime", Set.of("compile", "runtime", ""),
-            "test", Set.of("compile", "provided", "system", "runtime", "test", ""));
+            SCOPE_COMPILE, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, ""),
+            SCOPE_RUNTIME, Set.of(SCOPE_COMPILE, SCOPE_RUNTIME, ""),
+            SCOPE_TEST, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, SCOPE_RUNTIME, SCOPE_TEST, ""));
 
     static DependencyTreeModel fromDependencyNode(DependencyNode rootNode) {
         return fromDependencyNode(rootNode, null);

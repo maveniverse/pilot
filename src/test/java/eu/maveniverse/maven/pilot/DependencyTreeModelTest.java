@@ -254,8 +254,9 @@ class DependencyTreeModelTest {
         var visible = model.visibleNodes();
         var childGas =
                 visible.stream().skip(1).map(DependencyTreeModel.TreeNode::ga).toList();
-        assertThat(childGas).contains("org.slf4j:slf4j-api", "javax.servlet:servlet-api");
-        assertThat(childGas).doesNotContain("org.junit:junit", "com.example:runtime-lib");
+        assertThat(childGas)
+                .contains("org.slf4j:slf4j-api", "javax.servlet:servlet-api")
+                .doesNotContain("org.junit:junit", "com.example:runtime-lib");
     }
 
     @Test
@@ -273,8 +274,9 @@ class DependencyTreeModelTest {
         var visible = model.visibleNodes();
         var childGas =
                 visible.stream().skip(1).map(DependencyTreeModel.TreeNode::ga).toList();
-        assertThat(childGas).contains("org.slf4j:slf4j-api", "com.example:runtime-lib");
-        assertThat(childGas).doesNotContain("org.junit:junit", "javax.servlet:servlet-api");
+        assertThat(childGas)
+                .contains("org.slf4j:slf4j-api", "com.example:runtime-lib")
+                .doesNotContain("org.junit:junit", "javax.servlet:servlet-api");
     }
 
     @Test

@@ -19,6 +19,7 @@
 package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,9 +40,9 @@ class UpdatesTuiTest {
         UpdatesTui.VersionResolver resolver = (g, a) -> {
             throw new Exception("repo unavailable");
         };
-        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> {
-            resolver.resolveVersions("com.example", "lib");
-        });
+        assertThatThrownBy(() -> resolver.resolveVersions("com.example", "lib"))
+                .isInstanceOf(Exception.class)
+                .hasMessage("repo unavailable");
     }
 
     @Test
@@ -57,8 +58,7 @@ class UpdatesTuiTest {
         tui.updateStatusIfDone();
 
         assertThat(tui.loading).isFalse();
-        assertThat(tui.status).contains("1 update(s) available");
-        assertThat(tui.status).doesNotContain("failed");
+        assertThat(tui.status).contains("1 update(s) available").doesNotContain("failed");
     }
 
     @Test
@@ -74,8 +74,7 @@ class UpdatesTuiTest {
         tui.updateStatusIfDone();
 
         assertThat(tui.loading).isFalse();
-        assertThat(tui.status).contains("0 update(s) available");
-        assertThat(tui.status).contains("2 lookup(s) failed");
+        assertThat(tui.status).contains("0 update(s) available").contains("2 lookup(s) failed");
     }
 
     @Test
@@ -116,7 +115,7 @@ class UpdatesTuiTest {
     @Test
     void dependencyInfoDefaults() {
         var dep = new UpdatesTui.DependencyInfo("g", "a", null, null, null);
-        assertThat(dep.version).isEqualTo("");
+        assertThat(dep.version).isEmpty();
         assertThat(dep.scope).isEqualTo("compile");
         assertThat(dep.type).isEqualTo("jar");
     }
