@@ -75,12 +75,15 @@ public class AnalyzeMojo extends AbstractMojo {
             Set<String> declaredGAs = new HashSet<>();
             List<AnalyzeTui.DepEntry> declared = new ArrayList<>();
             for (Dependency dep : project.getDependencies()) {
-                String classifier = dep.getClassifier() != null ? dep.getClassifier() : "";
-                String key =
-                        dep.getGroupId() + ":" + dep.getArtifactId() + (classifier.isEmpty() ? "" : ":" + classifier);
-                declaredGAs.add(key);
-                declared.add(new AnalyzeTui.DepEntry(
-                        dep.getGroupId(), dep.getArtifactId(), classifier, dep.getVersion(), dep.getScope(), true));
+                var entry = new AnalyzeTui.DepEntry(
+                        dep.getGroupId(),
+                        dep.getArtifactId(),
+                        dep.getClassifier(),
+                        dep.getVersion(),
+                        dep.getScope(),
+                        true);
+                declaredGAs.add(entry.ga());
+                declared.add(entry);
             }
 
             // Resolve full transitive tree
@@ -123,27 +126,23 @@ public class AnalyzeMojo extends AbstractMojo {
         for (DependencyNode child : node.getChildren()) {
             if (child.getDependency() == null) continue;
             var art = child.getDependency().getArtifact();
-            String classifier = art.getClassifier() != null ? art.getClassifier() : "";
-            String key = art.getGroupId() + ":" + art.getArtifactId() + (classifier.isEmpty() ? "" : ":" + classifier);
+            var entry = new AnalyzeTui.DepEntry(
+                    art.getGroupId(),
+                    art.getArtifactId(),
+                    art.getClassifier(),
+                    art.getVersion(),
+                    child.getDependency().getScope(),
+                    false);
 
-            if (!declaredGAs.contains(key) && seen.add(key)) {
-                String via = "";
+            if (!declaredGAs.contains(entry.ga()) && seen.add(entry.ga())) {
                 if (node.getDependency() != null) {
-                    via = node.getDependency().getArtifact().getGroupId() + ":"
+                    entry.pulledBy = node.getDependency().getArtifact().getGroupId() + ":"
                             + node.getDependency().getArtifact().getArtifactId();
                 }
-                var entry = new AnalyzeTui.DepEntry(
-                        art.getGroupId(),
-                        art.getArtifactId(),
-                        classifier,
-                        art.getVersion(),
-                        child.getDependency().getScope(),
-                        false);
-                entry.pulledBy = via;
                 result.add(entry);
             }
 
-            collectTransitive(child, declaredGAs, seen, result, key);
+            collectTransitive(child, declaredGAs, seen, result, entry.ga());
         }
     }
 }
