@@ -153,7 +153,7 @@ class UnifiedDiff {
      * Compute the maximum scroll offset for the given diff lines and visible area height.
      */
     static int maxScroll(List<DiffLine> lines, int areaHeight) {
-        int innerHeight = areaHeight - 2;
+        int innerHeight = Math.max(0, areaHeight - 2);
         return Math.max(0, lines.size() - innerHeight);
     }
 

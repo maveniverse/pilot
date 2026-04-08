@@ -146,9 +146,11 @@ class ReactorCollector {
         List<AggregatedDependency> ungrouped = new ArrayList<>();
 
         for (AggregatedDependency dep : allDeps) {
-            if (dep.isPropertyManaged()) {
+            if (dep.isPropertyManaged() && dep.propertyOrigin != null) {
+                String groupKey =
+                        dep.propertyName + "@" + dep.propertyOrigin.getFile().getAbsolutePath();
                 PropertyGroup group = groupsByProperty.computeIfAbsent(
-                        dep.propertyName,
+                        groupKey,
                         k -> new PropertyGroup(
                                 dep.propertyName, dep.rawVersionExpr, dep.primaryVersion, dep.propertyOrigin));
                 group.dependencies.add(dep);
@@ -242,6 +244,6 @@ class ReactorCollector {
             }
             current = current.getParent();
         }
-        return project;
+        return null;
     }
 }

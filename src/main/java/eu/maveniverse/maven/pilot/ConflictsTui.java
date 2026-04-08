@@ -145,8 +145,10 @@ class ConflictsTui {
         String pom;
         try {
             pom = Files.readString(Path.of(pomPath));
-        } catch (Exception e) {
+        } catch (java.nio.file.NoSuchFileException e) {
             pom = "<project/>";
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
         }
         this.originalPomContent = pom;
         this.editor = new PomEditor(Document.of(pom));
@@ -221,6 +223,10 @@ class ConflictsTui {
             }
             if (key.isKey(KeyCode.PAGE_DOWN)) {
                 diffScroll = Math.min(diffScroll + 10, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
+                return true;
+            }
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
                 return true;
             }
             return false;

@@ -281,9 +281,11 @@ class AlignTui {
     }
 
     private void writeAlignedPom() {
-        if (alignedPomContent == null) return;
         try {
-            Files.writeString(Path.of(pomPath), alignedPomContent);
+            String currentPom = Files.readString(Path.of(pomPath));
+            PomEditor editor = new PomEditor(Document.of(currentPom));
+            editor.dependencies().alignAllDependencies(buildSelectedOptions());
+            Files.writeString(Path.of(pomPath), editor.toXml());
             status = "Changes written to POM";
             phase = Phase.SELECT;
             diffLines = null;

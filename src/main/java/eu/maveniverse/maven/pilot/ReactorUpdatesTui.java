@@ -187,9 +187,13 @@ class ReactorUpdatesTui {
             loading = false;
             for (var group : reactorResult.propertyGroups) {
                 for (var dep : group.dependencies) {
-                    if (dep.hasUpdate() && group.newestVersion == null) {
-                        group.newestVersion = dep.newestVersion;
-                        group.updateType = dep.updateType;
+                    if (dep.hasUpdate()) {
+                        if (group.newestVersion == null
+                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion)) {
+                            // Pick the most conservative (smallest) version available for all deps
+                            group.newestVersion = dep.newestVersion;
+                            group.updateType = dep.updateType;
+                        }
                     }
                 }
             }
@@ -401,16 +405,15 @@ class ReactorUpdatesTui {
     }
 
     private void selectAll() {
-        for (var group : reactorResult.propertyGroups) {
-            if (group.hasUpdate()) {
-                group.selected = true;
-                for (var dep : group.dependencies) {
+        for (var row : displayRows) {
+            if (row.isGroupHeader() && row.propertyGroup.hasUpdate()) {
+                row.propertyGroup.selected = true;
+                for (var dep : row.propertyGroup.dependencies) {
                     dep.selected = true;
                 }
+            } else if (row.dependency != null && !row.dependency.isPropertyManaged() && row.dependency.hasUpdate()) {
+                row.dependency.selected = true;
             }
-        }
-        for (var dep : reactorResult.ungroupedDependencies) {
-            if (dep.hasUpdate()) dep.selected = true;
         }
     }
 
@@ -439,11 +442,21 @@ class ReactorUpdatesTui {
             }
         }
 
-        Map<Path, List<ReactorCollector.AggregatedDependency>> depUpdates = new LinkedHashMap<>();
+        Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> depUpdates = new LinkedHashMap<>();
         for (var dep : reactorResult.ungroupedDependencies) {
             if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
-                Path pomPath = dep.usages.get(0).project.getFile().toPath();
-                depUpdates.computeIfAbsent(pomPath, k -> new ArrayList<>()).add(dep);
+                // Prefer managed usage (version is declared in <dependencyManagement>)
+                var managedUsage = dep.usages.stream().filter(u -> u.managed).findFirst();
+                Path pomPath;
+                boolean managed;
+                if (managedUsage.isPresent()) {
+                    pomPath = managedUsage.orElseThrow().project.getFile().toPath();
+                    managed = true;
+                } else {
+                    pomPath = dep.usages.get(0).project.getFile().toPath();
+                    managed = false;
+                }
+                depUpdates.computeIfAbsent(pomPath, k -> new ArrayList<>()).add(Map.entry(dep, managed));
             }
         }
 
@@ -456,29 +469,40 @@ class ReactorUpdatesTui {
             int updatedFiles = 0;
             int totalUpdates = 0;
 
+            // Collect all POM paths that need editing
+            Map<Path, PomEditor> editors = new LinkedHashMap<>();
+
             for (var entry : propertyUpdates.entrySet()) {
                 Path pomPath = entry.getKey();
-                String pomContent = Files.readString(pomPath);
-                PomEditor pomEditor = new PomEditor(Document.of(pomContent));
+                PomEditor pomEditor = editors.computeIfAbsent(pomPath, p -> {
+                    try {
+                        return new PomEditor(Document.of(Files.readString(p)));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Cannot read POM: " + p, e);
+                    }
+                });
 
                 for (var propEntry : entry.getValue()) {
                     pomEditor.properties().updateProperty(true, propEntry.getKey(), propEntry.getValue());
                     totalUpdates++;
                 }
-
-                Files.writeString(pomPath, pomEditor.toXml());
-                updatedFiles++;
             }
 
             for (var entry : depUpdates.entrySet()) {
                 Path pomPath = entry.getKey();
-                String pomContent = Files.readString(pomPath);
-                PomEditor pomEditor = new PomEditor(Document.of(pomContent));
+                PomEditor pomEditor = editors.computeIfAbsent(pomPath, p -> {
+                    try {
+                        return new PomEditor(Document.of(Files.readString(p)));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Cannot read POM: " + p, e);
+                    }
+                });
 
-                for (var dep : entry.getValue()) {
+                for (var depEntry : entry.getValue()) {
+                    var dep = depEntry.getKey();
+                    boolean managed = depEntry.getValue();
                     var coords =
                             eu.maveniverse.domtrip.maven.Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                    boolean managed = dep.usages.stream().anyMatch(u -> u.managed);
                     if (managed) {
                         pomEditor.dependencies().updateManagedDependency(true, coords);
                     } else {
@@ -486,8 +510,11 @@ class ReactorUpdatesTui {
                     }
                     totalUpdates++;
                 }
+            }
 
-                Files.writeString(pomPath, pomEditor.toXml());
+            // Write all modified POMs
+            for (var entry : editors.entrySet()) {
+                Files.writeString(entry.getKey(), entry.getValue().toXml());
                 updatedFiles++;
             }
 
