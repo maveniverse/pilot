@@ -37,6 +37,7 @@ import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Document;
+import eu.maveniverse.domtrip.maven.AlignOptions;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
@@ -378,9 +379,9 @@ class DependenciesTui {
 
         try {
             String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-            editor.dependencies().updateDependency(true, Coordinates.of(dep.groupId, dep.artifactId, dep.version));
-            Files.writeString(Path.of(pomPath), editor.toXml());
+            String updated = addDependencyAligned(
+                    pomContent, dep.groupId, dep.artifactId, dep.version, dep.classifier, dep.scope);
+            Files.writeString(Path.of(pomPath), updated);
 
             // Move from transitive to declared
             transitive.remove(sel);
@@ -480,6 +481,40 @@ class DependenciesTui {
                 .map(e -> e.textContentTrimmedOr("4.0.0"))
                 .orElse("4.0.0");
         return modelVersion.compareTo("4.1.0") >= 0 ? SCOPES_4X : SCOPES_3X;
+    }
+
+    /**
+     * Add a dependency to the POM using convention-aligned placement.
+     * Detects the project's existing conventions (managed vs inline, literal vs property,
+     * property naming pattern) and follows them.
+     *
+     * @param pomContent the current POM XML content
+     * @param groupId the dependency groupId
+     * @param artifactId the dependency artifactId
+     * @param version the dependency version
+     * @param classifier the dependency classifier (may be null or empty)
+     * @param scope the dependency scope (may be null or empty; "compile" is the default)
+     * @return the updated POM XML content
+     */
+    static String addDependencyAligned(
+            String pomContent, String groupId, String artifactId, String version, String classifier, String scope) {
+        PomEditor editor = new PomEditor(Document.of(pomContent));
+        Coordinates coords = (classifier != null && !classifier.isEmpty())
+                ? Coordinates.of(groupId, artifactId, version, classifier, "jar")
+                : Coordinates.of(groupId, artifactId, version);
+        if (scope != null && !scope.isEmpty() && !COMPILE_SCOPE.equals(scope)) {
+            AlignOptions detected = editor.dependencies().detectConventions();
+            AlignOptions options = AlignOptions.builder()
+                    .versionStyle(detected.versionStyle())
+                    .versionSource(detected.versionSource())
+                    .namingConvention(detected.namingConvention())
+                    .scope(scope)
+                    .build();
+            editor.dependencies().addAligned(coords, options);
+        } else {
+            editor.dependencies().addAligned(coords);
+        }
+        return editor.toXml();
     }
 
     // -- Rendering --
