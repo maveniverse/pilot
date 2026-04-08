@@ -62,7 +62,6 @@ class AlignTui {
 
     private final String pomPath;
     private final String projectGav;
-    private final String originalPomContent;
     private final AlignOptions detectedOptions;
 
     // User-selected convention values (start matching detected)
@@ -80,10 +79,9 @@ class AlignTui {
 
     private TuiRunner runner;
 
-    AlignTui(String pomPath, String projectGav, String originalPomContent, AlignOptions detectedOptions) {
+    AlignTui(String pomPath, String projectGav, AlignOptions detectedOptions) {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
-        this.originalPomContent = originalPomContent;
         this.detectedOptions = detectedOptions;
         this.selectedStyle = detectedOptions.versionStyle();
         this.selectedSource = detectedOptions.versionSource();

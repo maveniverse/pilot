@@ -252,8 +252,6 @@ class DependenciesTui {
         String pom;
         try {
             pom = Files.readString(Path.of(pomPath));
-        } catch (java.nio.file.NoSuchFileException e) {
-            pom = "<project/>";
         } catch (Exception e) {
             throw new IllegalStateException("Cannot read POM: " + pomPath, e);
         }
@@ -550,6 +548,12 @@ class DependenciesTui {
 
     private void saveAndQuit() {
         try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
             Files.writeString(Path.of(pomPath), editor.toXml());
             runner.quit();
         } catch (Exception e) {

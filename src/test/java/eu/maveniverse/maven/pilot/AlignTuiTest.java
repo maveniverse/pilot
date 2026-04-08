@@ -65,7 +65,7 @@ class AlignTuiTest {
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
 
-        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", "<project/>", detected);
+        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", detected);
         var options = tui.buildSelectedOptions();
 
         assertThat(options.versionStyle()).isEqualTo(AlignOptions.VersionStyle.MANAGED);
@@ -81,7 +81,7 @@ class AlignTuiTest {
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
 
-        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", "<project/>", detected);
+        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", detected);
         tui.cycleForward(); // row 0 = VersionStyle
 
         var options = tui.buildSelectedOptions();
@@ -96,7 +96,7 @@ class AlignTuiTest {
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
 
-        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", "<project/>", detected);
+        var tui = new AlignTui("/tmp/pom.xml", "g:a:1.0", detected);
         tui.cycleBackward(); // row 0 = VersionStyle
 
         var options = tui.buildSelectedOptions();

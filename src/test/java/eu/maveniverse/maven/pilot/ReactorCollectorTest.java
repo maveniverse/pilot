@@ -294,7 +294,7 @@ class ReactorCollectorTest {
         MavenProject p1 = createProject("com.example", "mod1", "1.0", tempDir);
         var group = new ReactorCollector.PropertyGroup("lib.version", "${lib.version}", "1.0", null);
 
-        assertThat(group.totalModuleCount()).isEqualTo(0);
+        assertThat(group.totalModuleCount()).isZero();
 
         var dep1 = new ReactorCollector.AggregatedDependency("g", "a");
         dep1.usages.add(new ReactorCollector.ModuleUsage(p1, "1.0", "compile", false));

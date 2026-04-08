@@ -159,8 +159,6 @@ class UpdatesTui {
         String pom;
         try {
             pom = Files.readString(Path.of(pomPath));
-        } catch (java.nio.file.NoSuchFileException e) {
-            pom = "<project/>";
         } catch (Exception e) {
             throw new IllegalStateException("Cannot read POM: " + pomPath, e);
         }
@@ -428,6 +426,12 @@ class UpdatesTui {
 
     private void saveAndQuit() {
         try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
             Files.writeString(Path.of(pomPath), editor.toXml());
             runner.quit();
         } catch (Exception e) {
@@ -438,8 +442,9 @@ class UpdatesTui {
 
     private void toggleDiffView() {
         // Include both staged changes and currently selected (not yet applied) updates
+        // Use allDeps to honor property-linked peers outside the filtered view
         List<DependencyInfo> pendingSelected =
-                displayDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
 
         String modifiedPom;
         if (pendingSelected.isEmpty()) {
@@ -488,8 +493,9 @@ class UpdatesTui {
     }
 
     private void applyUpdates() {
+        // Use allDeps to honor property-linked peers outside the filtered view
         List<DependencyInfo> toUpdate =
-                displayDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
 
         if (toUpdate.isEmpty()) {
             status = "No updates selected";
@@ -497,6 +503,18 @@ class UpdatesTui {
         }
 
         try {
+            // Validate on a preview editor first to avoid partial mutations
+            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
+            for (var dep : toUpdate) {
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (dep.managed) {
+                    preview.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    preview.dependencies().updateDependency(true, coords);
+                }
+            }
+
+            // All updates succeeded on preview — apply to real editor
             for (var dep : toUpdate) {
                 var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
                 if (dep.managed) {

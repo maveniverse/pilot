@@ -59,7 +59,7 @@ public class AlignMojo extends AbstractMojo {
 
             String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
 
-            AlignTui tui = new AlignTui(pomPath, gav, pomContent, detectedOptions);
+            AlignTui tui = new AlignTui(pomPath, gav, detectedOptions);
             tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run alignment TUI: " + e.getMessage(), e);

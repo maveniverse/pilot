@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Generates SVG screenshots of each TUI screen for documentation.
@@ -170,7 +171,9 @@ class ScreenshotTest {
     }
 
     @Test
-    void dependencyUpdates() throws Exception {
+    void dependencyUpdates(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<UpdatesTui.DependencyInfo> deps = new ArrayList<>();
 
         var d1 = new UpdatesTui.DependencyInfo("com.google.guava", "guava", "33.0.0-jre", "compile", "jar");
@@ -198,7 +201,7 @@ class ScreenshotTest {
         d5.updateType = VersionComparator.UpdateType.MINOR;
         deps.add(d5);
 
-        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0", (g, a) -> List.of());
+        UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
@@ -213,7 +216,9 @@ class ScreenshotTest {
     }
 
     @Test
-    void dependencyAnalysis() throws Exception {
+    void dependencyAnalysis(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         var d1 = new DependenciesTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true);
         d1.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
@@ -238,8 +243,7 @@ class ScreenshotTest {
         t2.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
         transitive.add(t2);
 
-        DependenciesTui tui =
-                new DependenciesTui(declared, transitive, "/tmp/test-pom.xml", "com.example:demo:1.0.0", true);
+        DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0", true);
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
@@ -251,7 +255,9 @@ class ScreenshotTest {
     }
 
     @Test
-    void conflictResolution() throws Exception {
+    void conflictResolution(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<ConflictsTui.ConflictGroup> conflicts = new ArrayList<>();
 
         var e1 = new ConflictsTui.ConflictEntry(
@@ -265,7 +271,7 @@ class ScreenshotTest {
         var e4 = new ConflictsTui.ConflictEntry("org.slf4j", "slf4j-api", "2.0.9", "2.0.9", "direct", "compile");
         conflicts.add(new ConflictsTui.ConflictGroup("org.slf4j:slf4j-api", List.of(e3, e4)));
 
-        ConflictsTui tui = new ConflictsTui(conflicts, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        ConflictsTui tui = new ConflictsTui(conflicts, pomPath, "com.example:demo:1.0.0");
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();

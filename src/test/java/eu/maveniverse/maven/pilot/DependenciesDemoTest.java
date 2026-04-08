@@ -37,7 +37,9 @@ import org.junit.jupiter.api.io.TempDir;
 class DependenciesDemoTest {
 
     @Test
-    void browseDeclaredAndTransitive() throws Exception {
+    void browseDeclaredAndTransitive(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         var d1 = new DependenciesTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true);
         d1.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
@@ -60,8 +62,7 @@ class DependenciesDemoTest {
         transitive.add(t2);
 
         // Use a non-existent POM path since we won't actually write
-        DependenciesTui tui =
-                new DependenciesTui(declared, transitive, "/tmp/test-pom.xml", "com.example:demo:1.0.0", true);
+        DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0", true);
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
 
@@ -94,7 +95,9 @@ class DependenciesDemoTest {
     }
 
     @Test
-    void browseWithoutBytecodeAnalysis() throws Exception {
+    void browseWithoutBytecodeAnalysis(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         declared.add(new DependenciesTui.DepEntry("com.google.guava", "guava", "", "33.0.0-jre", "compile", true));
         declared.add(new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0.9", "compile", true));
@@ -105,7 +108,7 @@ class DependenciesDemoTest {
         transitive.add(t1);
 
         // bytecodeAnalyzed = false
-        DependenciesTui tui = new DependenciesTui(declared, transitive, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0");
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
@@ -123,9 +126,11 @@ class DependenciesDemoTest {
     }
 
     @Test
-    void emptyDependencyList() throws Exception {
-        DependenciesTui tui = new DependenciesTui(
-                new ArrayList<>(), new ArrayList<>(), "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+    void emptyDependencyList(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+        DependenciesTui tui =
+                new DependenciesTui(new ArrayList<>(), new ArrayList<>(), pomPath, "com.example:demo:1.0.0");
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
@@ -140,14 +145,15 @@ class DependenciesDemoTest {
     }
 
     @Test
-    void undeterminedStatusRendering() throws Exception {
+    void undeterminedStatusRendering(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         var d1 = new DependenciesTui.DepEntry("com.example", "unknown-lib", "", "1.0", "compile", true);
         d1.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNDETERMINED;
         declared.add(d1);
 
-        DependenciesTui tui =
-                new DependenciesTui(declared, new ArrayList<>(), "/tmp/test-pom.xml", "com.example:demo:1.0.0", true);
+        DependenciesTui tui = new DependenciesTui(declared, new ArrayList<>(), pomPath, "com.example:demo:1.0.0", true);
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();

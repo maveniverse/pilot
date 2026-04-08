@@ -56,6 +56,7 @@ class DiffOverlay {
         var fullDiff = UnifiedDiff.compute(original, modified);
         long changes = UnifiedDiff.changeCount(fullDiff);
         if (changes == 0) {
+            close();
             return 0;
         }
         lines = UnifiedDiff.filterContext(fullDiff, 3);
