@@ -107,6 +107,14 @@ class ConflictsTui {
     private boolean showDetails = false;
     private String status;
 
+    private final String originalPomContent;
+    private final PomEditor editor;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private List<UnifiedDiff.DiffLine> diffLines;
+    private int diffScroll;
+    private int lastContentHeight;
+
     private TuiRunner runner;
 
     /**
@@ -134,6 +142,14 @@ class ConflictsTui {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.status = conflicts.size() + " dependency group(s) with version variance";
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            pom = "<project/>";
+        }
+        this.originalPomContent = pom;
+        this.editor = new PomEditor(Document.of(pom));
         if (!conflicts.isEmpty()) {
             tableState.select(0);
         }
@@ -166,8 +182,52 @@ class ConflictsTui {
             return true;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "Quit cancelled";
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode — Esc closes overlay first
+        if (diffLines != null) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffLines = null;
+                diffScroll = 0;
+                return true;
+            }
+            if (key.isUp()) {
+                if (diffScroll > 0) diffScroll--;
+                return true;
+            }
+            if (key.isDown()) {
+                diffScroll = Math.min(diffScroll + 1, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
+                return true;
+            }
+            if (key.isKey(KeyCode.PAGE_UP)) {
+                diffScroll = Math.max(0, diffScroll - 10);
+                return true;
+            }
+            if (key.isKey(KeyCode.PAGE_DOWN)) {
+                diffScroll = Math.min(diffScroll + 10, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
+                return true;
+            }
+            return false;
+        }
+
+        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
@@ -190,6 +250,11 @@ class ConflictsTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
         return false;
     }
 
@@ -207,19 +272,47 @@ class ConflictsTui {
         var group = conflicts.get(sel);
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-
-            // Pin the resolved version in dependencyManagement
             String resolvedVersion = group.resolvedVersion();
             var coords = Coordinates.of(group.entries.get(0).groupId, group.entries.get(0).artifactId, resolvedVersion);
             editor.dependencies().updateManagedDependency(true, coords);
 
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Pinned " + group.ga + " to " + resolvedVersion + " in dependencyManagement";
+            dirty = true;
+            status = "Pinned " + group.ga + " to " + resolvedVersion + " \u2014 save on exit";
         } catch (Exception e) {
             status = "Failed to pin version: " + e.getMessage();
         }
+    }
+
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM?";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private void toggleDiffView() {
+        String modifiedPom = editor.toXml();
+        var fullDiff = UnifiedDiff.compute(originalPomContent, modifiedPom);
+        long changes = UnifiedDiff.changeCount(fullDiff);
+        if (changes == 0) {
+            status = "No changes to show";
+            return;
+        }
+        diffLines = UnifiedDiff.filterContext(fullDiff, 3);
+        diffScroll = 0;
+        status = changes + " line(s) changed";
     }
 
     // -- Rendering --
@@ -229,15 +322,20 @@ class ConflictsTui {
                 .constraints(
                         Constraint.length(3),
                         Constraint.fill(),
-                        showDetails ? Constraint.percentage(30) : Constraint.length(0),
+                        showDetails && diffLines == null ? Constraint.percentage(30) : Constraint.length(0),
                         Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        renderConflicts(frame, zones.get(1));
+        lastContentHeight = zones.get(1).height();
 
-        if (showDetails) {
-            renderDetails(frame, zones.get(2));
+        if (diffLines != null) {
+            UnifiedDiff.render(frame, zones.get(1), diffLines, diffScroll, " POM Changes ");
+        } else {
+            renderConflicts(frame, zones.get(1));
+            if (showDetails) {
+                renderDetails(frame, zones.get(2));
+            }
         }
 
         renderInfoBar(frame, zones.get(3));
@@ -252,6 +350,9 @@ class ConflictsTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+        }
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
@@ -371,19 +472,37 @@ class ConflictsTui {
                 .split(area);
 
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Navigate  "));
-        spans.add(Span.raw("Enter").bold());
-        spans.add(Span.raw(":Details  "));
-        spans.add(Span.raw("p").bold());
-        spans.add(Span.raw(":Pin version  "));
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffLines != null) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        } else {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Details  "));
+            spans.add(Span.raw("p").bold());
+            spans.add(Span.raw(":Pin version  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }

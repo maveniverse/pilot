@@ -190,28 +190,28 @@ class DependenciesDemoTest {
             pilot.press('s');
             pilot.pause();
 
-            String pomContent = Files.readString(pomFile);
+            String pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>provided</scope>");
 
             // Press 's' again to cycle scope from provided -> runtime
             pilot.press('s');
             pilot.pause();
 
-            pomContent = Files.readString(pomFile);
+            pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>runtime</scope>");
 
             // Press 's' again: runtime -> test
             pilot.press('s');
             pilot.pause();
 
-            pomContent = Files.readString(pomFile);
+            pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>test</scope>");
 
             // Press 's' again: test -> compile (removes <scope> element)
             pilot.press('s');
             pilot.pause();
 
-            pomContent = Files.readString(pomFile);
+            pomContent = tui.currentPomContent();
             assertThat(pomContent).doesNotContain("<scope>");
 
             pilot.press('q');
@@ -248,11 +248,11 @@ class DependenciesDemoTest {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
-            // Press 'd' to remove the selected dependency
-            pilot.press('d');
+            // Press 'x' to remove the selected dependency
+            pilot.press('x');
             pilot.pause();
 
-            String pomContent = Files.readString(pomFile);
+            String pomContent = tui.currentPomContent();
             assertThat(pomContent).doesNotContain("guava");
 
             pilot.press('q');
@@ -295,7 +295,7 @@ class DependenciesDemoTest {
             pilot.press('a');
             pilot.pause();
 
-            String pomContent = Files.readString(pomFile);
+            String pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("guava");
 
             pilot.press('q');
