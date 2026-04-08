@@ -81,6 +81,7 @@ class UpdatesTui {
         VersionComparator.UpdateType updateType;
         boolean selected;
         boolean managed;
+        String versionProperty; // shared property name, e.g. "mavenVersion" from "${mavenVersion}"
 
         DependencyInfo(String groupId, String artifactId, String version, String scope, String type) {
             this.groupId = groupId;
@@ -120,6 +121,13 @@ class UpdatesTui {
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
+    private final String originalPomContent;
+    private final PomEditor editor;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private List<UnifiedDiff.DiffLine> diffLines;
+    private int diffScroll;
+    private int lastContentHeight;
 
     private TuiRunner runner;
 
@@ -149,9 +157,47 @@ class UpdatesTui {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.versionResolver = versionResolver;
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            pom = "<project/>";
+        }
+        this.originalPomContent = pom;
+        this.editor = new PomEditor(Document.of(pom));
+        detectPropertyGroups();
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }
+    }
+
+    private void detectPropertyGroups() {
+        try {
+            eu.maveniverse.domtrip.Element root = editor.document().root();
+            scanDependencyVersions(root.childElement("dependencies").orElse(null));
+            root.childElement("dependencyManagement")
+                    .flatMap(dm -> dm.childElement("dependencies"))
+                    .ifPresent(this::scanDependencyVersions);
+        } catch (Exception ignored) {
+            // best-effort
+        }
+    }
+
+    private void scanDependencyVersions(eu.maveniverse.domtrip.Element deps) {
+        if (deps == null) return;
+        deps.childElements("dependency").forEach(dep -> {
+            String gid = dep.childTextOr("groupId", "");
+            String aid = dep.childTextOr("artifactId", "");
+            String rawVersion = dep.childTextOr("version", null);
+            if (rawVersion != null && rawVersion.startsWith("${") && rawVersion.endsWith("}")) {
+                String prop = rawVersion.substring(2, rawVersion.length() - 1);
+                for (DependencyInfo di : allDeps) {
+                    if (di.groupId.equals(gid) && di.artifactId.equals(aid)) {
+                        di.versionProperty = prop;
+                    }
+                }
+            }
+        });
     }
 
     void run() throws Exception {
@@ -249,8 +295,52 @@ class UpdatesTui {
             return true;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "Quit cancelled";
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode — Esc closes overlay first
+        if (diffLines != null) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffLines = null;
+                diffScroll = 0;
+                return true;
+            }
+            if (key.isUp()) {
+                if (diffScroll > 0) diffScroll--;
+                return true;
+            }
+            if (key.isDown()) {
+                diffScroll = Math.min(diffScroll + 1, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
+                return true;
+            }
+            if (key.isKey(KeyCode.PAGE_UP)) {
+                diffScroll = Math.max(0, diffScroll - 10);
+                return true;
+            }
+            if (key.isKey(KeyCode.PAGE_DOWN)) {
+                diffScroll = Math.min(diffScroll + 10, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
+                return true;
+            }
+            return false;
+        }
+
+        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
@@ -306,6 +396,11 @@ class UpdatesTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
         return false;
     }
 
@@ -320,9 +415,68 @@ class UpdatesTui {
         if (sel >= 0 && sel < displayDeps.size()) {
             var dep = displayDeps.get(sel);
             if (dep.hasUpdate()) {
-                dep.selected = !dep.selected;
+                boolean newState = !dep.selected;
+                dep.selected = newState;
+                if (dep.versionProperty != null) {
+                    for (var other : allDeps) {
+                        if (other != dep && dep.versionProperty.equals(other.versionProperty)) {
+                            other.selected = newState;
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM?";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private void toggleDiffView() {
+        // Include both staged changes and currently selected (not yet applied) updates
+        List<DependencyInfo> pendingSelected =
+                displayDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+
+        String modifiedPom;
+        if (pendingSelected.isEmpty()) {
+            modifiedPom = editor.toXml();
+        } else {
+            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
+            for (var dep : pendingSelected) {
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (dep.managed) {
+                    preview.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    preview.dependencies().updateDependency(true, coords);
+                }
+            }
+            modifiedPom = preview.toXml();
+        }
+
+        var fullDiff = UnifiedDiff.compute(originalPomContent, modifiedPom);
+        long changes = UnifiedDiff.changeCount(fullDiff);
+        if (changes == 0) {
+            status = "No changes to show";
+            return;
+        }
+        diffLines = UnifiedDiff.filterContext(fullDiff, 3);
+        diffScroll = 0;
+        status = changes + " line(s) changed";
     }
 
     private void selectAll() {
@@ -361,9 +515,6 @@ class UpdatesTui {
         }
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-
             for (var dep : toUpdate) {
                 var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
                 if (dep.managed) {
@@ -373,10 +524,9 @@ class UpdatesTui {
                 }
             }
 
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Updated " + toUpdate.size() + " dependencies in POM";
+            dirty = true;
+            status = "Staged " + toUpdate.size() + " update(s) \u2014 save on exit";
 
-            // Update model
             for (var dep : toUpdate) {
                 dep.version = dep.newestVersion;
                 dep.newestVersion = null;
@@ -385,7 +535,7 @@ class UpdatesTui {
             }
             applyFilter();
         } catch (Exception e) {
-            status = "Failed to update POM: " + e.getMessage();
+            status = "Failed to update: " + e.getMessage();
         }
     }
 
@@ -397,7 +547,12 @@ class UpdatesTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        renderUpdatesTable(frame, zones.get(1));
+        lastContentHeight = zones.get(1).height();
+        if (diffLines != null) {
+            UnifiedDiff.render(frame, zones.get(1), diffLines, diffScroll, " POM Changes ");
+        } else {
+            renderUpdatesTable(frame, zones.get(1));
+        }
         renderInfoBar(frame, zones.get(2));
     }
 
@@ -414,6 +569,9 @@ class UpdatesTui {
         if (loading) {
             spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "\u2026")
                     .dim());
+        }
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
         }
 
         Paragraph header = Paragraph.builder()
@@ -494,26 +652,44 @@ class UpdatesTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Nav  "));
-        spans.add(Span.raw("Space").bold());
-        spans.add(Span.raw(":Toggle  "));
-        spans.add(Span.raw("a").bold());
-        spans.add(Span.raw(":All  "));
-        spans.add(Span.raw("n").bold());
-        spans.add(Span.raw(":None  "));
-        spans.add(Span.raw("Enter").bold());
-        spans.add(Span.raw(":Apply  "));
-        spans.add(Span.raw("1-4").bold());
-        spans.add(Span.raw(":Filter  "));
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffLines != null) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        } else {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Nav  "));
+            spans.add(Span.raw("Space").bold());
+            spans.add(Span.raw(":Toggle  "));
+            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw(":All  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":None  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("1-4").bold());
+            spans.add(Span.raw(":Filter  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
