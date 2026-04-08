@@ -111,8 +111,7 @@ class ConflictsTui {
     private final PomEditor editor;
     private boolean dirty;
     private boolean pendingQuit;
-    private List<UnifiedDiff.DiffLine> diffLines;
-    private int diffScroll;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
 
     private TuiRunner runner;
@@ -203,28 +202,12 @@ class ConflictsTui {
         }
 
         // Diff overlay mode — Esc closes overlay first
-        if (diffLines != null) {
+        if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
-                diffLines = null;
-                diffScroll = 0;
+                diffOverlay.close();
                 return true;
             }
-            if (key.isUp()) {
-                if (diffScroll > 0) diffScroll--;
-                return true;
-            }
-            if (key.isDown()) {
-                diffScroll = Math.min(diffScroll + 1, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
-                return true;
-            }
-            if (key.isKey(KeyCode.PAGE_UP)) {
-                diffScroll = Math.max(0, diffScroll - 10);
-                return true;
-            }
-            if (key.isKey(KeyCode.PAGE_DOWN)) {
-                diffScroll = Math.min(diffScroll + 10, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
-                return true;
-            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
                 requestQuit();
                 return true;
@@ -309,16 +292,8 @@ class ConflictsTui {
     }
 
     private void toggleDiffView() {
-        String modifiedPom = editor.toXml();
-        var fullDiff = UnifiedDiff.compute(originalPomContent, modifiedPom);
-        long changes = UnifiedDiff.changeCount(fullDiff);
-        if (changes == 0) {
-            status = "No changes to show";
-            return;
-        }
-        diffLines = UnifiedDiff.filterContext(fullDiff, 3);
-        diffScroll = 0;
-        status = changes + " line(s) changed";
+        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
     // -- Rendering --
@@ -328,15 +303,15 @@ class ConflictsTui {
                 .constraints(
                         Constraint.length(3),
                         Constraint.fill(),
-                        showDetails && diffLines == null ? Constraint.percentage(30) : Constraint.length(0),
+                        showDetails && !diffOverlay.isActive() ? Constraint.percentage(30) : Constraint.length(0),
                         Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
 
-        if (diffLines != null) {
-            UnifiedDiff.render(frame, zones.get(1), diffLines, diffScroll, " POM Changes ");
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             renderConflicts(frame, zones.get(1));
             if (showDetails) {
@@ -490,7 +465,7 @@ class ConflictsTui {
             spans.add(Span.raw(":Discard and quit  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Cancel"));
-        } else if (diffLines != null) {
+        } else if (diffOverlay.isActive()) {
             spans.add(Span.raw("\u2191\u2193").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());

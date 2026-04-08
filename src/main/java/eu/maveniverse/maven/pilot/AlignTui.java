@@ -75,8 +75,7 @@ class AlignTui {
     private String status;
 
     // Preview state
-    private List<UnifiedDiff.DiffLine> diffLines;
-    private int diffScroll;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
     private String alignedPomContent;
 
     private TuiRunner runner;
@@ -163,31 +162,11 @@ class AlignTui {
     private boolean handlePreviewEvent(KeyEvent key) {
         if (key.isKey(KeyCode.ESCAPE)) {
             phase = Phase.SELECT;
-            diffLines = null;
-            diffScroll = 0;
+            diffOverlay.close();
             return true;
         }
 
-        if (key.isUp()) {
-            if (diffScroll > 0) diffScroll--;
-            return true;
-        }
-        if (key.isDown()) {
-            if (diffLines != null) {
-                diffScroll = Math.min(diffScroll + 1, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
-            }
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            diffScroll = Math.max(0, diffScroll - 10);
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            if (diffLines != null) {
-                diffScroll = Math.min(diffScroll + 10, UnifiedDiff.maxScroll(diffLines, lastContentHeight));
-            }
-            return true;
-        }
+        if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
 
         if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase('w')) {
             writeAlignedPom();
@@ -251,16 +230,13 @@ class AlignTui {
             int count = editor.dependencies().alignAllDependencies(buildSelectedOptions());
             alignedPomContent = editor.toXml();
 
-            var fullDiff = UnifiedDiff.compute(currentPom, alignedPomContent);
-            long changes = UnifiedDiff.changeCount(fullDiff);
+            long changes = diffOverlay.open(currentPom, alignedPomContent);
 
             if (changes == 0) {
                 status = "No changes needed \u2014 POM already aligned";
                 return;
             }
 
-            diffLines = UnifiedDiff.filterContext(fullDiff, 3);
-            diffScroll = 0;
             phase = Phase.PREVIEW;
             status = count + " dependency(ies) aligned, " + changes + " line(s) changed";
         } catch (Exception e) {
@@ -288,8 +264,7 @@ class AlignTui {
             Files.writeString(Path.of(pomPath), editor.toXml());
             status = "Changes written to POM";
             phase = Phase.SELECT;
-            diffLines = null;
-            diffScroll = 0;
+            diffOverlay.close();
             alignedPomContent = null;
         } catch (Exception e) {
             status = "Failed to write POM: " + e.getMessage();
@@ -308,8 +283,8 @@ class AlignTui {
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
 
-        if (phase == Phase.PREVIEW && diffLines != null) {
-            UnifiedDiff.render(frame, zones.get(1), diffLines, diffScroll, " POM Changes Preview ");
+        if (phase == Phase.PREVIEW && diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes Preview ");
         } else {
             renderConventionTable(frame, zones.get(1));
         }
