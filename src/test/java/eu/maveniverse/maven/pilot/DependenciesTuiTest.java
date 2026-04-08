@@ -208,4 +208,161 @@ class DependenciesTuiTest {
         assertThat(classified).isPresent();
         assertThat(classified.orElseThrow().classifier).isEqualTo("test-fixtures");
     }
+
+    // -- addDependencyAligned tests --
+
+    @Test
+    void addAlignedFollowsInlineLiteralConvention() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>2.0.9</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(pom, "com.google.guava", "guava", "33.0", null, null);
+        // Should add with inline literal version (matching existing convention)
+        assertThat(result)
+                .contains("<artifactId>guava</artifactId>")
+                .contains("<version>33.0</version>")
+                .doesNotContain("<dependencyManagement>");
+    }
+
+    @Test
+    void addAlignedFollowsManagedConvention() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <dependencyManagement>
+                    <dependencies>
+                      <dependency>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                        <version>2.0.9</version>
+                      </dependency>
+                    </dependencies>
+                  </dependencyManagement>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(pom, "com.google.guava", "guava", "33.0", null, null);
+        // Managed entry should contain version
+        String mgmt =
+                result.substring(result.indexOf("<dependencyManagement>"), result.indexOf("</dependencyManagement>"));
+        assertThat(mgmt).contains("<artifactId>guava</artifactId>").contains("<version>33.0</version>");
+        // Dependency in <dependencies> should be version-less
+        String deps = result.substring(result.lastIndexOf("<dependencies>"));
+        assertThat(deps).contains("<artifactId>guava</artifactId>").doesNotContain("<version>33.0</version>");
+    }
+
+    @Test
+    void addAlignedFollowsPropertyConvention() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <properties>
+                    <slf4j.version>2.0.9</slf4j.version>
+                  </properties>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>${slf4j.version}</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(pom, "com.google.guava", "guava", "33.0", null, null);
+        // Should create a version property and reference it via ${...} in the dependency version
+        assertThat(result)
+                .contains("<artifactId>guava</artifactId>")
+                .contains("33.0</")
+                .containsPattern("<version>\\$\\{[^}]+\\}</version>");
+    }
+
+    @Test
+    void addAlignedWithScope() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>2.0.9</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(pom, "junit", "junit", "4.13.2", null, "test");
+        assertThat(result).contains("<artifactId>junit</artifactId>").contains("<scope>test</scope>");
+    }
+
+    @Test
+    void addAlignedWithClassifier() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>2.0.9</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(
+                pom, "dev.tamboui", "tamboui-core", "0.1.0", "test-fixtures", "test");
+        assertThat(result)
+                .contains("<artifactId>tamboui-core</artifactId>")
+                .contains("<classifier>test-fixtures</classifier>")
+                .contains("<scope>test</scope>");
+    }
+
+    @Test
+    void addAlignedCompileScopeOmitted() {
+        String pom = """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>app</artifactId>
+                  <version>1.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>2.0.9</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String result = DependenciesTui.addDependencyAligned(pom, "com.google.guava", "guava", "33.0", null, "compile");
+        assertThat(result).contains("<artifactId>guava</artifactId>").doesNotContain("<scope>");
+    }
 }

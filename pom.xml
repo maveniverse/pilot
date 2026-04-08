@@ -57,7 +57,7 @@ under the License.
     <maven.compiler.release>17</maven.compiler.release>
     <mavenVersion>3.9.9</mavenVersion>
     <tamboui.version>0.1.0</tamboui.version>
-    <domtrip.version>1.0.0</domtrip.version>
+    <domtrip.version>1.1.0-SNAPSHOT</domtrip.version>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
@@ -157,6 +157,19 @@ under the License.
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <repositories>
+    <repository>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>ossrh-snapshots</id>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+    </repository>
+  </repositories>
 
   <build>
     <plugins>
