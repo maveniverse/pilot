@@ -69,6 +69,7 @@ class ModulePickerTui {
      * @return the selected MavenProject, or null if the user quit without selecting
      */
     MavenProject pick() throws Exception {
+        selectedProject = null;
         var configured = TuiRunner.builder()
                 .eventHandler(this::handleEvent)
                 .renderer(this::render)

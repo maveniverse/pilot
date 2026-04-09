@@ -73,8 +73,9 @@ public class AlignMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
+        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "align");
         while (true) {
-            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "align").pick();
+            MavenProject selected = picker.pick();
             if (selected == null) break;
             executeForProject(selected);
         }

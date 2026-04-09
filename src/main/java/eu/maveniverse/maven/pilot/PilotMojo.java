@@ -121,8 +121,9 @@ public class PilotMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = gavOf(root);
 
+        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "pilot");
         while (true) {
-            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "pilot").pick();
+            MavenProject selected = picker.pick();
             if (selected == null) break;
             String tool = new ToolPickerTui(gavOf(selected), true).pick();
             if (tool == null) continue;
