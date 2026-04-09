@@ -78,15 +78,7 @@ public class TreeMojo extends AbstractMojo {
     }
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
-        ReactorModel reactorModel = ReactorModel.build(projects);
-        MavenProject root = projects.get(0);
-        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
-
-        while (true) {
-            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "tree").pick();
-            if (selected == null) break;
-            executeForProject(selected);
-        }
+        ModulePickerTui.forEachSelected(projects, "tree", this::executeForProject);
     }
 
     private void executeForProject(MavenProject proj) throws Exception {

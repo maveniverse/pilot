@@ -18,6 +18,8 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import static eu.maveniverse.maven.pilot.TestProjects.createProject;
+import static eu.maveniverse.maven.pilot.TestProjects.subdir;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -25,7 +27,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import org.apache.maven.model.Model;
 import org.apache.maven.project.MavenProject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,20 +35,6 @@ class ReactorModelTest {
 
     @TempDir
     Path tempDir;
-
-    private Path subdir(String name) throws IOException {
-        return Files.createDirectories(tempDir.resolve(name));
-    }
-
-    private MavenProject createProject(String artifactId, Path basedir) {
-        Model model = new Model();
-        model.setGroupId("com.example");
-        model.setArtifactId(artifactId);
-        model.setVersion("1.0");
-        MavenProject project = new MavenProject(model);
-        project.setFile(basedir.resolve("pom.xml").toFile());
-        return project;
-    }
 
     @Test
     void buildSingleProject() {
@@ -64,7 +51,7 @@ class ReactorModelTest {
 
     @Test
     void buildParentChild() throws IOException {
-        Path childDir = subdir("child");
+        Path childDir = subdir(tempDir, "child");
 
         MavenProject root = createProject("parent", tempDir);
         MavenProject child = createProject("child", childDir);
@@ -81,7 +68,7 @@ class ReactorModelTest {
 
     @Test
     void buildNestedHierarchy() throws IOException {
-        Path coreDir = subdir("core");
+        Path coreDir = subdir(tempDir, "core");
         Path modelDir = Files.createDirectories(coreDir.resolve("core-model"));
 
         MavenProject root = createProject("parent", tempDir);
@@ -99,7 +86,7 @@ class ReactorModelTest {
 
     @Test
     void visibleNodesCollapsed() throws IOException {
-        Path childDir = subdir("child");
+        Path childDir = subdir(tempDir, "child");
         Path grandchildDir = Files.createDirectories(childDir.resolve("grandchild"));
 
         MavenProject root = createProject("root", tempDir);
@@ -122,7 +109,7 @@ class ReactorModelTest {
 
     @Test
     void visibleNodesExpanded() throws IOException {
-        Path childDir = subdir("child2");
+        Path childDir = subdir(tempDir, "child2");
 
         MavenProject root = createProject("root", tempDir);
         MavenProject child = createProject("child", childDir);
@@ -136,8 +123,8 @@ class ReactorModelTest {
 
     @Test
     void filterByName() throws IOException {
-        Path coreDir = subdir("core");
-        Path apiDir = subdir("api");
+        Path coreDir = subdir(tempDir, "core");
+        Path apiDir = subdir(tempDir, "api");
 
         MavenProject root = createProject("parent", tempDir);
         MavenProject core = createProject("core-module", coreDir);
@@ -152,7 +139,7 @@ class ReactorModelTest {
 
     @Test
     void filterCaseInsensitive() throws IOException {
-        Path childDir = subdir("child3");
+        Path childDir = subdir(tempDir, "child3");
 
         MavenProject root = createProject("ROOT-project", tempDir);
         MavenProject child = createProject("Child-Module", childDir);
@@ -166,7 +153,7 @@ class ReactorModelTest {
 
     @Test
     void filterByGa() throws IOException {
-        Path childDir = subdir("child4");
+        Path childDir = subdir(tempDir, "child4");
 
         MavenProject root = createProject("parent", tempDir);
         MavenProject child = createProject("child", childDir);
@@ -188,8 +175,8 @@ class ReactorModelTest {
 
     @Test
     void recomputeCounts() throws IOException {
-        Path coreDir = subdir("core2");
-        Path apiDir = subdir("api2");
+        Path coreDir = subdir(tempDir, "core2");
+        Path apiDir = subdir(tempDir, "api2");
 
         MavenProject root = createProject("parent", tempDir);
         MavenProject core = createProject("core", coreDir);
@@ -210,7 +197,7 @@ class ReactorModelTest {
 
     @Test
     void recomputeCountsNested() throws IOException {
-        Path coreDir = subdir("core3");
+        Path coreDir = subdir(tempDir, "core3");
         Path modelDir = Files.createDirectories(coreDir.resolve("model"));
 
         MavenProject root = createProject("parent", tempDir);
@@ -244,6 +231,57 @@ class ReactorModelTest {
 
         assertThat(node.ga()).isEqualTo("com.example:myapp");
         assertThat(node.gav()).isEqualTo("com.example:myapp:1.0");
+    }
+
+    @Test
+    void collectSubtreeFromRoot() throws IOException {
+        Path coreDir = subdir(tempDir, "core-sub");
+        Path apiDir = subdir(tempDir, "api-sub");
+
+        MavenProject root = createProject("parent", tempDir);
+        MavenProject core = createProject("core", coreDir);
+        MavenProject api = createProject("api", apiDir);
+
+        ReactorModel model = ReactorModel.build(List.of(root, core, api));
+
+        List<MavenProject> subtree = model.collectSubtree(model.root);
+        assertThat(subtree).hasSize(3);
+        assertThat(subtree).extracting(MavenProject::getArtifactId).containsExactly("parent", "core", "api");
+    }
+
+    @Test
+    void collectSubtreeFromChild() throws IOException {
+        Path coreDir = subdir(tempDir, "core-sub2");
+        Path modelDir = Files.createDirectories(coreDir.resolve("model-sub"));
+        Path apiDir = subdir(tempDir, "api-sub2");
+
+        MavenProject root = createProject("parent", tempDir);
+        MavenProject core = createProject("core", coreDir);
+        MavenProject coreModel = createProject("model", modelDir);
+        MavenProject api = createProject("api", apiDir);
+
+        ReactorModel model = ReactorModel.build(List.of(root, core, coreModel, api));
+
+        // Subtree from "core" should include core + model, but not api
+        ReactorModel.ModuleNode coreNode = model.root.children.get(0);
+        List<MavenProject> subtree = model.collectSubtree(coreNode);
+        assertThat(subtree).hasSize(2);
+        assertThat(subtree).extracting(MavenProject::getArtifactId).containsExactly("core", "model");
+    }
+
+    @Test
+    void collectSubtreeLeafNode() throws IOException {
+        Path childDir = subdir(tempDir, "leaf-child");
+
+        MavenProject root = createProject("parent", tempDir);
+        MavenProject child = createProject("child", childDir);
+
+        ReactorModel model = ReactorModel.build(List.of(root, child));
+
+        ReactorModel.ModuleNode leafNode = model.root.children.get(0);
+        List<MavenProject> subtree = model.collectSubtree(leafNode);
+        assertThat(subtree).hasSize(1);
+        assertThat(subtree.get(0).getArtifactId()).isEqualTo("child");
     }
 
     @Test
