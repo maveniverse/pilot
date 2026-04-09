@@ -36,6 +36,11 @@ import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import eu.maveniverse.domtrip.Document;
+import eu.maveniverse.domtrip.maven.Coordinates;
+import eu.maveniverse.domtrip.maven.PomEditor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -120,11 +125,16 @@ class AuditTui {
 
     private final List<AuditEntry> entries;
     private final String projectGav;
+    private final DependencyTreeModel treeModel;
+    private final String pomPath;
+    private final String originalPomContent;
+    private final PomEditor editor;
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final OsvClient osvClient = new OsvClient();
 
     private final HelpOverlay helpOverlay = new HelpOverlay();
+    private final DiffOverlay diffOverlay = new DiffOverlay();
     private final TableState vulnTableState = new TableState();
     private final TableState byLicenseTableState = new TableState();
 
@@ -133,6 +143,9 @@ class AuditTui {
     private int vulnsLoaded = 0;
     private int vulnCount = 0;
     private String status;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private int lastContentHeight;
     private List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
@@ -141,9 +154,19 @@ class AuditTui {
 
     private TuiRunner runner;
 
-    AuditTui(List<AuditEntry> entries, String projectGav) {
+    AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
         this.entries = entries;
         this.projectGav = projectGav;
+        this.treeModel = treeModel;
+        this.pomPath = pomPath;
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            pom = "";
+        }
+        this.originalPomContent = pom;
+        this.editor = pom.isEmpty() ? null : new PomEditor(Document.of(pom));
         this.status = "Loading license and vulnerability data\u2026";
         if (!entries.isEmpty()) {
             tableState.select(0);
@@ -281,14 +304,46 @@ class AuditTui {
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
                 runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                updateStatus();
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
                 return true;
             }
             return false;
         }
 
         if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+            requestQuit();
             return true;
         }
 
@@ -352,12 +407,90 @@ class AuditTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('m')) {
+            addManagedDependency();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
         if (key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelp());
             return true;
         }
 
         return false;
+    }
+
+    private AuditEntry selectedEntry() {
+        return switch (view) {
+            case LICENSES -> {
+                int idx = tableState.selected() != null ? tableState.selected() : -1;
+                yield (idx >= 0 && idx < entries.size()) ? entries.get(idx) : null;
+            }
+            case VULNERABILITIES -> {
+                int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
+                yield (idx >= 0 && idx < vulnRows.size()) ? vulnRows.get(idx).entry : null;
+            }
+            case BY_LICENSE -> {
+                int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+                yield (idx >= 0
+                                && idx < byLicenseRows.size()
+                                && !byLicenseRows.get(idx).isGroup())
+                        ? byLicenseRows.get(idx).entry
+                        : null;
+            }
+        };
+    }
+
+    private void addManagedDependency() {
+        AuditEntry entry = selectedEntry();
+        if (entry == null || editor == null) {
+            status = "No dependency selected";
+            return;
+        }
+        try {
+            var coords = Coordinates.of(entry.groupId, entry.artifactId, entry.version);
+            editor.dependencies().updateManagedDependency(true, coords);
+            dirty = true;
+            status = "Added " + entry.ga() + ":" + entry.version + " to dependencyManagement";
+        } catch (Exception e) {
+            status = "Failed: " + e.getMessage();
+        }
+    }
+
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM? (y/n/Esc)";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private void toggleDiffView() {
+        if (editor == null) return;
+        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
     // -- Rendering --
@@ -369,8 +502,11 @@ class AuditTui {
 
         renderHeader(frame, zones.get(0));
 
+        lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             switch (view) {
                 case LICENSES -> renderLicenses(frame, zones.get(1));
@@ -391,6 +527,9 @@ class AuditTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+        }
         spans.add(Span.raw("  "));
         spans.add(Span.raw("[" + (view == View.LICENSES ? "\u25B8 " : "  ") + "Licenses]")
                 .fg(view == View.LICENSES ? Color.YELLOW : Color.DARK_GRAY));
@@ -412,7 +551,7 @@ class AuditTui {
     private void renderLicenses(Frame frame, Rect area) {
         // Split into table + separator + detail pane
         var zones = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(4))
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(5))
                 .split(area);
 
         Block block = Block.builder()
@@ -489,11 +628,42 @@ class AuditTui {
             licSpans.add(Span.raw("Loading\u2026").fg(Color.DARK_GRAY));
         }
 
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(spans));
+        lines.add(Line.from(licSpans));
+        Line pathLine = buildPathLine(entry);
+        if (pathLine != null) lines.add(pathLine);
+
         Paragraph detail = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans), Line.from(licSpans)))
+                .text(dev.tamboui.text.Text.from(lines))
                 .block(block)
                 .build();
         frame.renderWidget(detail, area);
+    }
+
+    private Line buildPathLine(AuditEntry entry) {
+        if (treeModel == null) return null;
+        var node = treeModel.findByGA(entry.ga());
+        if (node == null) return null;
+        var path = treeModel.pathToRoot(node);
+        if (path.size() <= 1) return null; // root or direct dep — no path to show
+        List<Span> pathSpans = new ArrayList<>();
+        pathSpans.add(Span.raw("Path: ").fg(Color.DARK_GRAY));
+        for (int i = 0; i < path.size(); i++) {
+            if (i > 0) pathSpans.add(Span.raw(" \u2192 ").fg(Color.DARK_GRAY));
+            var n = path.get(i);
+            if (i == 0) {
+                pathSpans.add(Span.raw(n.artifactId).dim());
+            } else if (i == path.size() - 1) {
+                pathSpans.add(Span.raw(n.ga()).bold());
+            } else if (i == 1) {
+                // Direct dependency — highlight
+                pathSpans.add(Span.raw(n.ga()).cyan());
+            } else {
+                pathSpans.add(Span.raw(n.artifactId).dim());
+            }
+        }
+        return Line.from(pathSpans);
     }
 
     private TableState activeTableState() {
@@ -625,6 +795,8 @@ class AuditTui {
                 }
                 lines.add(Line.from(licSpans));
             }
+            Line pathLine = buildPathLine(row.entry);
+            if (pathLine != null) lines.add(pathLine);
         }
 
         Paragraph detail = Paragraph.builder()
@@ -735,6 +907,8 @@ class AuditTui {
             lines.add(Line.from(Span.raw("Published: ").fg(Color.DARK_GRAY), Span.raw(pub)));
         }
         lines.add(Line.from(Span.raw(vuln.summary)));
+        Line pathLine = buildPathLine(vr.entry);
+        if (pathLine != null) lines.add(pathLine);
 
         Paragraph detail = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(lines))
@@ -972,9 +1146,12 @@ class AuditTui {
                         "Keys",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("Tab", "Switch between Licenses and Vulnerabilities"),
+                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand (By License view)"),
+                                new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
+                                new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
     }
 
     private void renderInfoBar(Frame frame, Rect area) {
@@ -988,14 +1165,34 @@ class AuditTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Navigate  "));
-        spans.add(Span.raw("Tab").bold());
-        spans.add(Span.raw(":Licenses/Vulns  "));
-        spans.add(Span.raw("h").bold());
-        spans.add(Span.raw(":Help  "));
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffOverlay.isActive()) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        } else {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("Tab").bold());
+            spans.add(Span.raw(":Licenses/Vulns  "));
+            spans.add(Span.raw("m").bold());
+            spans.add(Span.raw(":Manage dep  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }

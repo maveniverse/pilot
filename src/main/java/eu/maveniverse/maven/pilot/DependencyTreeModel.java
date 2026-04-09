@@ -221,6 +221,22 @@ class DependencyTreeModel {
     }
 
     /**
+     * Find the first node matching the given groupId:artifactId.
+     */
+    TreeNode findByGA(String ga) {
+        return findByGA(root, ga);
+    }
+
+    private TreeNode findByGA(TreeNode node, String ga) {
+        if (node.ga().equals(ga)) return node;
+        for (TreeNode child : node.children) {
+            TreeNode found = findByGA(child, ga);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /**
      * Filter visible nodes by artifact coordinate substring.
      */
     List<TreeNode> filter(String query) {

@@ -75,37 +75,35 @@ public class AuditMojo extends AbstractMojo {
     }
 
     private void executeSingleProject(MavenProject proj) throws Exception {
-        List<AuditTui.AuditEntry> entries = collectEntriesForProject(proj);
+        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
+        List<AuditTui.AuditEntry> entries = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        collectEntries(result.getRoot(), entries, seen, true);
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
-        AuditTui tui = new AuditTui(entries, gav);
+        String pomPath = proj.getFile().getAbsolutePath();
+        AuditTui tui = new AuditTui(entries, gav, treeModel, pomPath);
         tui.run();
     }
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
         // Aggregate all transitive deps across modules, deduped by GA
+        // Use root project's tree for dependency path tracing
+        MavenProject root = projects.get(0);
+        CollectResult rootResult = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
+        DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
+
         List<AuditTui.AuditEntry> entries = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (MavenProject proj : projects) {
-            for (var entry : collectEntriesForProject(proj)) {
-                String ga = entry.ga();
-                if (seen.add(ga)) {
-                    entries.add(entry);
-                }
-            }
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+            collectEntries(result.getRoot(), entries, seen, true);
         }
 
-        MavenProject root = projects.get(0);
         String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
-        AuditTui tui = new AuditTui(entries, gav + " (reactor: " + projects.size() + " modules)");
+        String pomPath = root.getFile().getAbsolutePath();
+        AuditTui tui = new AuditTui(entries, gav + " (reactor: " + projects.size() + " modules)", treeModel, pomPath);
         tui.run();
-    }
-
-    private List<AuditTui.AuditEntry> collectEntriesForProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        List<AuditTui.AuditEntry> entries = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        collectEntries(result.getRoot(), entries, seen, true);
-        return entries;
     }
 
     /**

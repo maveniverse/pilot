@@ -469,30 +469,29 @@ public class PilotMojo extends AbstractMojo {
 
     private void runAudit(MavenProject proj, List<MavenProject> projects) throws Exception {
         if (projects.size() > 1) {
+            MavenProject root = projects.get(0);
+            CollectResult rootResult =
+                    repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
+            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
+
             List<AuditTui.AuditEntry> entries = new ArrayList<>();
             Set<String> seen = new HashSet<>();
             for (MavenProject p : projects) {
-                for (var entry : collectAuditEntries(p)) {
-                    if (seen.add(entry.ga())) {
-                        entries.add(entry);
-                    }
-                }
+                CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(p));
+                collectAuditNode(result.getRoot(), entries, seen, true);
             }
-            MavenProject root = projects.get(0);
             String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
-            new AuditTui(entries, gav).run();
+            String pomPath = root.getFile().getAbsolutePath();
+            new AuditTui(entries, gav, treeModel, pomPath).run();
         } else {
-            List<AuditTui.AuditEntry> entries = collectAuditEntries(proj);
-            new AuditTui(entries, gavOf(proj)).run();
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
+            List<AuditTui.AuditEntry> entries = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            collectAuditNode(result.getRoot(), entries, seen, true);
+            String pomPath = proj.getFile().getAbsolutePath();
+            new AuditTui(entries, gavOf(proj), treeModel, pomPath).run();
         }
-    }
-
-    private List<AuditTui.AuditEntry> collectAuditEntries(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        List<AuditTui.AuditEntry> entries = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        collectAuditNode(result.getRoot(), entries, seen, true);
-        return entries;
     }
 
     private void collectAuditNode(
