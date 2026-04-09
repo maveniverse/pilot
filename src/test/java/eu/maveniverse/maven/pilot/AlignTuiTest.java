@@ -22,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
-import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -189,13 +188,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
 
         assertThat(count).isEqualTo(1);
         assertThat(childEditor.toXml()).doesNotContain("<version>2.0</version>");
@@ -233,13 +229,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
         assertThat(count).isZero();
     }
 
@@ -282,13 +275,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
 
         assertThat(count).isEqualTo(2);
         assertThat(parentEditor.toXml())
@@ -336,13 +326,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
         assertThat(count).isEqualTo(1);
     }
 
@@ -380,13 +367,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.PROPERTY)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
 
         assertThat(count).isEqualTo(1);
         assertThat(parentEditor.toXml())
@@ -432,58 +416,13 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.PROPERTY)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        int count = tui.alignCrossPom(childEditor, parentEditor);
+        int count = childEditor.dependencies().alignAllToParent(parentEditor, detected);
 
         assertThat(count).isEqualTo(1);
         assertThat(parentEditor.toXml()).contains("foo.version").contains("2.0").contains("${foo.version}");
-    }
-
-    @Test
-    void addToParentDepMgmtResolvesPropertyForLiteralSource() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                    <properties>
-                        <foo.version>3.5</foo.version>
-                    </properties>
-                </project>
-                """;
-        String parentPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>parent</artifactId>
-                    <version>1.0</version>
-                    <packaging>pom</packaging>
-                </project>
-                """;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.LITERAL)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        var coords = Coordinates.of("org.example", "foo", "${foo.version}");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        assertThat(parentEditor.toXml()).contains("3.5").doesNotContain("${foo.version}");
     }
 
     // -- isCrossPomMode tests --
@@ -649,46 +588,6 @@ class AlignTuiTest {
         assertThat(Files.readString(parentPom)).isEqualTo(EMPTY_PARENT_POM);
     }
 
-    @Test
-    void addToParentDepMgmtHandlesUnresolvedProperty() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                </project>
-                """;
-        String parentPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>parent</artifactId>
-                    <version>1.0</version>
-                    <packaging>pom</packaging>
-                </project>
-                """;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.LITERAL)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        // Property reference that doesn't exist in child — should fall back to raw version
-        var coords = Coordinates.of("org.example", "foo", "${missing.version}");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        assertThat(parentEditor.toXml()).contains("${missing.version}").doesNotContain("<properties>");
-    }
-
     // -- Constructor convention inheritance tests --
 
     @Test
@@ -752,13 +651,11 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        assertThat(tui.alignCrossPom(childEditor, parentEditor)).isZero();
+        assertThat(childEditor.dependencies().alignAllToParent(parentEditor, detected))
+                .isZero();
     }
 
     @Test
@@ -785,164 +682,10 @@ class AlignTuiTest {
                 .versionSource(AlignOptions.VersionSource.LITERAL)
                 .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
                 .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
         PomEditor childEditor = new PomEditor(Document.of(childPom));
         PomEditor parentEditor = new PomEditor(Document.of(parentPom));
 
-        assertThat(tui.alignCrossPom(childEditor, parentEditor)).isZero();
-    }
-
-    // -- addToParentDepMgmt branch coverage --
-
-    @Test
-    void addToParentDepMgmtWithPropertySourceCreatesNewProperty() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                </project>
-                """;
-        String parentPom = EMPTY_PARENT_POM;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.PROPERTY)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        // Literal version with PROPERTY source → generates property name
-        var coords = Coordinates.of("org.example", "foo", "3.0");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        assertThat(parentEditor.toXml())
-                .contains("<properties>")
-                .contains("3.0")
-                .contains("dependencyManagement");
-    }
-
-    @Test
-    void addToParentDepMgmtWithPropertySourceSkipsExistingParentProperty() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                    <properties>
-                        <foo.version>2.0</foo.version>
-                    </properties>
-                </project>
-                """;
-        String parentPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>parent</artifactId>
-                    <version>1.0</version>
-                    <packaging>pom</packaging>
-                    <properties>
-                        <foo.version>1.5</foo.version>
-                    </properties>
-                </project>
-                """;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.PROPERTY)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        var coords = Coordinates.of("org.example", "foo", "${foo.version}");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        // Parent already had foo.version=1.5, should NOT overwrite it
-        assertThat(parentEditor.toXml()).contains("1.5").contains("${foo.version}");
-    }
-
-    @Test
-    void addToParentDepMgmtWithLiteralSourceUsesLiteralVersion() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                </project>
-                """;
-        String parentPom = EMPTY_PARENT_POM;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.LITERAL)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        var coords = Coordinates.of("org.example", "foo", "4.0");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        assertThat(parentEditor.toXml())
-                .contains("4.0")
-                .contains("dependencyManagement")
-                .doesNotContain("<properties>");
-    }
-
-    @Test
-    void addToParentDepMgmtWithLiteralSourceResolvesPropertyRef() {
-        String childPom = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <project>
-                    <modelVersion>4.0.0</modelVersion>
-                    <groupId>test</groupId>
-                    <artifactId>child</artifactId>
-                    <version>1.0</version>
-                    <properties>
-                        <bar.version>5.0</bar.version>
-                    </properties>
-                </project>
-                """;
-        String parentPom = EMPTY_PARENT_POM;
-
-        var detected = AlignOptions.builder()
-                .versionStyle(AlignOptions.VersionStyle.MANAGED)
-                .versionSource(AlignOptions.VersionSource.LITERAL)
-                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
-                .build();
-        var parentInfo = new AlignTui.ParentPomInfo("/tmp/parent/pom.xml", "g:parent:1.0", detected);
-        var tui = new AlignTui("/tmp/child/pom.xml", "g:child:1.0", detected, parentInfo);
-
-        PomEditor childEditor = new PomEditor(Document.of(childPom));
-        PomEditor parentEditor = new PomEditor(Document.of(parentPom));
-
-        // Property ref with LITERAL source → resolves to literal value
-        var coords = Coordinates.of("org.example", "bar", "${bar.version}");
-        tui.addToParentDepMgmt(childEditor, parentEditor, coords);
-
-        assertThat(parentEditor.toXml())
-                .contains("5.0")
-                .doesNotContain("${bar.version}")
-                .doesNotContain("<properties>");
+        assertThat(childEditor.dependencies().alignAllToParent(parentEditor, detected))
+                .isZero();
     }
 }
