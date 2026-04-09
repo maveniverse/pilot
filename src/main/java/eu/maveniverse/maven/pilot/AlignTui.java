@@ -38,7 +38,6 @@ import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
-import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,8 +46,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Interactive TUI for dependency convention alignment.
@@ -69,13 +66,10 @@ class AlignTui {
      */
     record ParentPomInfo(String pomPath, String gav, AlignOptions detectedOptions) {}
 
-    private static final Logger LOGGER = Logger.getLogger(AlignTui.class.getName());
-
     private static final int ROW_VERSION_STYLE = 0;
     private static final int ROW_VERSION_SOURCE = 1;
     private static final int ROW_PROPERTY_NAMING = 2;
     private static final int ROW_COUNT = 3;
-    private static final String PROPERTIES_ELEMENT = "properties";
 
     private final String pomPath;
     private final List<String> additionalPomPaths; // batch mode: additional POMs to align
@@ -392,7 +386,7 @@ class AlignTui {
             for (String childPath : additionalPomPaths) {
                 String childContent = Files.readString(Path.of(childPath));
                 PomEditor childEditor = new PomEditor(Document.of(childContent));
-                totalCount += alignCrossPom(childEditor, parentEditor);
+                totalCount += childEditor.dependencies().alignAllToParent(parentEditor, buildSelectedOptions());
                 String childModified = childEditor.toXml();
                 if (!childContent.equals(childModified)) {
                     String label = Path.of(childPath).getParent().getFileName() + "/pom.xml";
@@ -434,7 +428,7 @@ class AlignTui {
             for (String childPath : additionalPomPaths) {
                 String childContent = Files.readString(Path.of(childPath));
                 PomEditor childEditor = new PomEditor(Document.of(childContent));
-                totalCount += alignCrossPom(childEditor, parentEditor);
+                totalCount += childEditor.dependencies().alignAllToParent(parentEditor, buildSelectedOptions());
                 String childModified = childEditor.toXml();
                 if (!childContent.equals(childModified)) {
                     Files.writeString(Path.of(childPath), childModified);
@@ -468,7 +462,7 @@ class AlignTui {
             PomEditor childEditor = new PomEditor(Document.of(childContent));
             PomEditor parentEditor = new PomEditor(Document.of(parentContent));
 
-            int count = alignCrossPom(childEditor, parentEditor);
+            int count = childEditor.dependencies().alignAllToParent(parentEditor, buildSelectedOptions());
 
             String childModified = childEditor.toXml();
             String parentModified = parentEditor.toXml();
@@ -520,7 +514,7 @@ class AlignTui {
             PomEditor childEditor = new PomEditor(Document.of(childContent));
             PomEditor parentEditor = new PomEditor(Document.of(parentContent));
 
-            int count = alignCrossPom(childEditor, parentEditor);
+            int count = childEditor.dependencies().alignAllToParent(parentEditor, buildSelectedOptions());
 
             // Writes are not atomic across the two files; users can roll back via git if interrupted
             Files.writeString(Path.of(parentInfo.pomPath()), parentEditor.toXml());
@@ -543,103 +537,6 @@ class AlignTui {
             alignedPomContent = null;
         } catch (Exception e) {
             status = "Failed to write POMs: " + e.getMessage();
-        }
-    }
-
-    /**
-     * Align dependencies across child and parent POMs.
-     * Moves inline versions from child deps to parent's dependency management.
-     *
-     * @return the number of dependencies aligned
-     */
-    int alignCrossPom(PomEditor childEditor, PomEditor parentEditor) {
-        var depsOpt = childEditor.root().childElement("dependencies");
-        if (depsOpt.isEmpty()) return 0;
-
-        List<Coordinates> toManage = new ArrayList<>();
-
-        // Collect child deps that have inline versions
-        depsOpt.orElseThrow().childElements("dependency").forEach(dep -> {
-            String gid = dep.childTextOr("groupId", "");
-            String aid = dep.childTextOr("artifactId", "");
-            String ver = dep.childTextOr("version", null);
-            if (ver != null && !ver.isEmpty()) {
-                toManage.add(Coordinates.of(gid, aid, ver));
-            }
-        });
-
-        int count = 0;
-        for (var coords : toManage) {
-            addToParentDepMgmt(childEditor, parentEditor, coords);
-            childEditor.dependencies().deleteDependencyVersion(coords);
-            count++;
-        }
-
-        return count;
-    }
-
-    /**
-     * Add a dependency to the parent POM's dependency management section,
-     * following the selected version source and naming conventions.
-     */
-    void addToParentDepMgmt(PomEditor childEditor, PomEditor parentEditor, Coordinates coords) {
-        String version = coords.version();
-
-        if (selectedSource == AlignOptions.VersionSource.PROPERTY) {
-            String propName;
-            String propValue;
-
-            if (version.startsWith("${") && version.endsWith("}")) {
-                // Already a property reference - reuse name and resolve value from child
-                propName = version.substring(2, version.length() - 1);
-                propValue = childEditor
-                        .root()
-                        .childElement(PROPERTIES_ELEMENT)
-                        .map(p -> p.childTextOr(propName, null))
-                        .orElse(null);
-            } else {
-                // Literal version - create new property with selected naming convention
-                propName = AlignOptions.generatePropertyName(coords, selectedNaming);
-                propValue = version;
-            }
-
-            // Add property to parent and determine managed dep version
-            String managedVersion;
-            if (propValue != null) {
-                boolean parentHasProp = parentEditor
-                        .root()
-                        .childElement(PROPERTIES_ELEMENT)
-                        .flatMap(p -> p.childElement(propName))
-                        .isPresent();
-                if (!parentHasProp) {
-                    parentEditor.properties().updateProperty(true, propName, propValue);
-                }
-                managedVersion = "${" + propName + "}";
-            } else {
-                // Property not found in child POM — use raw version reference
-                LOGGER.log(Level.FINE, "Property {0} not found in child POM; using raw version: {1}", new Object[] {
-                    propName, version
-                });
-                managedVersion = version;
-            }
-
-            var managedCoords = Coordinates.of(coords.groupId(), coords.artifactId(), managedVersion);
-            parentEditor.dependencies().updateManagedDependency(true, managedCoords);
-        } else {
-            // LITERAL source - resolve property refs if possible, then add literal version
-            String literalVersion = version;
-            if (version.startsWith("${") && version.endsWith("}")) {
-                String propName = version.substring(2, version.length() - 1);
-                literalVersion = childEditor
-                        .root()
-                        .childElement(PROPERTIES_ELEMENT)
-                        .map(p -> p.childTextOr(propName, version))
-                        .orElse(version);
-            }
-            parentEditor
-                    .dependencies()
-                    .updateManagedDependency(
-                            true, Coordinates.of(coords.groupId(), coords.artifactId(), literalVersion));
         }
     }
 
