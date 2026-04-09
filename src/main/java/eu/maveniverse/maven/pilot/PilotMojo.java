@@ -147,8 +147,7 @@ public class PilotMojo extends AbstractMojo {
 
     private void runTree(MavenProject proj) throws Exception {
         CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
-        new TreeTui(model, gavOf(proj)).run();
+        new TreeTui(result.getRoot(), scope, gavOf(proj)).run();
     }
 
     // ── dependencies ────────────────────────────────────────────────────────
@@ -188,12 +187,18 @@ public class PilotMojo extends AbstractMojo {
 
         if (Files.isDirectory(classesDir)) {
             bytecodeAnalyzed = true;
-            Set<String> mainRefs = ClassFileScanner.scanDirectory(classesDir);
-            Set<String> testRefs =
-                    Files.isDirectory(testClassesDir) ? ClassFileScanner.scanDirectory(testClassesDir) : Set.of();
+            ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(classesDir);
+            ClassFileScanner.ScanResult testScan = Files.isDirectory(testClassesDir)
+                    ? ClassFileScanner.scanDirectory(testClassesDir)
+                    : new ClassFileScanner.ScanResult(Set.of(), Map.of());
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage =
-                    DependencyUsageAnalyzer.analyze(mainRefs, testRefs, classIndex, gaToJar, declared, transitive);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
+                    mainScan.referencedClasses(),
+                    testScan.referencedClasses(),
+                    classIndex,
+                    gaToJar,
+                    declared,
+                    transitive);
             for (var dep : declared) {
                 dep.usageStatus =
                         usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);

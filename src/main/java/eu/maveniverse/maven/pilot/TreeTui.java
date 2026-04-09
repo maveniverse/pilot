@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI for browsing the dependency tree.
@@ -56,13 +57,17 @@ class TreeTui {
         REVERSE_PATH
     }
 
-    private final DependencyTreeModel model;
+    private static final List<String> SCOPES = List.of("compile", "runtime", "test");
+
+    private final DependencyNode rootNode;
     private final String projectGav;
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
     private final HelpOverlay helpOverlay = new HelpOverlay();
 
+    private DependencyTreeModel model;
+    private String scope;
     private Mode mode = Mode.TREE;
     private List<DependencyTreeModel.TreeNode> displayNodes;
     private int conflictIndex = -1;
@@ -76,9 +81,22 @@ class TreeTui {
 
     private TuiRunner runner;
 
-    TreeTui(DependencyTreeModel model, String projectGav) {
-        this.model = model;
+    TreeTui(DependencyNode rootNode, String scope, String projectGav) {
+        this.rootNode = rootNode;
+        this.scope = scope;
         this.projectGav = projectGav;
+        this.model = DependencyTreeModel.fromDependencyNode(rootNode, scope);
+        this.displayNodes = model.visibleNodes();
+        if (!displayNodes.isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    TreeTui(DependencyTreeModel model, String projectGav) {
+        this.rootNode = null;
+        this.scope = "compile";
+        this.projectGav = projectGav;
+        this.model = model;
         this.displayNodes = model.visibleNodes();
         if (!displayNodes.isEmpty()) {
             tableState.select(0);
@@ -217,12 +235,31 @@ class TreeTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('s')) {
+            cycleScope();
+            return true;
+        }
+
         if (key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelp());
             return true;
         }
 
         return false;
+    }
+
+    private void cycleScope() {
+        if (rootNode == null) return;
+        int idx = SCOPES.indexOf(scope);
+        scope = SCOPES.get((idx + 1) % SCOPES.size());
+        model = DependencyTreeModel.fromDependencyNode(rootNode, scope);
+        conflictIndex = -1;
+        displayNodes = model.visibleNodes();
+        if (!displayNodes.isEmpty()) {
+            tableState.select(0);
+        } else {
+            tableState.clearSelection();
+        }
     }
 
     private boolean handleFilterKeys(KeyEvent key) {
@@ -400,7 +437,8 @@ class TreeTui {
                         List.of(
                                 new HelpOverlay.Entry("/", "Filter \u2014 type to search by groupId or artifactId"),
                                 new HelpOverlay.Entry("c", "Jump to next conflict (only when conflicts exist)"),
-                                new HelpOverlay.Entry("r", "Reverse path \u2014 show how root depends on selection"))),
+                                new HelpOverlay.Entry("r", "Reverse path \u2014 show how root depends on selection"),
+                                new HelpOverlay.Entry("s", "Cycle scope filter: compile \u2192 runtime \u2192 test"))),
                 new HelpOverlay.Section(
                         "General",
                         List.of(
@@ -478,7 +516,7 @@ class TreeTui {
 
     private void renderTree(Frame frame, Rect area) {
         String conflictInfo = model.conflicts.isEmpty() ? "" : ", " + model.conflicts.size() + " conflicts";
-        String title = " Tree (" + model.totalNodes + " nodes" + conflictInfo + ") ";
+        String title = " Tree [" + scope + "] (" + model.totalNodes + " nodes" + conflictInfo + ") ";
 
         Block block = Block.builder()
                 .title(title)
@@ -700,6 +738,8 @@ class TreeTui {
             }
             spans.add(Span.raw("r").bold());
             spans.add(Span.raw(":Reverse  "));
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Scope(" + scope + ")  "));
             spans.add(Span.raw("e/w").bold());
             spans.add(Span.raw(":Expand/Collapse all  "));
             spans.add(Span.raw("h").bold());

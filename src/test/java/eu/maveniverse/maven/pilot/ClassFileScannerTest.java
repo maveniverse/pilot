@@ -22,29 +22,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ClassFileScannerTest {
-
-    @Test
-    void scanOwnClassFile() throws Exception {
-        // Scan this test class's own .class file from target/test-classes
-        Path testClasses = Path.of("target/test-classes");
-        Path thisClass = testClasses.resolve("eu/maveniverse/maven/pilot/ClassFileScannerTest.class");
-        if (!Files.exists(thisClass)) {
-            return; // skip if not compiled
-        }
-
-        Set<String> refs = ClassFileScanner.referencedClasses(thisClass);
-
-        // Must reference standard JDK classes and project classes
-        assertThat(refs)
-                .contains("java.lang.Object")
-                .contains("eu.maveniverse.maven.pilot.ClassFileScanner")
-                .contains("java.nio.file.Path");
-    }
 
     @Test
     void scanDirectoryFindsClasses() throws Exception {
@@ -53,16 +34,32 @@ class ClassFileScannerTest {
             return;
         }
 
-        Set<String> refs = ClassFileScanner.scanDirectory(testClasses);
+        ClassFileScanner.ScanResult result = ClassFileScanner.scanDirectory(testClasses);
 
         // Should find references from all test classes
-        assertThat(refs).isNotEmpty().contains("java.lang.Object");
+        assertThat(result.referencedClasses()).isNotEmpty().contains("java.lang.Object");
+    }
+
+    @Test
+    void scanDirectoryFindsMemberReferences() throws Exception {
+        Path testClasses = Path.of("target/test-classes");
+        if (!Files.isDirectory(testClasses)) {
+            return;
+        }
+
+        ClassFileScanner.ScanResult result = ClassFileScanner.scanDirectory(testClasses);
+
+        // Should find member-level references (e.g. method calls on Path, assertThat, etc.)
+        assertThat(result.memberReferences()).isNotEmpty();
+        // This test class calls Path.of(), so we should see it
+        assertThat(result.referencedClasses()).contains("java.nio.file.Path");
     }
 
     @Test
     void scanEmptyDirectory(@TempDir Path tempDir) throws Exception {
-        Set<String> refs = ClassFileScanner.scanDirectory(tempDir);
-        assertThat(refs).isEmpty();
+        ClassFileScanner.ScanResult result = ClassFileScanner.scanDirectory(tempDir);
+        assertThat(result.referencedClasses()).isEmpty();
+        assertThat(result.memberReferences()).isEmpty();
     }
 
     @Test
@@ -72,12 +69,20 @@ class ClassFileScannerTest {
             return;
         }
 
-        Set<String> refs = ClassFileScanner.scanDirectory(mainClasses);
+        ClassFileScanner.ScanResult result = ClassFileScanner.scanDirectory(mainClasses);
 
         // No class name should start with '[' (array descriptors should be filtered)
-        assertThat(refs)
+        assertThat(result.referencedClasses())
                 .noneMatch(name -> name.startsWith("["))
                 // No class name should contain '/' (should be dot-separated)
                 .noneMatch(name -> name.contains("/"));
+    }
+
+    @Test
+    void formatDescriptorHumanReadable() {
+        assertThat(ClassFileScanner.formatDescriptor("()V")).isEqualTo("()");
+        assertThat(ClassFileScanner.formatDescriptor("(Ljava/lang/String;)V")).isEqualTo("(String)");
+        assertThat(ClassFileScanner.formatDescriptor("(Ljava/lang/String;I)Z")).isEqualTo("(String, int)");
+        assertThat(ClassFileScanner.formatDescriptor("([Ljava/lang/Object;)V")).isEqualTo("(Object[])");
     }
 }

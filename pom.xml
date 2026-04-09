@@ -28,7 +28,7 @@ under the License.
 
   <groupId>eu.maveniverse.maven.plugins</groupId>
   <artifactId>pilot</artifactId>
-  <version>${revision}</version>
+  <version>${nisse.jgit.dynamicVersion}</version>
   <packaging>maven-plugin</packaging>
 
   <name>Pilot</name>
@@ -49,7 +49,7 @@ under the License.
   <scm>
     <connection>scm:git:git@github.com:maveniverse/pilot.git</connection>
     <developerConnection>scm:git:git@github.com:maveniverse/pilot.git</developerConnection>
-    <tag>${revision}</tag>
+    <tag>${nisse.jgit.dynamicVersion}</tag>
     <url>https://github.com/maveniverse/pilot</url>
   </scm>
 
@@ -120,6 +120,13 @@ under the License.
       <groupId>eu.maveniverse.maven.domtrip</groupId>
       <artifactId>domtrip-maven</artifactId>
       <version>${domtrip.version}</version>
+    </dependency>
+
+    <!-- Bytecode analysis -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm</artifactId>
+      <version>9.7.1</version>
     </dependency>
 
     <!-- JSON -->

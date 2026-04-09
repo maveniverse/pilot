@@ -146,21 +146,46 @@ public class DependenciesMojo extends AbstractMojo {
         if (Files.isDirectory(classesDir)) {
             bytecodeAnalyzed = true;
 
-            Set<String> mainRefs = ClassFileScanner.scanDirectory(classesDir);
-            Set<String> testRefs =
-                    Files.isDirectory(testClassesDir) ? ClassFileScanner.scanDirectory(testClassesDir) : Set.of();
+            ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(classesDir);
+            ClassFileScanner.ScanResult testScan = Files.isDirectory(testClassesDir)
+                    ? ClassFileScanner.scanDirectory(testClassesDir)
+                    : new ClassFileScanner.ScanResult(Set.of(), Map.of());
 
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage =
-                    DependencyUsageAnalyzer.analyze(mainRefs, testRefs, classIndex, gaToJar, declared, transitive);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
+                    mainScan.referencedClasses(),
+                    testScan.referencedClasses(),
+                    classIndex,
+                    gaToJar,
+                    declared,
+                    transitive);
+
+            // Build reverse index: GA -> set of class names provided
+            Map<String, Set<String>> gaToClasses = new HashMap<>();
+            for (var entry : classIndex.entrySet()) {
+                gaToClasses
+                        .computeIfAbsent(entry.getValue(), k -> new HashSet<>())
+                        .add(entry.getKey());
+            }
+
+            // Merge member references from main and test scans
+            Map<String, Set<String>> allMembers = new HashMap<>(mainScan.memberReferences());
+            for (var entry : testScan.memberReferences().entrySet()) {
+                allMembers.computeIfAbsent(entry.getKey(), k -> new HashSet<>()).addAll(entry.getValue());
+            }
+
+            Set<String> allClassRefs = new HashSet<>(mainScan.referencedClasses());
+            allClassRefs.addAll(testScan.referencedClasses());
 
             for (var dep : declared) {
                 dep.usageStatus =
                         usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                enrichUsageDetail(dep, gaToClasses, gaToJar, mainScan.referencedClasses(), allClassRefs, allMembers);
             }
             for (var dep : transitive) {
                 dep.usageStatus = usage.transitiveUsage()
                         .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                enrichUsageDetail(dep, gaToClasses, gaToJar, mainScan.referencedClasses(), allClassRefs, allMembers);
             }
         } else {
             getLog().warn("target/classes not found — skipping bytecode analysis. Run 'mvn compile' first.");
@@ -171,5 +196,43 @@ public class DependenciesMojo extends AbstractMojo {
 
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, gav, bytecodeAnalyzed);
         tui.run();
+    }
+
+    private static final Set<String> TEST_SCOPES = Set.of("test", "test-only", "test-runtime");
+
+    private static void enrichUsageDetail(
+            DependenciesTui.DepEntry dep,
+            Map<String, Set<String>> gaToClasses,
+            Map<String, File> gaToJar,
+            Set<String> mainClassRefs,
+            Set<String> allClassRefs,
+            Map<String, Set<String>> allMemberRefs) {
+        Set<String> depClasses = gaToClasses.get(dep.ga());
+        if (depClasses == null) {
+            dep.totalClasses = 0;
+            dep.usedMembers = Map.of();
+        } else {
+            dep.totalClasses = depClasses.size();
+            Set<String> refs = TEST_SCOPES.contains(dep.scope) ? allClassRefs : mainClassRefs;
+            Map<String, List<String>> members = new java.util.TreeMap<>();
+            for (String className : depClasses) {
+                if (refs.contains(className)) {
+                    Set<String> memberSet = allMemberRefs.get(className);
+                    members.put(
+                            className,
+                            memberSet != null ? memberSet.stream().sorted().toList() : List.of());
+                }
+            }
+            dep.usedMembers = members;
+        }
+
+        // Collect SPI service interfaces provided by this dependency
+        File jarFile = gaToJar.get(dep.ga());
+        if (jarFile != null) {
+            Set<String> spi = DependencyUsageAnalyzer.getRuntimeDiscoveryClasses(jarFile);
+            dep.spiServices = spi.isEmpty() ? List.of() : spi.stream().sorted().toList();
+        } else {
+            dep.spiServices = List.of();
+        }
     }
 }

@@ -91,8 +91,8 @@ public class TreeMojo extends AbstractMojo {
 
     private void executeForProject(MavenProject proj) throws Exception {
         CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
-        TreeTui tui = new TreeTui(model, proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion());
+        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
+        TreeTui tui = new TreeTui(result.getRoot(), scope, gav);
         tui.run();
     }
 }

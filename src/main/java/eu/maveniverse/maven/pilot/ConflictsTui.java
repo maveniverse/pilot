@@ -105,6 +105,7 @@ class ConflictsTui {
     private final String projectGav;
     private final TableState tableState = new TableState();
     private boolean showDetails = true;
+    private boolean showAll = false;
     private String status;
 
     private final String originalPomContent;
@@ -125,6 +126,17 @@ class ConflictsTui {
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : -1;
+    }
+
+    /**
+     * Returns the list of conflict groups currently visible based on the {@code showAll} toggle.
+     * When {@code showAll} is false, only groups with actual version conflicts are included.
+     */
+    private List<ConflictGroup> displayedConflicts() {
+        if (showAll) {
+            return conflicts;
+        }
+        return conflicts.stream().filter(ConflictGroup::hasConflict).collect(Collectors.toList());
     }
 
     /**
@@ -150,7 +162,7 @@ class ConflictsTui {
         }
         this.originalPomContent = pom;
         this.editor = new PomEditor(Document.of(pom));
-        if (!conflicts.isEmpty()) {
+        if (!displayedConflicts().isEmpty()) {
             tableState.select(0);
         }
     }
@@ -234,7 +246,7 @@ class ConflictsTui {
             return true;
         }
         if (key.isDown()) {
-            tableState.selectNext(conflicts.size());
+            tableState.selectNext(displayedConflicts().size());
             return true;
         }
 
@@ -250,6 +262,21 @@ class ConflictsTui {
 
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('a')) {
+            showAll = !showAll;
+            List<ConflictGroup> displayed = displayedConflicts();
+            if (displayed.isEmpty()) {
+                tableState.clearSelection();
+            } else {
+                int sel = selectedIndex();
+                if (sel < 0 || sel >= displayed.size()) {
+                    tableState.select(0);
+                }
+            }
+            status = showAll ? "Showing all dependency groups" : "Showing conflicts only";
             return true;
         }
 
@@ -270,9 +297,10 @@ class ConflictsTui {
      * contains the error message.
      */
     private void pinVersion() {
+        List<ConflictGroup> displayed = displayedConflicts();
         int sel = selectedIndex();
-        if (sel < 0 || sel >= conflicts.size()) return;
-        var group = conflicts.get(sel);
+        if (sel < 0 || sel >= displayed.size()) return;
+        var group = displayed.get(sel);
 
         try {
             String resolvedVersion = group.resolvedVersion();
@@ -351,6 +379,7 @@ class ConflictsTui {
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
                                 new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
+                                new HelpOverlay.Entry("a", "Toggle between conflicts only / all groups"),
                                 new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
                                 new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
@@ -418,7 +447,10 @@ class ConflictsTui {
     private void renderConflicts(Frame frame, Rect area) {
         long conflictCount =
                 conflicts.stream().filter(ConflictGroup::hasConflict).count();
-        String title = " Conflicts (" + conflictCount + " actual, " + conflicts.size() + " total) ";
+        List<ConflictGroup> displayed = displayedConflicts();
+        String title = showAll
+                ? " Conflicts (" + conflictCount + " actual, " + conflicts.size() + " total) "
+                : " Conflicts (" + conflictCount + ") ";
 
         Block block = Block.builder()
                 .title(title)
@@ -426,7 +458,7 @@ class ConflictsTui {
                 .borderStyle(Style.create().fg(Color.DARK_GRAY))
                 .build();
 
-        if (conflicts.isEmpty()) {
+        if (displayed.isEmpty()) {
             Paragraph empty = Paragraph.builder()
                     .text("No version conflicts detected \u2713")
                     .block(block)
@@ -440,7 +472,7 @@ class ConflictsTui {
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
-        for (var group : conflicts) {
+        for (var group : displayed) {
             String icon = group.hasConflict() ? "\u26A0" : "\u2713";
             String versions = group.entries.stream()
                     .map(e -> e.requestedVersion)
@@ -478,10 +510,11 @@ class ConflictsTui {
      * "→ resolved <resolvedVersion>" fragment in yellow.
      */
     private void renderDetails(Frame frame, Rect area) {
+        List<ConflictGroup> displayed = displayedConflicts();
         int sel = selectedIndex();
-        if (sel < 0 || sel >= conflicts.size()) return;
+        if (sel < 0 || sel >= displayed.size()) return;
 
-        var group = conflicts.get(sel);
+        var group = displayed.get(sel);
         Block block = Block.builder()
                 .title(" " + group.ga + " \u2014 Dependency Paths ")
                 .borderType(BorderType.ROUNDED)
@@ -540,6 +573,8 @@ class ConflictsTui {
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Enter").bold());
             spans.add(Span.raw(":Details  "));
+            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
             spans.add(Span.raw("p").bold());
             spans.add(Span.raw(":Pin version  "));
             spans.add(Span.raw("d").bold());

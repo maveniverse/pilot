@@ -174,7 +174,7 @@ final class DependencyUsageAnalyzer {
      * </ul>
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
-    private static Set<String> getRuntimeDiscoveryClasses(File jarFile) {
+    static Set<String> getRuntimeDiscoveryClasses(File jarFile) {
         Set<String> classes = new HashSet<>();
         try (JarFile jar = new JarFile(jarFile)) {
             Enumeration<JarEntry> entries = jar.entries();

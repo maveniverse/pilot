@@ -18,86 +18,65 @@
  */
 package eu.maveniverse.maven.pilot;
 
-import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 /**
- * Lightweight constant pool scanner that extracts referenced class names from {@code .class} files
- * without requiring ASM or any external bytecode library.
- *
- * <p>The scanner reads only the constant pool section of the class file format (JVMS 4.1),
- * collecting all {@code CONSTANT_Class} entries and resolving them to fully-qualified class names.</p>
+ * Bytecode scanner using ASM that extracts referenced classes and member-level references
+ * (methods and fields) from {@code .class} files.
  */
 final class ClassFileScanner {
 
-    private static final int MAGIC = 0xCAFEBABE;
+    record ScanResult(Set<String> referencedClasses, Map<String, Set<String>> memberReferences) {
 
-    // Constant pool tags (JVMS 4.4)
-    private static final int CONSTANT_UTF_8 = 1;
-    private static final int CONSTANT_INTEGER = 3;
-    private static final int CONSTANT_FLOAT = 4;
-    private static final int CONSTANT_LONG = 5;
-    private static final int CONSTANT_DOUBLE = 6;
-    private static final int CONSTANT_CLASS = 7;
-    private static final int CONSTANT_STRING = 8;
-    private static final int CONSTANT_FIELDREF = 9;
-    private static final int CONSTANT_METHODREF = 10;
-    private static final int CONSTANT_INTERFACE_METHODREF = 11;
-    private static final int CONSTANT_NAME_AND_TYPE = 12;
-    private static final int CONSTANT_METHOD_HANDLE = 15;
-    private static final int CONSTANT_METHOD_TYPE = 16;
-    private static final int CONSTANT_DYNAMIC = 17;
-    private static final int CONSTANT_INVOKE_DYNAMIC = 18;
-    private static final int CONSTANT_MODULE = 19;
-    private static final int CONSTANT_PACKAGE = 20;
-
-    /** Pattern matching class references in type descriptors, e.g. {@code Lcom/example/Foo;} */
-    private static final Pattern DESCRIPTOR_CLASS_PATTERN = Pattern.compile("L([a-zA-Z][\\w/$]*);");
+        /**
+         * Merge another ScanResult into this one, returning a new combined result.
+         */
+        ScanResult merge(ScanResult other) {
+            Set<String> classes = new HashSet<>(referencedClasses);
+            classes.addAll(other.referencedClasses);
+            Map<String, Set<String>> members = new HashMap<>(memberReferences);
+            for (var entry : other.memberReferences.entrySet()) {
+                members.computeIfAbsent(entry.getKey(), k -> new HashSet<>()).addAll(entry.getValue());
+            }
+            return new ScanResult(classes, members);
+        }
+    }
 
     private ClassFileScanner() {}
 
     /**
-     * Scan a single {@code .class} file and return all referenced class names as dot-separated
-     * fully-qualified names (e.g. {@code com.example.Foo}).
-     *
-     * <p>Array descriptors and primitive types are filtered out.</p>
-     *
-     * @param classFile path to the {@code .class} file
-     * @return set of referenced class names
-     * @throws IOException if the file cannot be read or has an invalid format
-     */
-    static Set<String> referencedClasses(Path classFile) throws IOException {
-        try (InputStream fis = Files.newInputStream(classFile);
-                DataInputStream dis = new DataInputStream(fis)) {
-            return parseConstantPool(dis);
-        }
-    }
-
-    /**
-     * Scan all {@code .class} files under a directory tree and return the union of all
-     * referenced class names.
-     *
-     * <p>Individual file scan errors are silently skipped to avoid failing the entire scan
-     * due to a single corrupt class file.</p>
+     * Scan all {@code .class} files under a directory tree and return class and member references.
      *
      * @param classesDir root directory to scan (e.g. {@code target/classes})
-     * @return aggregated set of referenced class names
+     * @return scan result with referenced classes and member-level references
      * @throws IOException if the directory cannot be walked
      */
-    static Set<String> scanDirectory(Path classesDir) throws IOException {
-        Set<String> result = new HashSet<>();
+    static ScanResult scanDirectory(Path classesDir) throws IOException {
+        ScanResult result = new ScanResult(new HashSet<>(), new HashMap<>());
         try (Stream<Path> walk = Files.walk(classesDir)) {
             walk.filter(p -> p.toString().endsWith(".class")).forEach(p -> {
                 try {
-                    result.addAll(referencedClasses(p));
+                    result.referencedClasses.addAll(scanFile(p).referencedClasses);
+                    for (var entry : scanFile(p).memberReferences.entrySet()) {
+                        result.memberReferences
+                                .computeIfAbsent(entry.getKey(), k -> new HashSet<>())
+                                .addAll(entry.getValue());
+                    }
                 } catch (IOException ignored) {
                     // skip corrupt or unreadable class files
                 }
@@ -106,91 +85,172 @@ final class ClassFileScanner {
         return result;
     }
 
-    private static Set<String> parseConstantPool(DataInputStream dis) throws IOException {
-        int magic = dis.readInt();
-        if (magic != MAGIC) {
-            throw new IOException("Not a valid class file (bad magic number)");
+    private static ScanResult scanFile(Path classFile) throws IOException {
+        try (InputStream is = Files.newInputStream(classFile)) {
+            ClassReader reader = new ClassReader(is);
+            ReferenceCollector collector = new ReferenceCollector();
+            reader.accept(collector, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            return new ScanResult(collector.referencedClasses, collector.memberReferences);
         }
-        dis.readUnsignedShort(); // minor_version
-        dis.readUnsignedShort(); // major_version
+    }
 
-        int poolCount = dis.readUnsignedShort();
+    private static class ReferenceCollector extends ClassVisitor {
+        final Set<String> referencedClasses = new HashSet<>();
+        final Map<String, Set<String>> memberReferences = new HashMap<>();
+        private String thisClass;
 
-        // Storage for constant pool entries we care about
-        String[] utf8Entries = new String[poolCount];
-        Set<Integer> classNameIndices = new HashSet<>();
+        ReferenceCollector() {
+            super(Opcodes.ASM9);
+        }
 
-        // Walk the constant pool (indices 1..poolCount-1); use while to allow
-        // incrementing the index for Long/Double entries which occupy two slots.
-        int i = 1;
-        while (i < poolCount) {
-            int tag = dis.readUnsignedByte();
-            switch (tag) {
-                case CONSTANT_UTF_8 -> {
-                    int length = dis.readUnsignedShort();
-                    byte[] bytes = new byte[length];
-                    dis.readFully(bytes);
-                    utf8Entries[i] = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                }
-                case CONSTANT_CLASS -> {
-                    int nameIndex = dis.readUnsignedShort();
-                    classNameIndices.add(nameIndex);
-                }
-                case CONSTANT_STRING, CONSTANT_METHOD_TYPE, CONSTANT_MODULE, CONSTANT_PACKAGE ->
-                    dis.readUnsignedShort();
-                case CONSTANT_INTEGER, CONSTANT_FLOAT -> dis.readInt();
-                case CONSTANT_LONG, CONSTANT_DOUBLE -> {
-                    dis.readLong();
-                    i++; // longs and doubles occupy two constant pool slots
-                }
-                case CONSTANT_FIELDREF,
-                        CONSTANT_METHODREF,
-                        CONSTANT_INTERFACE_METHODREF,
-                        CONSTANT_NAME_AND_TYPE,
-                        CONSTANT_DYNAMIC,
-                        CONSTANT_INVOKE_DYNAMIC -> dis.readInt();
-                case CONSTANT_METHOD_HANDLE -> {
-                    dis.readUnsignedByte(); // reference_kind
-                    dis.readUnsignedShort(); // reference_index
-                }
-                default -> throw new IOException("Unknown constant pool tag: " + tag + " at index " + i);
+        @Override
+        public void visit(
+                int version, int access, String name, String signature, String superName, String[] interfaces) {
+            thisClass = toClassName(name);
+            if (superName != null) {
+                addClassRef(superName);
             }
-            i++;
-        }
-
-        // Resolve class names from CONSTANT_Class entries
-        Set<String> classes = new HashSet<>();
-        for (int idx : classNameIndices) {
-            String internalName = utf8Entries[idx];
-            if (internalName == null || internalName.startsWith("[")) {
-                continue; // skip array descriptors
-            }
-            // Convert internal name (com/example/Foo) to binary name (com.example.Foo)
-            classes.add(internalName.replace('/', '.'));
-        }
-
-        // Also extract class references from descriptors in UTF8 entries.
-        // This catches annotation types, field types, and method parameter/return types
-        // which are encoded as descriptors (e.g. Lcom/example/Foo;) rather than
-        // CONSTANT_Class entries.
-        for (String utf8 : utf8Entries) {
-            if (utf8 != null) {
-                extractDescriptorClasses(utf8, classes);
+            if (interfaces != null) {
+                for (String iface : interfaces) {
+                    addClassRef(iface);
+                }
             }
         }
 
-        return classes;
+        @Override
+        public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+            addDescriptorRefs(descriptor);
+            return null;
+        }
+
+        @Override
+        public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+            addDescriptorRefs(descriptor);
+            return null;
+        }
+
+        @Override
+        public MethodVisitor visitMethod(
+                int access, String name, String descriptor, String signature, String[] exceptions) {
+            addDescriptorRefs(descriptor);
+            if (exceptions != null) {
+                for (String ex : exceptions) {
+                    addClassRef(ex);
+                }
+            }
+            return new MethodVisitor(Opcodes.ASM9) {
+                @Override
+                public void visitMethodInsn(
+                        int opcode, String owner, String mName, String mDescriptor, boolean isInterface) {
+                    String className = toClassName(owner);
+                    addClassRef(owner);
+                    if (!className.equals(thisClass)) {
+                        String member = mName + formatDescriptor(mDescriptor);
+                        memberReferences
+                                .computeIfAbsent(className, k -> new HashSet<>())
+                                .add(member);
+                    }
+                }
+
+                @Override
+                public void visitFieldInsn(int opcode, String owner, String fName, String descriptor) {
+                    String className = toClassName(owner);
+                    addClassRef(owner);
+                    if (!className.equals(thisClass)) {
+                        memberReferences
+                                .computeIfAbsent(className, k -> new HashSet<>())
+                                .add(fName);
+                    }
+                }
+
+                @Override
+                public void visitTypeInsn(int opcode, String type) {
+                    addClassRef(type);
+                }
+
+                @Override
+                public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+                    addDescriptorRefs(descriptor);
+                    return null;
+                }
+
+                @Override
+                public void visitLdcInsn(Object value) {
+                    if (value instanceof Type t) {
+                        addClassRef(t.getInternalName());
+                    }
+                }
+            };
+        }
+
+        private void addClassRef(String internalName) {
+            if (internalName == null || internalName.startsWith("[")) return;
+            referencedClasses.add(toClassName(internalName));
+        }
+
+        private void addDescriptorRefs(String descriptor) {
+            if (descriptor == null) return;
+            for (Type type : getTypesFromDescriptor(descriptor)) {
+                if (type.getSort() == Type.OBJECT) {
+                    referencedClasses.add(type.getClassName());
+                } else if (type.getSort() == Type.ARRAY && type.getElementType().getSort() == Type.OBJECT) {
+                    referencedClasses.add(type.getElementType().getClassName());
+                }
+            }
+        }
+
+        private static Type[] getTypesFromDescriptor(String descriptor) {
+            try {
+                if (descriptor.startsWith("(")) {
+                    // Method descriptor
+                    Type returnType = Type.getReturnType(descriptor);
+                    Type[] argTypes = Type.getArgumentTypes(descriptor);
+                    Type[] all = new Type[argTypes.length + 1];
+                    System.arraycopy(argTypes, 0, all, 0, argTypes.length);
+                    all[argTypes.length] = returnType;
+                    return all;
+                } else {
+                    return new Type[] {Type.getType(descriptor)};
+                }
+            } catch (Exception e) {
+                return new Type[0];
+            }
+        }
+
+        private static String toClassName(String internalName) {
+            return internalName.replace('/', '.');
+        }
     }
 
     /**
-     * Extract class names embedded in type descriptor strings (e.g. {@code Lcom/example/Foo;})
-     * and add them to the result set as dot-separated names.
+     * Format a method descriptor into a human-readable parameter list.
+     * E.g. {@code (Ljava/lang/String;I)V} becomes {@code (String, int)}.
      */
-    private static void extractDescriptorClasses(String utf8, Set<String> classes) {
-        Matcher matcher = DESCRIPTOR_CLASS_PATTERN.matcher(utf8);
-        while (matcher.find()) {
-            String internalName = matcher.group(1);
-            classes.add(internalName.replace('/', '.'));
+    static String formatDescriptor(String descriptor) {
+        try {
+            Type[] argTypes = Type.getArgumentTypes(descriptor);
+            if (argTypes.length == 0) return "()";
+            StringBuilder sb = new StringBuilder("(");
+            for (int i = 0; i < argTypes.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(simpleName(argTypes[i]));
+            }
+            sb.append(")");
+            return sb.toString();
+        } catch (Exception e) {
+            return "()";
         }
+    }
+
+    private static String simpleName(Type type) {
+        return switch (type.getSort()) {
+            case Type.ARRAY -> simpleName(type.getElementType()) + "[]";
+            case Type.OBJECT -> {
+                String name = type.getClassName();
+                int lastDot = name.lastIndexOf('.');
+                yield lastDot >= 0 ? name.substring(lastDot + 1) : name;
+            }
+            default -> type.getClassName();
+        };
     }
 }

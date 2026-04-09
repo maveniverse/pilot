@@ -45,6 +45,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.eclipse.aether.graph.DependencyNode;
 
@@ -74,6 +75,9 @@ class DependenciesTui {
         final boolean declared;
         String pulledBy; // for transitive deps: who pulled this in
         DependencyUsageAnalyzer.UsageStatus usageStatus; // set after bytecode analysis
+        Map<String, List<String>> usedMembers; // class -> list of member references (methods/fields)
+        int totalClasses; // total classes provided by this dep
+        List<String> spiServices; // SPI service interfaces provided by this dep
 
         /**
          * Creates a DepEntry representing a dependency row in the TUI.
@@ -469,8 +473,11 @@ class DependenciesTui {
 
             // Move from transitive to declared
             transitive.remove(sel);
-            dep.pulledBy = null;
-            declared.add(new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true));
+            var promoted = new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true);
+            promoted.usageStatus = dep.usageStatus;
+            promoted.usedMembers = dep.usedMembers;
+            promoted.totalClasses = dep.totalClasses;
+            declared.add(promoted);
             updateStatus();
             if (sel >= transitive.size() && !transitive.isEmpty()) {
                 tableState.select(transitive.size() - 1);
@@ -505,13 +512,24 @@ class DependenciesTui {
     }
 
     /**
-     * Cycle the scope of the currently selected declared dependency and persist to POM.
+     * Cycle the scope of the currently selected dependency and persist to POM (declared) or update in-memory (transitive).
      */
     private void changeScope() {
-        if (view != View.DECLARED) return;
+        var deps = currentList();
         int sel = selectedIndex();
-        if (sel < 0 || sel >= declared.size()) return;
-        var dep = declared.get(sel);
+        if (sel < 0 || sel >= deps.size()) return;
+        var dep = deps.get(sel);
+
+        if (view == View.TRANSITIVE) {
+            List<String> scopes = getScopesForModel(editor.document());
+            if (!scopes.contains(dep.scope)) {
+                scopes = new ArrayList<>(scopes);
+                scopes.add(dep.scope);
+            }
+            int current = scopes.indexOf(dep.scope);
+            dep.scope = scopes.get((current + 1) % scopes.size());
+            return;
+        }
 
         try {
             Document doc = editor.document();
@@ -528,7 +546,7 @@ class DependenciesTui {
             // Find the <dependency> element matching this GA
             doc.root()
                     .childElement("dependencies")
-                    .flatMap(deps -> deps.childElements("dependency")
+                    .flatMap(depsEl -> depsEl.childElements("dependency")
                             .filter(coords.predicateGA())
                             .findFirst())
                     .ifPresentOrElse(
@@ -614,7 +632,9 @@ class DependenciesTui {
                                         "s", "Cycle scope (compile \u2192 test \u2192 runtime \u2192 ...)"))),
                 new HelpOverlay.Section(
                         "Transitive View Actions",
-                        List.of(new HelpOverlay.Entry("a / Enter", "Add the dependency to the POM"))),
+                        List.of(
+                                new HelpOverlay.Entry("a / Enter", "Add the dependency to the POM"),
+                                new HelpOverlay.Entry("s", "Cycle scope before adding"))),
                 new HelpOverlay.Section(
                         "General",
                         List.of(
@@ -678,8 +698,13 @@ class DependenciesTui {
     // -- Rendering --
 
     void render(Frame frame) {
+        boolean detailsVisible = !helpOverlay.isActive() && !diffOverlay.isActive();
         var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
+                .constraints(
+                        Constraint.length(3),
+                        Constraint.fill(),
+                        detailsVisible ? Constraint.percentage(25) : Constraint.length(0),
+                        Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
@@ -690,8 +715,9 @@ class DependenciesTui {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             renderTable(frame, zones.get(1));
+            renderDetails(frame, zones.get(2));
         }
-        renderInfoBar(frame, zones.get(2));
+        renderInfoBar(frame, zones.get(3));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -732,6 +758,12 @@ class DependenciesTui {
 
         if (dirty) {
             spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+        }
+
+        if (!bytecodeAnalyzed) {
+            spans.add(Span.raw("  ⚠ Not compiled — run 'mvn compile' for usage analysis")
+                    .fg(Color.YELLOW)
+                    .bold());
         }
 
         Paragraph header = Paragraph.builder()
@@ -834,6 +866,131 @@ class DependenciesTui {
                 };
     }
 
+    private void renderDetails(Frame frame, Rect area) {
+        var deps = currentList();
+        int sel = selectedIndex();
+        if (sel < 0 || sel >= deps.size()) return;
+        var dep = deps.get(sel);
+
+        Block block = Block.builder()
+                .title(" " + dep.gav() + " ")
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .build();
+
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" Scope: ").bold());
+        spans.add(Span.raw(dep.scope));
+
+        if (dep.pulledBy != null) {
+            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("Pulled by: ").bold());
+            spans.add(Span.raw(dep.pulledBy).dim());
+        }
+
+        if (dep.hasClassifier()) {
+            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("Classifier: ").bold());
+            spans.add(Span.raw(dep.classifier));
+        }
+
+        boolean hasSpi = dep.spiServices != null && !dep.spiServices.isEmpty();
+
+        if (bytecodeAnalyzed && dep.usageStatus != null) {
+            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("Usage: ").bold());
+            int used = dep.usedMembers != null ? dep.usedMembers.size() : 0;
+            String usageText;
+            if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
+                usageText = "Could not determine (no classes found in JAR)";
+            } else if (used > 0) {
+                usageText = used + " of " + dep.totalClasses + " classes referenced";
+                if (!dep.declared) {
+                    usageText += " (should be declared)";
+                }
+            } else if (hasSpi && dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED) {
+                usageText = "Used via SPI/ServiceLoader";
+            } else {
+                usageText = dep.declared
+                        ? "0 of " + dep.totalClasses + " classes referenced (may be safe to remove)"
+                        : "Not directly referenced";
+            }
+            Color usageColor =
+                    switch (dep.usageStatus) {
+                        case USED -> dep.declared ? Color.GREEN : Color.YELLOW;
+                        case UNUSED -> dep.declared ? Color.YELLOW : Color.GREEN;
+                        case UNDETERMINED -> Color.DARK_GRAY;
+                    };
+            spans.add(Span.raw(usageText).fg(usageColor));
+        }
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(spans));
+
+        int maxLines = Math.max(1, area.height() - 4);
+        int lineCount = 0;
+
+        if (bytecodeAnalyzed && dep.usedMembers != null && !dep.usedMembers.isEmpty()) {
+            int remainingClasses = dep.usedMembers.size();
+            for (var entry : dep.usedMembers.entrySet()) {
+                if (lineCount >= maxLines) break;
+                String className = entry.getKey();
+                List<String> members = entry.getValue();
+                remainingClasses--;
+
+                int lastDot = className.lastIndexOf('.');
+                String shortName = lastDot >= 0 ? className.substring(lastDot + 1) : className;
+                String pkg = lastDot >= 0 ? className.substring(0, lastDot) : "";
+
+                List<Span> classSpans = new ArrayList<>();
+                classSpans.add(Span.raw(" "));
+                classSpans.add(Span.raw(pkg + ".").fg(Color.DARK_GRAY));
+                classSpans.add(Span.raw(shortName).cyan().bold());
+                if (!members.isEmpty()) {
+                    classSpans.add(Span.raw(": ").fg(Color.DARK_GRAY));
+                    int maxMembers = Math.min(members.size(), 6);
+                    for (int i = 0; i < maxMembers; i++) {
+                        if (i > 0) classSpans.add(Span.raw(", ").fg(Color.DARK_GRAY));
+                        classSpans.add(Span.raw(members.get(i)).dim());
+                    }
+                    if (members.size() > maxMembers) {
+                        classSpans.add(Span.raw(" +" + (members.size() - maxMembers) + " more")
+                                .fg(Color.DARK_GRAY));
+                    }
+                }
+                lines.add(Line.from(classSpans));
+                lineCount++;
+            }
+            if (remainingClasses > 0) {
+                lines.add(Line.from(
+                        Span.raw("  ... +" + remainingClasses + " more classes").dim()));
+                lineCount++;
+            }
+        }
+
+        if (hasSpi && lineCount < maxLines) {
+            List<Span> spiHeader = new ArrayList<>();
+            spiHeader.add(Span.raw(" SPI services: ").bold().fg(Color.MAGENTA));
+            for (int i = 0; i < dep.spiServices.size(); i++) {
+                if (lineCount >= maxLines) break;
+                if (i > 0) spiHeader.add(Span.raw(", ").fg(Color.DARK_GRAY));
+                String svc = dep.spiServices.get(i);
+                int lastDot = svc.lastIndexOf('.');
+                String shortName = lastDot >= 0 ? svc.substring(lastDot + 1) : svc;
+                String pkg = lastDot >= 0 ? svc.substring(0, lastDot) : "";
+                spiHeader.add(Span.raw(pkg + ".").fg(Color.DARK_GRAY));
+                spiHeader.add(Span.raw(shortName).fg(Color.MAGENTA));
+            }
+            lines.add(Line.from(spiHeader));
+        }
+
+        Paragraph details = Paragraph.builder()
+                .text(dev.tamboui.text.Text.from(lines))
+                .block(block)
+                .build();
+        frame.renderWidget(details, area);
+    }
+
     private void renderInfoBar(Frame frame, Rect area) {
         var rows = Layout.vertical()
                 .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
@@ -869,12 +1026,12 @@ class DependenciesTui {
             if (view == View.DECLARED) {
                 spans.add(Span.raw("x/Enter").bold());
                 spans.add(Span.raw(":Delete  "));
-                spans.add(Span.raw("s").bold());
-                spans.add(Span.raw(":Change scope  "));
             } else {
                 spans.add(Span.raw("a/Enter").bold());
                 spans.add(Span.raw(":Add to POM  "));
             }
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Change scope  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
             spans.add(Span.raw("h").bold());
