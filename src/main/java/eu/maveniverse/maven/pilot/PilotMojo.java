@@ -122,11 +122,22 @@ public class PilotMojo extends AbstractMojo {
         String reactorGav = gavOf(root);
 
         while (true) {
-            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "pilot").pick();
-            if (selected == null) break;
-            String tool = new ToolPickerTui(gavOf(selected), true).pick();
+            ModulePickerTui.PickResult result = new ModulePickerTui(reactorModel, reactorGav, "pilot").pick();
+            if (result == null) break;
+            List<MavenProject> selected = result.projects();
+            String tool = new ToolPickerTui(gavOf(selected.get(0)), true).pick();
             if (tool == null) continue;
-            runTool(tool, selected, projects);
+            switch (tool) {
+                case "updates", "conflicts", "audit" ->
+                    // Aggregate tools: call once with the selected subset
+                    runTool(tool, selected.get(0), selected);
+                default -> {
+                    // Per-project tools: iterate over each selected project
+                    for (MavenProject p : selected) {
+                        runTool(tool, p, selected);
+                    }
+                }
+            }
         }
     }
 

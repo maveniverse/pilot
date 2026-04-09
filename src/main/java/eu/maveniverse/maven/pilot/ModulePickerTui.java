@@ -45,16 +45,54 @@ import org.apache.maven.project.MavenProject;
  * Reusable module picker TUI for reactor-aware goals.
  *
  * <p>Displays the reactor module tree and lets the user select a module.
- * Returns the selected {@link MavenProject} or {@code null} if the user quits.</p>
+ * Returns a {@link PickResult} containing the selected project(s), or {@code null} if the user quits.
+ * Supports single selection (Enter), run on all modules (r), and run on subtree (t).</p>
  */
 class ModulePickerTui {
+
+    record PickResult(List<MavenProject> projects) {}
+
+    @FunctionalInterface
+    interface ProjectAction {
+        void execute(MavenProject project) throws Exception;
+    }
+
+    /**
+     * Convenience loop: show the module picker, then run the given action on each selected project.
+     * Repeats until the user quits the picker.
+     */
+    static void forEachSelected(List<MavenProject> projects, String goalName, ProjectAction action) throws Exception {
+        if (projects == null || projects.isEmpty()) {
+            throw new IllegalArgumentException("projects must be non-empty");
+        }
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        MavenProject root = projects.get(0);
+        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+
+        while (true) {
+            PickResult result = new ModulePickerTui(reactorModel, reactorGav, goalName).pick();
+            if (result == null) break;
+            for (MavenProject selected : result.projects()) {
+                try {
+                    action.execute(selected);
+                } catch (Exception e) {
+                    String gav = selected.getGroupId() + ":" + selected.getArtifactId() + ":" + selected.getVersion();
+                    throw new Exception("Failed to execute " + goalName + " on " + gav + ": " + e.getMessage(), e);
+                }
+            }
+        }
+    }
 
     private final ReactorModel reactorModel;
     private final String reactorGav;
     private final String goalName;
     private final TableState tableState = new TableState();
     private final HelpOverlay helpOverlay = new HelpOverlay();
-    private MavenProject selectedProject;
+    private PickResult pickResult;
+
+    PickResult getPickResult() {
+        return pickResult;
+    }
 
     ModulePickerTui(ReactorModel reactorModel, String reactorGav, String goalName) {
         this.reactorModel = reactorModel;
@@ -64,11 +102,12 @@ class ModulePickerTui {
     }
 
     /**
-     * Run the picker TUI and return the selected project.
+     * Run the picker TUI and return the selected project(s).
      *
-     * @return the selected MavenProject, or null if the user quit without selecting
+     * @return a PickResult with the selected project(s), or null if the user quit without selecting
      */
-    MavenProject pick() throws Exception {
+    PickResult pick() throws Exception {
+        pickResult = null;
         var configured = TuiRunner.builder()
                 .eventHandler(this::handleEvent)
                 .renderer(this::render)
@@ -79,7 +118,7 @@ class ModulePickerTui {
         } finally {
             configured.close();
         }
-        return selectedProject;
+        return pickResult;
     }
 
     boolean handleEvent(Event event, TuiRunner runner) {
@@ -115,7 +154,7 @@ class ModulePickerTui {
         if (key.isKey(KeyCode.ENTER)) {
             Integer sel = tableState.selected();
             if (sel != null && sel >= 0 && sel < visible.size()) {
-                selectedProject = visible.get(sel).project;
+                pickResult = new PickResult(List.of(visible.get(sel).project));
                 runner.quit();
             }
             return true;
@@ -179,6 +218,22 @@ class ModulePickerTui {
                     if (newIndex < 0) newIndex = 0;
                 }
                 tableState.select(newIndex);
+            }
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('r')) {
+            List<MavenProject> all =
+                    reactorModel.allModules.stream().map(n -> n.project).toList();
+            pickResult = new PickResult(all);
+            runner.quit();
+            return true;
+        }
+        if (key.isCharIgnoreCase('t')) {
+            Integer sel = tableState.selected();
+            if (sel != null && sel >= 0 && sel < visible.size()) {
+                pickResult = new PickResult(reactorModel.collectSubtree(visible.get(sel)));
+                runner.quit();
             }
             return true;
         }
@@ -308,6 +363,8 @@ class ModulePickerTui {
                                 new HelpOverlay.Entry("Space", "Expand node or move down"),
                                 new HelpOverlay.Entry("e / w", "Expand all / collapse all"),
                                 new HelpOverlay.Entry("Enter", "Select the highlighted module"),
+                                new HelpOverlay.Entry("r", "Run on all modules"),
+                                new HelpOverlay.Entry("t", "Run on subtree of selected node"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
                                 new HelpOverlay.Entry("q / Esc", "Quit without selecting"))));
     }
@@ -333,6 +390,10 @@ class ModulePickerTui {
         spans.add(Span.raw(":Collapse All  "));
         spans.add(Span.raw("Enter").bold());
         spans.add(Span.raw(":Select  "));
+        spans.add(Span.raw("r").bold());
+        spans.add(Span.raw(":Run All  "));
+        spans.add(Span.raw("t").bold());
+        spans.add(Span.raw(":Subtree  "));
         spans.add(Span.raw("h").bold());
         spans.add(Span.raw(":Help  "));
         spans.add(Span.raw("q").bold());

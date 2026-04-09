@@ -138,6 +138,22 @@ class ReactorModel {
     }
 
     /**
+     * Collect all projects in the subtree rooted at the given node.
+     */
+    List<MavenProject> collectSubtree(ModuleNode node) {
+        List<MavenProject> result = new ArrayList<>();
+        collectSubtreeProjects(node, result);
+        return result;
+    }
+
+    private void collectSubtreeProjects(ModuleNode node, List<MavenProject> result) {
+        result.add(node.project);
+        for (ModuleNode child : node.children) {
+            collectSubtreeProjects(child, result);
+        }
+    }
+
+    /**
      * Filter modules by name substring (case-insensitive).
      */
     List<ModuleNode> filter(String query) {
