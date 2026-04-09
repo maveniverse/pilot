@@ -199,6 +199,19 @@ class DependenciesTui {
 
     private View view = View.DECLARED;
     private String status;
+    private final String originalPomContent;
+    private final PomEditor editor;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+    private int lastContentHeight;
+    private TuiRunner runner;
+
+    /** Returns the current in-memory POM content (package-private for testing). */
+    String currentPomContent() {
+        return editor.toXml();
+    }
 
     /**
      * Get the currently selected table row index.
@@ -237,6 +250,14 @@ class DependenciesTui {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.bytecodeAnalyzed = bytecodeAnalyzed;
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
+        }
+        this.originalPomContent = pom;
+        this.editor = new PomEditor(Document.of(pom));
         updateStatus();
         if (!declared.isEmpty()) {
             tableState.select(0);
@@ -265,6 +286,7 @@ class DependenciesTui {
                 .tickRate(Duration.ofMillis(100))
                 .build();
         try {
+            runner = configured.runner();
             configured.run();
         } finally {
             configured.close();
@@ -276,8 +298,50 @@ class DependenciesTui {
             return true;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "Quit cancelled";
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode — Esc closes overlay first
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
@@ -301,7 +365,7 @@ class DependenciesTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('d')) {
+        if (key.isCharIgnoreCase('x')) {
             removeDeclared();
             return true;
         }
@@ -313,6 +377,16 @@ class DependenciesTui {
 
         if (key.isCharIgnoreCase('s')) {
             changeScope();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
 
@@ -351,10 +425,8 @@ class DependenciesTui {
         var dep = declared.get(sel);
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
             editor.dependencies().deleteDependency(Coordinates.of(dep.groupId, dep.artifactId, dep.version));
-            Files.writeString(Path.of(pomPath), editor.toXml());
+            dirty = true;
             declared.remove(sel);
             updateStatus();
             if (sel >= declared.size() && !declared.isEmpty()) {
@@ -378,10 +450,22 @@ class DependenciesTui {
         var dep = transitive.get(sel);
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            String updated = addDependencyAligned(
-                    pomContent, dep.groupId, dep.artifactId, dep.version, dep.classifier, dep.scope);
-            Files.writeString(Path.of(pomPath), updated);
+            Coordinates coords = (dep.hasClassifier())
+                    ? Coordinates.of(dep.groupId, dep.artifactId, dep.version, dep.classifier, "jar")
+                    : Coordinates.of(dep.groupId, dep.artifactId, dep.version);
+            if (!COMPILE_SCOPE.equals(dep.scope)) {
+                AlignOptions detected = editor.dependencies().detectConventions();
+                AlignOptions options = AlignOptions.builder()
+                        .versionStyle(detected.versionStyle())
+                        .versionSource(detected.versionSource())
+                        .namingConvention(detected.namingConvention())
+                        .scope(dep.scope)
+                        .build();
+                editor.dependencies().addAligned(coords, options);
+            } else {
+                editor.dependencies().addAligned(coords);
+            }
+            dirty = true;
 
             // Move from transitive to declared
             transitive.remove(sel);
@@ -430,9 +514,7 @@ class DependenciesTui {
         var dep = declared.get(sel);
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            Document doc = Document.of(pomContent);
-
+            Document doc = editor.document();
             List<String> scopes = getScopesForModel(doc);
             if (!scopes.contains(dep.scope)) {
                 // Unknown scope (e.g. "system") — include it in the cycling list
@@ -441,7 +523,6 @@ class DependenciesTui {
             }
             int current = scopes.indexOf(dep.scope);
             String newScope = scopes.get((current + 1) % scopes.size());
-            PomEditor editor = new PomEditor(doc);
             Coordinates coords = Coordinates.of(dep.groupId, dep.artifactId, dep.version);
 
             // Find the <dependency> element matching this GA
@@ -459,8 +540,8 @@ class DependenciesTui {
                                     } else {
                                         editor.updateOrCreateChildElement(el, COL_SCOPE, newScope);
                                     }
-                                    Files.writeString(Path.of(pomPath), doc.toXml());
                                     dep.scope = newScope;
+                                    dirty = true;
                                     updateStatus();
                                 } catch (Exception e) {
                                     status = "Failed to change scope: " + e.getMessage();
@@ -470,6 +551,83 @@ class DependenciesTui {
         } catch (Exception e) {
             status = "Failed to change scope: " + e.getMessage();
         }
+    }
+
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM?";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Analysis",
+                        List.of(
+                                new HelpOverlay.Entry("", "Uses bytecode analysis to compare what is declared"),
+                                new HelpOverlay.Entry("", "in the POM against what is actually used in code."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Declared view: dependencies in the POM that are not"),
+                                new HelpOverlay.Entry("", "referenced in compiled bytecode. These may be safe"),
+                                new HelpOverlay.Entry("", "to remove (but check for runtime/reflection use)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Transitive view: classes used in your code that come"),
+                                new HelpOverlay.Entry("", "from transitive dependencies. These should be declared"),
+                                new HelpOverlay.Entry("", "explicitly to avoid breakage when transitives change."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry("status", "unused (declared) or undeclared (transitive)"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("scope", "Maven scope (compile, test, runtime, provided)"),
+                                new HelpOverlay.Entry("classifier", "Artifact classifier (e.g. test-fixtures)"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("yellow", "Issue flag \u2014 unused or undeclared dependency"),
+                                new HelpOverlay.Entry("cyan", "Header and view tab indicators"),
+                                new HelpOverlay.Entry("dim", "Informational / secondary text"))),
+                new HelpOverlay.Section(
+                        "Declared View Actions",
+                        List.of(
+                                new HelpOverlay.Entry("x / Enter", "Remove the selected unused dependency"),
+                                new HelpOverlay.Entry(
+                                        "s", "Cycle scope (compile \u2192 test \u2192 runtime \u2192 ...)"))),
+                new HelpOverlay.Section(
+                        "Transitive View Actions",
+                        List.of(new HelpOverlay.Entry("a / Enter", "Add the dependency to the POM"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
+    private void toggleDiffView() {
+        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
     /**
@@ -525,7 +683,14 @@ class DependenciesTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        renderTable(frame, zones.get(1));
+        lastContentHeight = zones.get(1).height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else {
+            renderTable(frame, zones.get(1));
+        }
         renderInfoBar(frame, zones.get(2));
     }
 
@@ -564,6 +729,10 @@ class DependenciesTui {
         }
         spans.add(Span.raw("[" + (view == View.TRANSITIVE ? HIGHLIGHT_SYMBOL : "  ") + transitiveLabel + "]")
                 .fg(view == View.TRANSITIVE ? Color.YELLOW : Color.DARK_GRAY));
+
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+        }
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
@@ -672,27 +841,47 @@ class DependenciesTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Navigate  "));
-        spans.add(Span.raw("Tab").bold());
-        spans.add(Span.raw(":Switch view  "));
-        if (view == View.DECLARED) {
-            spans.add(Span.raw("d/Enter").bold());
-            spans.add(Span.raw(":Delete  "));
-            spans.add(Span.raw("s").bold());
-            spans.add(Span.raw(":Change scope  "));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffOverlay.isActive()) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("a/Enter").bold());
-            spans.add(Span.raw(":Add to POM  "));
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("Tab").bold());
+            spans.add(Span.raw(":Switch view  "));
+            if (view == View.DECLARED) {
+                spans.add(Span.raw("x/Enter").bold());
+                spans.add(Span.raw(":Delete  "));
+                spans.add(Span.raw("s").bold());
+                spans.add(Span.raw(":Change scope  "));
+            } else {
+                spans.add(Span.raw("a/Enter").bold());
+                spans.add(Span.raw(":Add to POM  "));
+            }
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
         }
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }

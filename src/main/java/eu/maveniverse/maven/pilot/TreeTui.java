@@ -44,7 +44,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Interactive TUI for browsing the dependency tree.
@@ -60,8 +59,9 @@ class TreeTui {
     private final DependencyTreeModel model;
     private final String projectGav;
     private final TableState tableState = new TableState();
-    private final ExecutorService httpPool = Executors.newFixedThreadPool(3);
+    private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
 
     private Mode mode = Mode.TREE;
     private List<DependencyTreeModel.TreeNode> displayNodes;
@@ -103,6 +103,15 @@ class TreeTui {
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
+        }
+
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
         }
 
         if (key.isCtrlC()) {
@@ -208,6 +217,11 @@ class TreeTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
+            return true;
+        }
+
         return false;
     }
 
@@ -306,9 +320,29 @@ class TreeTui {
     }
 
     private void collapseAll() {
+        // Remember the selected node before collapsing
+        int sel = selectedIndex();
+        DependencyTreeModel.TreeNode selectedNode =
+                (sel >= 0 && sel < displayNodes.size()) ? displayNodes.get(sel) : null;
+
         collapseNode(model.root);
         model.root.expanded = true; // keep root expanded
-        refreshDisplay();
+        displayNodes = model.visibleNodes();
+
+        // Find the selected node or its nearest visible ancestor
+        if (selectedNode != null) {
+            int newIndex = displayNodes.indexOf(selectedNode);
+            if (newIndex < 0) {
+                // Node is hidden — find nearest visible ancestor via path from root
+                List<DependencyTreeModel.TreeNode> path = model.pathToRoot(selectedNode);
+                for (int i = path.size() - 2; i >= 0; i--) {
+                    newIndex = displayNodes.indexOf(path.get(i));
+                    if (newIndex >= 0) break;
+                }
+                if (newIndex < 0) newIndex = 0;
+            }
+            tableState.select(newIndex);
+        }
     }
 
     private void expandNode(DependencyTreeModel.TreeNode node) {
@@ -328,6 +362,50 @@ class TreeTui {
         for (var child : node.children) {
             collapseNode(child);
         }
+    }
+
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Tree",
+                        List.of(
+                                new HelpOverlay.Entry("", "Shows the fully resolved dependency tree of the project."),
+                                new HelpOverlay.Entry("", "Each row is a dependency (groupId:artifactId:version)."),
+                                new HelpOverlay.Entry("", "Indentation shows the transitive dependency chain:"),
+                                new HelpOverlay.Entry("", "a child was pulled in by its parent in the tree."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Scope (compile, test, runtime, provided) is shown"),
+                                new HelpOverlay.Entry("", "in brackets when not 'compile'. Each scope has a"),
+                                new HelpOverlay.Entry("", "distinct color. The status bar shows artifact"),
+                                new HelpOverlay.Entry("", "metadata (name, license) fetched from Central."))),
+                new HelpOverlay.Section(
+                        "Colors (by scope)",
+                        List.of(
+                                new HelpOverlay.Entry("default", "compile scope"),
+                                new HelpOverlay.Entry("blue", "runtime scope"),
+                                new HelpOverlay.Entry("magenta", "provided scope"),
+                                new HelpOverlay.Entry("dark gray", "test scope"),
+                                new HelpOverlay.Entry("red", "system scope"),
+                                new HelpOverlay.Entry("yellow", "Version conflict \u2014 multiple versions requested"),
+                                new HelpOverlay.Entry("dim", "Scope label, optional marker"))),
+                new HelpOverlay.Section(
+                        "Navigation",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
+                                new HelpOverlay.Entry("e", "Expand all nodes"),
+                                new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"))),
+                new HelpOverlay.Section(
+                        "Actions",
+                        List.of(
+                                new HelpOverlay.Entry("/", "Filter \u2014 type to search by groupId or artifactId"),
+                                new HelpOverlay.Entry("c", "Jump to next conflict (only when conflicts exist)"),
+                                new HelpOverlay.Entry("r", "Reverse path \u2014 show how root depends on selection"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit"))));
     }
 
     /**
@@ -363,7 +441,9 @@ class TreeTui {
 
         renderHeader(frame, zones.get(0));
 
-        if (mode == Mode.REVERSE_PATH) {
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (mode == Mode.REVERSE_PATH) {
             renderReversePath(frame, zones.get(1));
         } else {
             renderTree(frame, zones.get(1));
@@ -614,12 +694,16 @@ class TreeTui {
             spans.add(Span.raw(":Expand/Collapse  "));
             spans.add(Span.raw("/").bold());
             spans.add(Span.raw(":Filter  "));
-            spans.add(Span.raw("c").bold());
-            spans.add(Span.raw(":Conflicts  "));
+            if (!model.conflicts.isEmpty()) {
+                spans.add(Span.raw("c").bold());
+                spans.add(Span.raw(":Conflicts  "));
+            }
             spans.add(Span.raw("r").bold());
             spans.add(Span.raw(":Reverse  "));
             spans.add(Span.raw("e/w").bold());
             spans.add(Span.raw(":Expand/Collapse all  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }
@@ -641,7 +725,7 @@ class TreeTui {
         var node = displayNodes.get(sel);
         String pomKey = node.gav();
         if (pomInfoCache.containsKey(pomKey)) return;
-        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null)); // placeholder
+        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null, null)); // placeholder
 
         CompletableFuture.supplyAsync(
                         () -> SearchTui.fetchPomFromCentral(node.groupId, node.artifactId, node.version), httpPool)

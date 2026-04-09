@@ -106,7 +106,8 @@ class OsvClient {
                         String summary = vuln.getString("summary", "");
                         String published = vuln.getString("published", "");
 
-                        // Extract severity from database_specific or severity array
+                        // Extract severity: prefer database_specific.severity (human-readable),
+                        // fall back to CVSS vector from severity array
                         String severity = "UNKNOWN";
                         if (vuln.containsKey("database_specific")) {
                             JsonObject dbSpecific = vuln.getJsonObject("database_specific");
@@ -114,10 +115,13 @@ class OsvClient {
                                 severity = dbSpecific.getString("severity");
                             }
                         }
-                        if (vuln.containsKey("severity")) {
+                        if ("UNKNOWN".equals(severity) && vuln.containsKey("severity")) {
                             JsonArray sevArray = vuln.getJsonArray("severity");
                             if (sevArray != null && !sevArray.isEmpty()) {
-                                severity = sevArray.getJsonObject(0).getString("score", severity);
+                                String score = sevArray.getJsonObject(0).getString("score", null);
+                                if (score != null) {
+                                    severity = cvssToSeverity(score);
+                                }
                             }
                         }
 
@@ -138,5 +142,48 @@ class OsvClient {
         } finally {
             conn.disconnect();
         }
+    }
+
+    /**
+     * Convert a CVSS vector string to a human-readable severity level.
+     * Extracts the base score from CVSS v3/v4 vectors and maps to CRITICAL/HIGH/MEDIUM/LOW.
+     */
+    private static String cvssToSeverity(String cvssVector) {
+        // Try to extract numeric base score from the vector
+        // CVSS v3 format: CVSS:3.1/AV:N/AC:L/... — no explicit score in vector
+        // CVSS v4 format: CVSS:4.0/AV:N/AC:L/...
+        // Some sources include a score like "CVSS:3.1/AV:N/.../score:7.5"
+        // For vectors without an explicit score, estimate from impact metrics
+        try {
+            if (cvssVector.startsWith("CVSS:")) {
+                // Parse attack complexity and impact to estimate severity
+                boolean networkAccess = cvssVector.contains("/AV:N");
+                boolean lowComplexity = cvssVector.contains("/AC:L");
+                boolean highConfidentiality = cvssVector.contains("/C:H");
+                boolean highIntegrity = cvssVector.contains("/I:H");
+                boolean highAvailability = cvssVector.contains("/A:H");
+                boolean noneConfidentiality = cvssVector.contains("/C:N");
+                boolean noneIntegrity = cvssVector.contains("/I:N");
+                boolean noneAvailability = cvssVector.contains("/A:N");
+
+                int highCount = (highConfidentiality ? 1 : 0) + (highIntegrity ? 1 : 0) + (highAvailability ? 1 : 0);
+                int noneCount = (noneConfidentiality ? 1 : 0) + (noneIntegrity ? 1 : 0) + (noneAvailability ? 1 : 0);
+
+                if (networkAccess && lowComplexity && highCount == 3) {
+                    return "CRITICAL";
+                } else if (networkAccess && highCount >= 2) {
+                    return "HIGH";
+                } else if (noneCount == 3) {
+                    return "LOW";
+                } else if (highCount >= 1) {
+                    return "MEDIUM";
+                } else {
+                    return "LOW";
+                }
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return cvssVector;
     }
 }

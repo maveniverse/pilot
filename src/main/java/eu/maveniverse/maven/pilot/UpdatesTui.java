@@ -49,7 +49,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -81,6 +80,7 @@ class UpdatesTui {
         VersionComparator.UpdateType updateType;
         boolean selected;
         boolean managed;
+        String versionProperty; // shared property name, e.g. "mavenVersion" from "${mavenVersion}"
 
         DependencyInfo(String groupId, String artifactId, String version, String scope, String type) {
             this.groupId = groupId;
@@ -112,7 +112,7 @@ class UpdatesTui {
     private final String projectGav;
     private final VersionResolver versionResolver;
     private final TableState tableState = new TableState();
-    private final ExecutorService httpPool = Executors.newFixedThreadPool(5);
+    private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
 
     private Filter filter = Filter.ALL;
@@ -120,6 +120,13 @@ class UpdatesTui {
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
+    private final String originalPomContent;
+    private final PomEditor editor;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+    private int lastContentHeight;
 
     private TuiRunner runner;
 
@@ -149,9 +156,47 @@ class UpdatesTui {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.versionResolver = versionResolver;
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
+        }
+        this.originalPomContent = pom;
+        this.editor = new PomEditor(Document.of(pom));
+        detectPropertyGroups();
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }
+    }
+
+    private void detectPropertyGroups() {
+        try {
+            eu.maveniverse.domtrip.Element root = editor.document().root();
+            scanDependencyVersions(root.childElement("dependencies").orElse(null));
+            root.childElement("dependencyManagement")
+                    .flatMap(dm -> dm.childElement("dependencies"))
+                    .ifPresent(this::scanDependencyVersions);
+        } catch (Exception ignored) {
+            // best-effort
+        }
+    }
+
+    private void scanDependencyVersions(eu.maveniverse.domtrip.Element deps) {
+        if (deps == null) return;
+        deps.childElements("dependency").forEach(dep -> {
+            String gid = dep.childTextOr("groupId", "");
+            String aid = dep.childTextOr("artifactId", "");
+            String rawVersion = dep.childTextOr("version", null);
+            if (rawVersion != null && rawVersion.startsWith("${") && rawVersion.endsWith("}")) {
+                String prop = rawVersion.substring(2, rawVersion.length() - 1);
+                for (DependencyInfo di : allDeps) {
+                    if (di.groupId.equals(gid) && di.artifactId.equals(aid)) {
+                        di.versionProperty = prop;
+                    }
+                }
+            }
+        });
     }
 
     void run() throws Exception {
@@ -249,8 +294,50 @@ class UpdatesTui {
             return true;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "Quit cancelled";
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode — Esc closes overlay first
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
@@ -306,6 +393,16 @@ class UpdatesTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
+            return true;
+        }
+
         return false;
     }
 
@@ -320,9 +417,68 @@ class UpdatesTui {
         if (sel >= 0 && sel < displayDeps.size()) {
             var dep = displayDeps.get(sel);
             if (dep.hasUpdate()) {
-                dep.selected = !dep.selected;
+                boolean newState = !dep.selected;
+                dep.selected = newState;
+                if (dep.versionProperty != null) {
+                    for (var other : allDeps) {
+                        if (other != dep && dep.versionProperty.equals(other.versionProperty)) {
+                            other.selected = newState;
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM?";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private void toggleDiffView() {
+        // Include both staged changes and currently selected (not yet applied) updates
+        // Use allDeps to honor property-linked peers outside the filtered view
+        List<DependencyInfo> pendingSelected =
+                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+
+        String modifiedPom;
+        if (pendingSelected.isEmpty()) {
+            modifiedPom = editor.toXml();
+        } else {
+            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
+            for (var dep : pendingSelected) {
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (dep.managed) {
+                    preview.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    preview.dependencies().updateDependency(true, coords);
+                }
+            }
+            modifiedPom = preview.toXml();
+        }
+
+        long changes = diffOverlay.open(originalPomContent, modifiedPom);
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
     private void selectAll() {
@@ -352,8 +508,9 @@ class UpdatesTui {
     }
 
     private void applyUpdates() {
+        // Use allDeps to honor property-linked peers outside the filtered view
         List<DependencyInfo> toUpdate =
-                displayDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
+                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
 
         if (toUpdate.isEmpty()) {
             status = "No updates selected";
@@ -361,9 +518,18 @@ class UpdatesTui {
         }
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
+            // Validate on a preview editor first to avoid partial mutations
+            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
+            for (var dep : toUpdate) {
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (dep.managed) {
+                    preview.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    preview.dependencies().updateDependency(true, coords);
+                }
+            }
 
+            // All updates succeeded on preview — apply to real editor
             for (var dep : toUpdate) {
                 var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
                 if (dep.managed) {
@@ -373,10 +539,9 @@ class UpdatesTui {
                 }
             }
 
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Updated " + toUpdate.size() + " dependencies in POM";
+            dirty = true;
+            status = "Staged " + toUpdate.size() + " update(s) \u2014 save on exit";
 
-            // Update model
             for (var dep : toUpdate) {
                 dep.version = dep.newestVersion;
                 dep.newestVersion = null;
@@ -385,7 +550,7 @@ class UpdatesTui {
             }
             applyFilter();
         } catch (Exception e) {
-            status = "Failed to update POM: " + e.getMessage();
+            status = "Failed to update: " + e.getMessage();
         }
     }
 
@@ -397,7 +562,14 @@ class UpdatesTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        renderUpdatesTable(frame, zones.get(1));
+        lastContentHeight = zones.get(1).height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else {
+            renderUpdatesTable(frame, zones.get(1));
+        }
         renderInfoBar(frame, zones.get(2));
     }
 
@@ -414,6 +586,9 @@ class UpdatesTui {
         if (loading) {
             spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "\u2026")
                     .dim());
+        }
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
         }
 
         Paragraph header = Paragraph.builder()
@@ -494,26 +669,46 @@ class UpdatesTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Nav  "));
-        spans.add(Span.raw("Space").bold());
-        spans.add(Span.raw(":Toggle  "));
-        spans.add(Span.raw("a").bold());
-        spans.add(Span.raw(":All  "));
-        spans.add(Span.raw("n").bold());
-        spans.add(Span.raw(":None  "));
-        spans.add(Span.raw("Enter").bold());
-        spans.add(Span.raw(":Apply  "));
-        spans.add(Span.raw("1-4").bold());
-        spans.add(Span.raw(":Filter  "));
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffOverlay.isActive()) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        } else {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Nav  "));
+            spans.add(Span.raw("Space").bold());
+            spans.add(Span.raw(":Toggle  "));
+            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw(":All  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":None  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("1-4").bold());
+            spans.add(Span.raw(":Filter  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
@@ -557,6 +752,53 @@ class UpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Updates",
+                        List.of(
+                                new HelpOverlay.Entry("", "Checks Maven Central for newer versions of each"),
+                                new HelpOverlay.Entry("", "declared dependency. The table shows the current"),
+                                new HelpOverlay.Entry("", "version, the latest available version, and the"),
+                                new HelpOverlay.Entry("", "update type (patch, minor, or major)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Select the updates you want with Space, then press"),
+                                new HelpOverlay.Entry("", "Enter to write changes to the POM. Use 'd' to"),
+                                new HelpOverlay.Entry("", "preview the exact POM diff before applying."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry("[ ] / [x]", "Selection checkbox"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("current", "Version currently in the POM"),
+                                new HelpOverlay.Entry("latest", "Newest version on Maven Central"),
+                                new HelpOverlay.Entry("type", "patch / minor / major"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("green", "Patch update \u2014 bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update \u2014 new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update \u2014 breaking changes possible"),
+                                new HelpOverlay.Entry("cyan", "Artifact name/info in footer"))),
+                new HelpOverlay.Section(
+                        "Selection & Filtering",
+                        List.of(
+                                new HelpOverlay.Entry("Space", "Toggle selection of current dependency"),
+                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
+                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM"),
+                                new HelpOverlay.Entry("1", "Show all updates"),
+                                new HelpOverlay.Entry("2", "Patch only (e.g. 1.0.0 \u2192 1.0.1)"),
+                                new HelpOverlay.Entry("3", "Minor only (e.g. 1.0.0 \u2192 1.1.0)"),
+                                new HelpOverlay.Entry("4", "Major only (e.g. 1.0.0 \u2192 2.0.0)"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
     /**
      * Fetches and caches POM metadata for the currently selected dependency if it is not already cached.
      *
@@ -571,7 +813,7 @@ class UpdatesTui {
         var dep = displayDeps.get(sel);
         String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
         if (pomInfoCache.containsKey(pomKey)) return;
-        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null));
+        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null, null));
 
         CompletableFuture.supplyAsync(
                         () -> SearchTui.fetchPomFromCentral(dep.groupId, dep.artifactId, dep.version), httpPool)

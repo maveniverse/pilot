@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -45,11 +46,14 @@ import org.eclipse.aether.graph.DependencyNode;
  *
  * @since 0.1.0
  */
-@Mojo(name = "conflicts", requiresProject = true, threadSafe = true)
+@Mojo(name = "conflicts", requiresProject = true, aggregator = true, threadSafe = true)
 public class ConflictsMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    private MavenSession session;
 
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
@@ -57,40 +61,62 @@ public class ConflictsMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
-    /**
-     * Analyze the project's dependency graph for version conflicts and launch an interactive TUI to review and resolve them.
-     *
-     * <p>The goal collects dependency information, groups occurrences by groupId:artifactId (GA), detects GAs with
-     * multiple occurrences or where a requested version differs from the resolved version, builds conflict groups,
-     * and starts the ConflictsTui with the project's POM path and GAV.</p>
-     *
-     * @throws MojoExecutionException if dependency collection or conflict analysis fails
-     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
-
-            // Detect conflicts: same GA with different versions requested
-            Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
-            collectConflicts(result.getRoot(), conflictMap, new ArrayList<>());
-
-            List<ConflictsTui.ConflictGroup> conflicts = conflictMap.entrySet().stream()
-                    .filter(e -> e.getValue().size() > 1
-                            || e.getValue().stream()
-                                    .anyMatch(c -> c.requestedVersion != null
-                                            && !c.requestedVersion.equals(c.resolvedVersion)))
-                    .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
-                    .collect(Collectors.toList());
-
-            String pomPath = project.getFile().getAbsolutePath();
-            String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
-
-            ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav);
-            tui.run();
+            List<MavenProject> projects = session.getProjects();
+            if (projects.size() > 1) {
+                executeReactor(projects);
+            } else {
+                executeSingleProject(project);
+            }
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to analyze conflicts: " + e.getMessage(), e);
         }
+    }
+
+    private void executeSingleProject(MavenProject proj) throws Exception {
+        List<ConflictsTui.ConflictGroup> conflicts = collectConflictsForProject(proj);
+        String pomPath = proj.getFile().getAbsolutePath();
+        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
+        ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav);
+        tui.run();
+    }
+
+    private void executeReactor(List<MavenProject> projects) throws Exception {
+        // Aggregate conflicts across all modules
+        Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
+        for (MavenProject proj : projects) {
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+            collectConflicts(result.getRoot(), mergedMap, new ArrayList<>(), proj.getArtifactId());
+        }
+
+        List<ConflictsTui.ConflictGroup> conflicts = mergedMap.entrySet().stream()
+                .filter(e -> e.getValue().size() > 1
+                        || e.getValue().stream()
+                                .anyMatch(c ->
+                                        c.requestedVersion != null && !c.requestedVersion.equals(c.resolvedVersion)))
+                .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
+
+        MavenProject root = projects.get(0);
+        String pomPath = root.getFile().getAbsolutePath();
+        String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+        ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav + " (reactor: " + projects.size() + " modules)");
+        tui.run();
+    }
+
+    private List<ConflictsTui.ConflictGroup> collectConflictsForProject(MavenProject proj) throws Exception {
+        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
+        collectConflicts(result.getRoot(), conflictMap, new ArrayList<>());
+        return conflictMap.entrySet().stream()
+                .filter(e -> e.getValue().size() > 1
+                        || e.getValue().stream()
+                                .anyMatch(c ->
+                                        c.requestedVersion != null && !c.requestedVersion.equals(c.resolvedVersion)))
+                .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -135,5 +161,16 @@ public class ConflictsMojo extends AbstractMojo {
             conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
             collectConflicts(child, conflicts, currentPath);
         }
+    }
+
+    private void collectConflicts(
+            DependencyNode node,
+            Map<String, List<ConflictsTui.ConflictEntry>> conflicts,
+            List<String> path,
+            String moduleName) {
+        List<String> modulePath = new ArrayList<>();
+        modulePath.add("[" + moduleName + "]");
+        modulePath.addAll(path);
+        collectConflicts(node, conflicts, modulePath);
     }
 }

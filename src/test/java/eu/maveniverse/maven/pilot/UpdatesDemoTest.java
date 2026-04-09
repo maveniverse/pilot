@@ -22,9 +22,12 @@ import dev.tamboui.layout.Size;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Demo test for Dependency Updates TUI.
@@ -32,7 +35,9 @@ import org.junit.jupiter.api.Test;
 class UpdatesDemoTest {
 
     @Test
-    void browseAndFilterUpdates() throws Exception {
+    void browseAndFilterUpdates(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<UpdatesTui.DependencyInfo> deps = new ArrayList<>();
 
         var d1 = new UpdatesTui.DependencyInfo("com.google.guava", "guava", "33.0.0-jre", "compile", "jar");
@@ -55,7 +60,7 @@ class UpdatesDemoTest {
         d4.updateType = VersionComparator.UpdateType.MINOR;
         deps.add(d4);
 
-        UpdatesTui tui = new UpdatesTui(deps, "/tmp/test-pom.xml", "com.example:demo:1.0.0", (g, a) -> List.of());
+        UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
 

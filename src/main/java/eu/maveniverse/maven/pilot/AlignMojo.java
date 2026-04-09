@@ -18,8 +18,11 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import eu.maveniverse.domtrip.Document;
+import eu.maveniverse.domtrip.maven.PomEditor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
-import javax.inject.Inject;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -27,41 +30,29 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
-import org.eclipse.aether.RepositorySystem;
-import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.collection.CollectResult;
 
 /**
- * Interactive TUI for browsing the project dependency tree.
+ * Interactive TUI for detecting and aligning dependency conventions across the POM.
+ *
+ * <p>Detects the project's current version style (inline vs managed), version source
+ * (literal vs property), and property naming convention, then lets the user choose
+ * a target convention and preview/apply the changes.</p>
  *
  * <p>Usage:</p>
  * <pre>
- * mvn pilot:tree
- * mvn pilot:tree -Dscope=compile
+ * mvn pilot:align
  * </pre>
  *
- * @since 0.1.0
+ * @since 0.2.0
  */
-@Mojo(name = "tree", requiresProject = true, aggregator = true, threadSafe = true)
-public class TreeMojo extends AbstractMojo {
+@Mojo(name = "align", requiresProject = true, aggregator = true, threadSafe = true)
+public class AlignMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
 
     @Parameter(defaultValue = "${session}", readonly = true, required = true)
     private MavenSession session;
-
-    @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
-    private RepositorySystemSession repoSession;
-
-    @Inject
-    private RepositorySystem repoSystem;
-
-    /**
-     * The dependency scope to display. One of: compile, runtime, test.
-     */
-    @Parameter(property = "scope", defaultValue = "compile")
-    private String scope;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -73,7 +64,7 @@ public class TreeMojo extends AbstractMojo {
                 executeForProject(project);
             }
         } catch (Exception e) {
-            throw new MojoExecutionException("Failed to display dependency tree: " + e.getMessage(), e);
+            throw new MojoExecutionException("Failed to run alignment TUI: " + e.getMessage(), e);
         }
     }
 
@@ -83,16 +74,21 @@ public class TreeMojo extends AbstractMojo {
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
         while (true) {
-            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "tree").pick();
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "align").pick();
             if (selected == null) break;
             executeForProject(selected);
         }
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
-        TreeTui tui = new TreeTui(model, proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion());
+        String pomPath = proj.getFile().getAbsolutePath();
+        String pomContent = Files.readString(Path.of(pomPath));
+        PomEditor editor = new PomEditor(Document.of(pomContent));
+        var detectedOptions = editor.dependencies().detectConventions();
+
+        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
+
+        AlignTui tui = new AlignTui(pomPath, gav, detectedOptions);
         tui.run();
     }
 }

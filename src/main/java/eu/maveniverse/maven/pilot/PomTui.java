@@ -85,6 +85,8 @@ class PomTui {
     private List<Integer> searchMatches = List.of();
     private int searchMatchIndex = -1;
 
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+
     private TuiRunner runner;
 
     /**
@@ -174,6 +176,15 @@ class PomTui {
 
         if (searchMode) {
             return handleSearchKeys(key);
+        }
+
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
         }
 
         if (key.isKey(KeyCode.ESCAPE)) {
@@ -268,7 +279,56 @@ class PomTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
+            return true;
+        }
+
         return false;
+    }
+
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "POM Browser",
+                        List.of(
+                                new HelpOverlay.Entry("", "Browse the project's POM as an expandable XML tree."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Raw POM: the actual pom.xml file content as written."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Effective POM: the fully resolved POM after parent"),
+                                new HelpOverlay.Entry("", "inheritance, profile activation, and property"),
+                                new HelpOverlay.Entry("", "interpolation. Shows what Maven actually uses."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "The detail pane (bottom) shows origin info: which"),
+                                new HelpOverlay.Entry("", "POM file defines the selected element (useful for"),
+                                new HelpOverlay.Entry("", "understanding inherited configuration)."))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("cyan", "XML element names"),
+                                new HelpOverlay.Entry("yellow", "Attribute values and search highlights"),
+                                new HelpOverlay.Entry("green", "Search match count indicator"),
+                                new HelpOverlay.Entry("dim", "XML structure characters, metadata"))),
+                new HelpOverlay.Section(
+                        "Navigation",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
+                                new HelpOverlay.Entry("e", "Expand all nodes"),
+                                new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"),
+                                new HelpOverlay.Entry("Tab", "Switch Raw POM / Effective POM"))),
+                new HelpOverlay.Section(
+                        "Search",
+                        List.of(
+                                new HelpOverlay.Entry("/", "Enter search mode \u2014 type to search"),
+                                new HelpOverlay.Entry("n / N", "Next / previous search match"),
+                                new HelpOverlay.Entry("Esc", "Clear search or quit"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit"))));
     }
 
     private boolean handleSearchKeys(KeyEvent key) {
@@ -387,7 +447,11 @@ class PomTui {
 
         int idx = 0;
         renderHeader(frame, zones.get(idx++));
-        renderXmlTree(frame, zones.get(idx++));
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(idx++));
+        } else {
+            renderXmlTree(frame, zones.get(idx++));
+        }
         if (showDetail) {
             idx++; // skip spacer
             renderOriginDetail(frame, zones.get(idx++), snippet);
@@ -543,6 +607,8 @@ class PomTui {
             spans.add(Span.raw(":Search  "));
             spans.add(Span.raw("e/w").bold());
             spans.add(Span.raw(":Expand/Collapse all  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }

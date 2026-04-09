@@ -21,12 +21,26 @@ package eu.maveniverse.maven.pilot;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class UpdatesTuiTest {
+
+    @TempDir
+    Path tempDir;
+
+    String pomPath;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        pomPath = Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+    }
 
     @Test
     void versionResolverInterface() {
@@ -53,7 +67,7 @@ class UpdatesTuiTest {
         deps.get(0).newestVersion = "1.1";
         deps.get(0).updateType = VersionComparator.UpdateType.PATCH;
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "com.example:app:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "com.example:app:1.0", (g, a) -> List.of());
         tui.loadedCount = 2;
         tui.updateStatusIfDone();
 
@@ -68,7 +82,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "b", "2.0", "compile", "jar"));
         deps.add(new UpdatesTui.DependencyInfo("com.example", "c", "3.0", "compile", "jar"));
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "com.example:app:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "com.example:app:1.0", (g, a) -> List.of());
         tui.loadedCount = 3;
         tui.failedCount = 2;
         tui.updateStatusIfDone();
@@ -83,7 +97,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "a", "1.0", "compile", "jar"));
         deps.add(new UpdatesTui.DependencyInfo("com.example", "b", "2.0", "compile", "jar"));
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "com.example:app:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "com.example:app:1.0", (g, a) -> List.of());
         tui.loadedCount = 1; // not all loaded yet
         tui.updateStatusIfDone();
 
@@ -126,7 +140,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of("2.0.0", "1.5.0", "1.0.0"));
 
         assertThat(dep.newestVersion).isEqualTo("2.0.0");
@@ -140,7 +154,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of("2.0.0-beta1", "2.0.0-alpha1", "1.1.0"));
 
         assertThat(dep.newestVersion).isEqualTo("1.1.0");
@@ -153,7 +167,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "2.0", "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of("1.5.0", "1.0.0"));
 
         assertThat(dep.newestVersion).isNull();
@@ -166,7 +180,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of());
 
         assertThat(dep.newestVersion).isNull();
@@ -179,7 +193,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", null, "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of("2.0.0", "1.0.0"));
 
         // Empty version should accept any non-preview version
@@ -192,7 +206,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
         deps.add(new UpdatesTui.DependencyInfo("com.example", "other", "2.0", "compile", "jar"));
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> {
             if ("lib".equals(a)) return List.of("2.0.0", "1.5.0", "1.0.0");
             return List.of("2.0.0");
         });
@@ -216,7 +230,7 @@ class UpdatesTuiTest {
         var deps = new ArrayList<UpdatesTui.DependencyInfo>();
         deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> {
             throw new IllegalStateException("network error");
         });
 
@@ -239,7 +253,7 @@ class UpdatesTuiTest {
         deps.add(new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar"));
         deps.add(new UpdatesTui.DependencyInfo("com.example", "broken", "1.0", "compile", "jar"));
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> {
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> {
             if ("broken".equals(a)) throw new IllegalStateException("timeout");
             return List.of("2.0.0", "1.0.0");
         });
@@ -283,7 +297,7 @@ class UpdatesTuiTest {
         var dep = new UpdatesTui.DependencyInfo("com.example", "lib", "1.0", "compile", "jar");
         deps.add(dep);
 
-        var tui = new UpdatesTui(deps, "/tmp/pom.xml", "g:a:1.0", (g, a) -> List.of());
+        var tui = new UpdatesTui(deps, pomPath, "g:a:1.0", (g, a) -> List.of());
         tui.applyVersionResult(dep, List.of("2.0.0-SNAPSHOT", "1.5.0-beta1", "1.2.0-alpha1"));
 
         assertThat(dep.newestVersion).isNull();

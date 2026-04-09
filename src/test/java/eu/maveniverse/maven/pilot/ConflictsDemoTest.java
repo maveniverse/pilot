@@ -22,9 +22,12 @@ import dev.tamboui.layout.Size;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Demo test for Conflict Resolution TUI.
@@ -32,7 +35,9 @@ import org.junit.jupiter.api.Test;
 class ConflictsDemoTest {
 
     @Test
-    void browseConflictsAndToggleDetails() throws Exception {
+    void browseConflictsAndToggleDetails(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
         List<ConflictsTui.ConflictGroup> conflicts = new ArrayList<>();
 
         // A real conflict: commons-lang3
@@ -48,7 +53,7 @@ class ConflictsDemoTest {
         var e4 = new ConflictsTui.ConflictEntry("org.slf4j", "slf4j-api", "2.0.9", "2.0.9", "direct", "compile");
         conflicts.add(new ConflictsTui.ConflictGroup("org.slf4j:slf4j-api", List.of(e3, e4)));
 
-        ConflictsTui tui = new ConflictsTui(conflicts, "/tmp/test-pom.xml", "com.example:demo:1.0.0");
+        ConflictsTui tui = new ConflictsTui(conflicts, pomPath, "com.example:demo:1.0.0");
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
 

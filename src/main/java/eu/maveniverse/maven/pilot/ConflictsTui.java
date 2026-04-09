@@ -104,8 +104,16 @@ class ConflictsTui {
     private final String pomPath;
     private final String projectGav;
     private final TableState tableState = new TableState();
-    private boolean showDetails = false;
+    private boolean showDetails = true;
     private String status;
+
+    private final String originalPomContent;
+    private final PomEditor editor;
+    private boolean dirty;
+    private boolean pendingQuit;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+    private int lastContentHeight;
 
     private TuiRunner runner;
 
@@ -134,6 +142,14 @@ class ConflictsTui {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.status = conflicts.size() + " dependency group(s) with version variance";
+        String pom;
+        try {
+            pom = Files.readString(Path.of(pomPath));
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
+        }
+        this.originalPomContent = pom;
+        this.editor = new PomEditor(Document.of(pom));
         if (!conflicts.isEmpty()) {
             tableState.select(0);
         }
@@ -166,8 +182,50 @@ class ConflictsTui {
             return true;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            runner.quit();
+        // Save prompt mode
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "Quit cancelled";
+                return true;
+            }
+            return false;
+        }
+
+        // Diff overlay mode — Esc closes overlay first
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
+        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
@@ -190,6 +248,16 @@ class ConflictsTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
+            return true;
+        }
+
         return false;
     }
 
@@ -207,40 +275,116 @@ class ConflictsTui {
         var group = conflicts.get(sel);
 
         try {
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-
-            // Pin the resolved version in dependencyManagement
             String resolvedVersion = group.resolvedVersion();
             var coords = Coordinates.of(group.entries.get(0).groupId, group.entries.get(0).artifactId, resolvedVersion);
             editor.dependencies().updateManagedDependency(true, coords);
 
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Pinned " + group.ga + " to " + resolvedVersion + " in dependencyManagement";
+            dirty = true;
+            status = "Pinned " + group.ga + " to " + resolvedVersion + " \u2014 save on exit";
         } catch (Exception e) {
             status = "Failed to pin version: " + e.getMessage();
         }
     }
 
+    private void requestQuit() {
+        if (dirty) {
+            pendingQuit = true;
+            status = "Save changes to POM?";
+        } else {
+            runner.quit();
+        }
+    }
+
+    private void saveAndQuit() {
+        try {
+            String currentOnDisk = Files.readString(Path.of(pomPath));
+            if (!currentOnDisk.equals(originalPomContent)) {
+                pendingQuit = false;
+                status = "POM modified externally \u2014 save aborted";
+                return;
+            }
+            Files.writeString(Path.of(pomPath), editor.toXml());
+            runner.quit();
+        } catch (Exception e) {
+            pendingQuit = false;
+            status = "Failed to save: " + e.getMessage();
+        }
+    }
+
+    private void toggleDiffView() {
+        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
+    }
+
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Conflict Resolution",
+                        List.of(
+                                new HelpOverlay.Entry("", "When multiple dependencies request different versions"),
+                                new HelpOverlay.Entry("", "of the same artifact, Maven picks one (the 'resolved'"),
+                                new HelpOverlay.Entry("", "version). This screen shows all such groups."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "The details pane shows the dependency path for each"),
+                                new HelpOverlay.Entry("", "request, so you can see which transitive chain"),
+                                new HelpOverlay.Entry("", "asked for which version."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Use 'p' to pin a group's resolved version into"),
+                                new HelpOverlay.Entry("", "<dependencyManagement>, ensuring all modules use"),
+                                new HelpOverlay.Entry("", "that version explicitly."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry(
+                                        "status", "\u26A0 = conflict (versions differ), \u2713 = consistent"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("resolved", "The version Maven selected"),
+                                new HelpOverlay.Entry("versions", "All distinct versions requested"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("yellow", "Actual conflict \u2014 different versions requested"),
+                                new HelpOverlay.Entry("default", "No conflict \u2014 all requests agree on version"),
+                                new HelpOverlay.Entry("dim", "Dependency path in details pane"))),
+                new HelpOverlay.Section(
+                        "Keys",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
+                                new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
     // -- Rendering --
 
     void render(Frame frame) {
+        boolean detailsVisible = showDetails && !diffOverlay.isActive() && !helpOverlay.isActive();
         var zones = Layout.vertical()
                 .constraints(
                         Constraint.length(3),
                         Constraint.fill(),
-                        showDetails ? Constraint.percentage(30) : Constraint.length(0),
+                        detailsVisible ? Constraint.length(1) : Constraint.length(0),
+                        detailsVisible ? Constraint.percentage(30) : Constraint.length(0),
                         Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        renderConflicts(frame, zones.get(1));
+        lastContentHeight = zones.get(1).height();
 
-        if (showDetails) {
-            renderDetails(frame, zones.get(2));
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else {
+            renderConflicts(frame, zones.get(1));
+            if (detailsVisible) {
+                renderDetails(frame, zones.get(3));
+            }
         }
 
-        renderInfoBar(frame, zones.get(3));
+        renderInfoBar(frame, zones.get(4));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -252,6 +396,9 @@ class ConflictsTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        if (dirty) {
+            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+        }
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
@@ -300,9 +447,7 @@ class ConflictsTui {
                     .distinct()
                     .collect(Collectors.joining(", "));
 
-            Style style = group.hasConflict()
-                    ? Style.create().fg(Color.YELLOW)
-                    : Style.create().fg(Color.GREEN);
+            Style style = group.hasConflict() ? Style.create().fg(Color.YELLOW) : Style.create();
 
             rows.add(Row.from(icon, group.ga, group.resolvedVersion(), versions).style(style));
         }
@@ -371,19 +516,39 @@ class ConflictsTui {
                 .split(area);
 
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("\u2191\u2193").bold());
-        spans.add(Span.raw(":Navigate  "));
-        spans.add(Span.raw("Enter").bold());
-        spans.add(Span.raw(":Details  "));
-        spans.add(Span.raw("p").bold());
-        spans.add(Span.raw(":Pin version  "));
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
+        if (pendingQuit) {
+            spans.add(Span.raw("y").bold());
+            spans.add(Span.raw(":Save and quit  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":Discard and quit  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Cancel"));
+        } else if (diffOverlay.isActive()) {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        } else {
+            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Details  "));
+            spans.add(Span.raw("p").bold());
+            spans.add(Span.raw(":Pin version  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
