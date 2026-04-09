@@ -90,9 +90,8 @@ public class PomMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
-        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "pom");
         while (true) {
-            MavenProject selected = picker.pick();
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "pom").pick();
             if (selected == null) break;
             executeForProject(selected);
         }

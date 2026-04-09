@@ -121,9 +121,8 @@ public class PilotMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = gavOf(root);
 
-        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "pilot");
         while (true) {
-            MavenProject selected = picker.pick();
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "pilot").pick();
             if (selected == null) break;
             String tool = new ToolPickerTui(gavOf(selected), true).pick();
             if (tool == null) continue;
@@ -353,7 +352,9 @@ public class PilotMojo extends AbstractMojo {
         String pomContent = Files.readString(Path.of(pomPath));
         PomEditor editor = new PomEditor(Document.of(pomContent));
         var detectedOptions = editor.dependencies().detectConventions();
-        new AlignTui(pomPath, gavOf(proj), detectedOptions).run();
+
+        AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
+        new AlignTui(pomPath, gavOf(proj), detectedOptions, parentInfo).run();
     }
 
     // ── updates ─────────────────────────────────────────────────────────────

@@ -38,15 +38,24 @@ import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
+import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Interactive TUI for dependency convention alignment.
+ *
+ * <p>Supports reactor-aware cross-POM alignment: when a child module's dependencies
+ * are managed by a parent POM in the reactor, the MANAGED version style moves
+ * managed dep entries to the parent POM and strips versions from the child POM.</p>
  */
 class AlignTui {
 
@@ -55,14 +64,23 @@ class AlignTui {
         PREVIEW
     }
 
+    /**
+     * Information about a reactor-local parent POM that holds (or should hold) dependency management.
+     */
+    record ParentPomInfo(String pomPath, String gav, AlignOptions detectedOptions) {}
+
+    private static final Logger LOGGER = Logger.getLogger(AlignTui.class.getName());
+
     private static final int ROW_VERSION_STYLE = 0;
     private static final int ROW_VERSION_SOURCE = 1;
     private static final int ROW_PROPERTY_NAMING = 2;
     private static final int ROW_COUNT = 3;
+    private static final String PROPERTIES_ELEMENT = "properties";
 
     private final String pomPath;
     private final String projectGav;
     private final AlignOptions detectedOptions;
+    private final ParentPomInfo parentInfo;
 
     // User-selected convention values (start matching detected)
     private AlignOptions.VersionStyle selectedStyle;
@@ -77,18 +95,40 @@ class AlignTui {
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private String alignedPomContent;
+    private Map<Path, String> alignedPomContents; // cross-POM mode
 
     private TuiRunner runner;
 
-    AlignTui(String pomPath, String projectGav, AlignOptions detectedOptions) {
+    AlignTui(String pomPath, String projectGav, AlignOptions detectedOptions, ParentPomInfo parentInfo) {
         this.pomPath = pomPath;
         this.projectGav = projectGav;
-        this.detectedOptions = detectedOptions;
-        this.selectedStyle = detectedOptions.versionStyle();
-        this.selectedSource = detectedOptions.versionSource();
-        this.selectedNaming = detectedOptions.namingConvention();
-        this.status = "Detected conventions from POM";
+        this.parentInfo = parentInfo;
+
+        // When deps are managed by parent, use parent's source/naming conventions
+        if (parentInfo != null && detectedOptions.versionStyle() == AlignOptions.VersionStyle.MANAGED) {
+            this.detectedOptions = AlignOptions.builder()
+                    .versionStyle(detectedOptions.versionStyle())
+                    .versionSource(parentInfo.detectedOptions().versionSource())
+                    .namingConvention(parentInfo.detectedOptions().namingConvention())
+                    .build();
+        } else {
+            this.detectedOptions = detectedOptions;
+        }
+
+        this.selectedStyle = this.detectedOptions.versionStyle();
+        this.selectedSource = this.detectedOptions.versionSource();
+        this.selectedNaming = this.detectedOptions.namingConvention();
+        this.status = parentInfo != null
+                ? "Reactor-aware mode: parent dependency management detected"
+                : "Detected conventions from POM";
         tableState.select(0);
+    }
+
+    /**
+     * Whether cross-POM editing is active: MANAGED style selected with a reactor parent available.
+     */
+    boolean isCrossPomMode() {
+        return parentInfo != null && selectedStyle == AlignOptions.VersionStyle.MANAGED;
     }
 
     void run() throws Exception {
@@ -237,6 +277,10 @@ class AlignTui {
     // -- Actions --
 
     private void showPreview() {
+        if (isCrossPomMode()) {
+            showCrossPomPreview();
+            return;
+        }
         try {
             String currentPom = Files.readString(Path.of(pomPath));
             PomEditor editor = new PomEditor(Document.of(currentPom));
@@ -258,6 +302,10 @@ class AlignTui {
     }
 
     private void applyAlignment() {
+        if (isCrossPomMode()) {
+            applyCrossPomAlignment();
+            return;
+        }
         try {
             String currentPom = Files.readString(Path.of(pomPath));
             PomEditor editor = new PomEditor(Document.of(currentPom));
@@ -269,37 +317,11 @@ class AlignTui {
         }
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "BOM Alignment",
-                        List.of(
-                                new HelpOverlay.Entry("", "Restructures dependency declarations to follow a"),
-                                new HelpOverlay.Entry("", "consistent convention. Configure three options:"),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Version Style: how versions are expressed \u2014 inline"),
-                                new HelpOverlay.Entry("", "in <version> tags, via <properties>, or managed"),
-                                new HelpOverlay.Entry("", "through <dependencyManagement>."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Version Source: where version values come from \u2014"),
-                                new HelpOverlay.Entry("", "keep current versions, import from a BOM, etc."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Property Naming: convention for property names"),
-                                new HelpOverlay.Entry("", "(e.g. groupId.artifactId.version or artifact.version)."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Preview the diff before applying to verify changes."))),
-                new HelpOverlay.Section(
-                        "Keys",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move between options"),
-                                new HelpOverlay.Entry("\u2190 / \u2192 / Enter", "Cycle through option values"),
-                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
-                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
-    }
-
     private void writeAlignedPom() {
+        if (isCrossPomMode() && alignedPomContents != null) {
+            writeCrossPomChanges();
+            return;
+        }
         try {
             String currentPom = Files.readString(Path.of(pomPath));
             PomEditor editor = new PomEditor(Document.of(currentPom));
@@ -312,6 +334,231 @@ class AlignTui {
         } catch (Exception e) {
             status = "Failed to write POM: " + e.getMessage();
         }
+    }
+
+    // -- Cross-POM alignment --
+
+    void showCrossPomPreview() {
+        try {
+            String childContent = Files.readString(Path.of(pomPath));
+            String parentContent = Files.readString(Path.of(parentInfo.pomPath()));
+
+            PomEditor childEditor = new PomEditor(Document.of(childContent));
+            PomEditor parentEditor = new PomEditor(Document.of(parentContent));
+
+            int count = alignCrossPom(childEditor, parentEditor);
+
+            String childModified = childEditor.toXml();
+            String parentModified = parentEditor.toXml();
+
+            // Build multi-file diff with distinguishing labels (both are pom.xml)
+            Path pp = Path.of(parentInfo.pomPath());
+            Path ppParent = pp.getParent();
+            String parentLabel = (ppParent != null ? ppParent.getFileName() + "/" : "") + pp.getFileName();
+            Path cp = Path.of(pomPath);
+            Path cpParent = cp.getParent();
+            String childLabel = (cpParent != null ? cpParent.getFileName() + "/" : "") + cp.getFileName();
+            Map<String, Map.Entry<String, String>> fileDiffs = new LinkedHashMap<>();
+            if (!parentContent.equals(parentModified)) {
+                fileDiffs.put(parentLabel, Map.entry(parentContent, parentModified));
+            }
+            if (!childContent.equals(childModified)) {
+                fileDiffs.put(childLabel, Map.entry(childContent, childModified));
+            }
+
+            if (fileDiffs.isEmpty()) {
+                status = "No changes needed \u2014 POM already aligned";
+                alignedPomContents = null;
+                return;
+            }
+
+            // Store for writing
+            alignedPomContents = new LinkedHashMap<>();
+            if (!parentContent.equals(parentModified)) {
+                alignedPomContents.put(Path.of(parentInfo.pomPath()), parentModified);
+            }
+            if (!childContent.equals(childModified)) {
+                alignedPomContents.put(Path.of(pomPath), childModified);
+            }
+
+            long changes = diffOverlay.openMulti(fileDiffs);
+            phase = Phase.PREVIEW;
+            status = count + " dependency(ies) aligned, " + changes + " line(s) changed across " + fileDiffs.size()
+                    + " file(s)";
+        } catch (Exception e) {
+            status = "Failed to compute preview: " + e.getMessage();
+        }
+    }
+
+    void applyCrossPomAlignment() {
+        try {
+            String childContent = Files.readString(Path.of(pomPath));
+            String parentContent = Files.readString(Path.of(parentInfo.pomPath()));
+
+            PomEditor childEditor = new PomEditor(Document.of(childContent));
+            PomEditor parentEditor = new PomEditor(Document.of(parentContent));
+
+            int count = alignCrossPom(childEditor, parentEditor);
+
+            // Writes are not atomic across the two files; users can roll back via git if interrupted
+            Files.writeString(Path.of(parentInfo.pomPath()), parentEditor.toXml());
+            Files.writeString(Path.of(pomPath), childEditor.toXml());
+            status = "Aligned " + count + " dependency(ies) across 2 POMs";
+        } catch (Exception e) {
+            status = "Failed to apply alignment: " + e.getMessage();
+        }
+    }
+
+    void writeCrossPomChanges() {
+        try {
+            for (var entry : alignedPomContents.entrySet()) {
+                Files.writeString(entry.getKey(), entry.getValue());
+            }
+            status = "Changes written to " + alignedPomContents.size() + " POM(s)";
+            phase = Phase.SELECT;
+            diffOverlay.close();
+            alignedPomContents = null;
+            alignedPomContent = null;
+        } catch (Exception e) {
+            status = "Failed to write POMs: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Align dependencies across child and parent POMs.
+     * Moves inline versions from child deps to parent's dependency management.
+     *
+     * @return the number of dependencies aligned
+     */
+    int alignCrossPom(PomEditor childEditor, PomEditor parentEditor) {
+        var depsOpt = childEditor.root().childElement("dependencies");
+        if (depsOpt.isEmpty()) return 0;
+
+        List<Coordinates> toManage = new ArrayList<>();
+
+        // Collect child deps that have inline versions
+        depsOpt.orElseThrow().childElements("dependency").forEach(dep -> {
+            String gid = dep.childTextOr("groupId", "");
+            String aid = dep.childTextOr("artifactId", "");
+            String ver = dep.childTextOr("version", null);
+            if (ver != null && !ver.isEmpty()) {
+                toManage.add(Coordinates.of(gid, aid, ver));
+            }
+        });
+
+        int count = 0;
+        for (var coords : toManage) {
+            addToParentDepMgmt(childEditor, parentEditor, coords);
+            childEditor.dependencies().deleteDependencyVersion(coords);
+            count++;
+        }
+
+        return count;
+    }
+
+    /**
+     * Add a dependency to the parent POM's dependency management section,
+     * following the selected version source and naming conventions.
+     */
+    void addToParentDepMgmt(PomEditor childEditor, PomEditor parentEditor, Coordinates coords) {
+        String version = coords.version();
+
+        if (selectedSource == AlignOptions.VersionSource.PROPERTY) {
+            String propName;
+            String propValue;
+
+            if (version.startsWith("${") && version.endsWith("}")) {
+                // Already a property reference - reuse name and resolve value from child
+                propName = version.substring(2, version.length() - 1);
+                propValue = childEditor
+                        .root()
+                        .childElement(PROPERTIES_ELEMENT)
+                        .map(p -> p.childTextOr(propName, null))
+                        .orElse(null);
+            } else {
+                // Literal version - create new property with selected naming convention
+                propName = AlignOptions.generatePropertyName(coords, selectedNaming);
+                propValue = version;
+            }
+
+            // Add property to parent and determine managed dep version
+            String managedVersion;
+            if (propValue != null) {
+                boolean parentHasProp = parentEditor
+                        .root()
+                        .childElement(PROPERTIES_ELEMENT)
+                        .flatMap(p -> p.childElement(propName))
+                        .isPresent();
+                if (!parentHasProp) {
+                    parentEditor.properties().updateProperty(true, propName, propValue);
+                }
+                managedVersion = "${" + propName + "}";
+            } else {
+                // Property not found in child POM — use raw version reference
+                LOGGER.log(Level.FINE, "Property {0} not found in child POM; using raw version: {1}", new Object[] {
+                    propName, version
+                });
+                managedVersion = version;
+            }
+
+            var managedCoords = Coordinates.of(coords.groupId(), coords.artifactId(), managedVersion);
+            parentEditor.dependencies().updateManagedDependency(true, managedCoords);
+        } else {
+            // LITERAL source - resolve property refs if possible, then add literal version
+            String literalVersion = version;
+            if (version.startsWith("${") && version.endsWith("}")) {
+                String propName = version.substring(2, version.length() - 1);
+                literalVersion = childEditor
+                        .root()
+                        .childElement(PROPERTIES_ELEMENT)
+                        .map(p -> p.childTextOr(propName, version))
+                        .orElse(version);
+            }
+            parentEditor
+                    .dependencies()
+                    .updateManagedDependency(
+                            true, Coordinates.of(coords.groupId(), coords.artifactId(), literalVersion));
+        }
+    }
+
+    // -- Help --
+
+    private List<HelpOverlay.Section> buildHelp() {
+        List<HelpOverlay.Entry> descEntries = new ArrayList<>();
+        descEntries.add(new HelpOverlay.Entry("", "Restructures dependency declarations to follow a"));
+        descEntries.add(new HelpOverlay.Entry("", "consistent convention. Configure three options:"));
+        descEntries.add(new HelpOverlay.Entry("", ""));
+        descEntries.add(new HelpOverlay.Entry("", "Version Style: how versions are expressed \u2014 inline"));
+        descEntries.add(new HelpOverlay.Entry("", "in <version> tags, via <properties>, or managed"));
+        descEntries.add(new HelpOverlay.Entry("", "through <dependencyManagement>."));
+        descEntries.add(new HelpOverlay.Entry("", ""));
+        descEntries.add(new HelpOverlay.Entry("", "Version Source: where version values come from \u2014"));
+        descEntries.add(new HelpOverlay.Entry("", "keep current versions, import from a BOM, etc."));
+        descEntries.add(new HelpOverlay.Entry("", ""));
+        descEntries.add(new HelpOverlay.Entry("", "Property Naming: convention for property names"));
+        descEntries.add(new HelpOverlay.Entry("", "(e.g. groupId.artifactId.version or artifact.version)."));
+        descEntries.add(new HelpOverlay.Entry("", ""));
+        descEntries.add(new HelpOverlay.Entry("", "Preview the diff before applying to verify changes."));
+
+        if (parentInfo != null) {
+            descEntries.add(new HelpOverlay.Entry("", ""));
+            descEntries.add(new HelpOverlay.Entry("", "Cross-POM mode: when MANAGED style is selected,"));
+            descEntries.add(new HelpOverlay.Entry("", "managed deps are written to the parent POM and"));
+            descEntries.add(new HelpOverlay.Entry("", "child deps become version-less."));
+            descEntries.add(new HelpOverlay.Entry("", "Parent: " + parentInfo.gav()));
+        }
+
+        return List.of(
+                new HelpOverlay.Section("BOM Alignment", descEntries),
+                new HelpOverlay.Section(
+                        "Keys",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move between options"),
+                                new HelpOverlay.Entry("\u2190 / \u2192 / Enter", "Cycle through option values"),
+                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
+                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit"))));
     }
 
     // -- Rendering --
@@ -348,6 +595,10 @@ class AlignTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        if (isCrossPomMode()) {
+            spans.add(Span.raw("  managed \u2192 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw(parentInfo.gav()).yellow());
+        }
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
