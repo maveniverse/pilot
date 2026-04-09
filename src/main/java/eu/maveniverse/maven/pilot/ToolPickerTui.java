@@ -54,10 +54,11 @@ class ToolPickerTui {
             new Tool("tree", "Browse dependency tree", false),
             new Tool("dependencies", "Analyze declared vs used dependencies", false),
             new Tool("pom", "Browse effective POM", false),
-            new Tool("align", "Align dependencies with a BOM", false),
+            new Tool("align", "Align dependency conventions", false),
             new Tool("updates", "Check for dependency updates", true),
             new Tool("conflicts", "Detect version conflicts", true),
-            new Tool("audit", "Security audit of dependencies", true));
+            new Tool("audit", "Security audit of dependencies", true),
+            new Tool("search", "Search Maven Central", false));
 
     private final String contextLabel;
     private final boolean isReactor;
@@ -235,7 +236,9 @@ class ToolPickerTui {
                                 new HelpOverlay.Entry("conflicts", "Detect version conflicts in the dep tree \u2014"),
                                 new HelpOverlay.Entry("", "  pin resolved versions in dependencyManagement"),
                                 new HelpOverlay.Entry("audit", "License compliance and CVE vulnerability scan \u2014"),
-                                new HelpOverlay.Entry("", "  review licenses and known security issues"))),
+                                new HelpOverlay.Entry("", "  review licenses and known security issues"),
+                                new HelpOverlay.Entry("search", "Search Maven Central interactively \u2014"),
+                                new HelpOverlay.Entry("", "  browse artifacts, versions, and POM metadata"))),
                 new HelpOverlay.Section(
                         "Keys",
                         List.of(

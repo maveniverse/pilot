@@ -150,6 +150,7 @@ public class PilotMojo extends AbstractMojo {
             case "updates" -> runUpdates(proj, projects);
             case "conflicts" -> runConflicts(proj, projects);
             case "audit" -> runAudit(proj, projects);
+            case "search" -> runSearch();
             default -> getLog().warn("Unknown tool: " + tool);
         }
     }
@@ -528,6 +529,14 @@ public class PilotMojo extends AbstractMojo {
         for (DependencyNode child : node.getChildren()) {
             collectAuditNode(child, entries, seen, false);
         }
+    }
+
+    // ── search ──────────────────────────────────────────────────────────────
+
+    private void runSearch() throws Exception {
+        CentralSearchClient client = new CentralSearchClient();
+        SearchTui tui = new SearchTui(client, "", List.of(), 0);
+        tui.run();
     }
 
     // ── utils ───────────────────────────────────────────────────────────────
