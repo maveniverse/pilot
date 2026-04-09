@@ -104,7 +104,7 @@ class ConflictsTui {
     private final String pomPath;
     private final String projectGav;
     private final TableState tableState = new TableState();
-    private boolean showDetails = false;
+    private boolean showDetails = true;
     private String status;
 
     private final String originalPomContent;
@@ -112,6 +112,7 @@ class ConflictsTui {
     private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
 
     private TuiRunner runner;
@@ -213,6 +214,16 @@ class ConflictsTui {
             return false;
         }
 
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
         if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
             requestQuit();
             return true;
@@ -239,6 +250,11 @@ class ConflictsTui {
 
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
 
@@ -300,30 +316,75 @@ class ConflictsTui {
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Conflict Resolution",
+                        List.of(
+                                new HelpOverlay.Entry("", "When multiple dependencies request different versions"),
+                                new HelpOverlay.Entry("", "of the same artifact, Maven picks one (the 'resolved'"),
+                                new HelpOverlay.Entry("", "version). This screen shows all such groups."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "The details pane shows the dependency path for each"),
+                                new HelpOverlay.Entry("", "request, so you can see which transitive chain"),
+                                new HelpOverlay.Entry("", "asked for which version."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Use 'p' to pin a group's resolved version into"),
+                                new HelpOverlay.Entry("", "<dependencyManagement>, ensuring all modules use"),
+                                new HelpOverlay.Entry("", "that version explicitly."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry(
+                                        "status", "\u26A0 = conflict (versions differ), \u2713 = consistent"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("resolved", "The version Maven selected"),
+                                new HelpOverlay.Entry("versions", "All distinct versions requested"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("yellow", "Actual conflict \u2014 different versions requested"),
+                                new HelpOverlay.Entry("default", "No conflict \u2014 all requests agree on version"),
+                                new HelpOverlay.Entry("dim", "Dependency path in details pane"))),
+                new HelpOverlay.Section(
+                        "Keys",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
+                                new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
     // -- Rendering --
 
     void render(Frame frame) {
+        boolean detailsVisible = showDetails && !diffOverlay.isActive() && !helpOverlay.isActive();
         var zones = Layout.vertical()
                 .constraints(
                         Constraint.length(3),
                         Constraint.fill(),
-                        showDetails && !diffOverlay.isActive() ? Constraint.percentage(30) : Constraint.length(0),
+                        detailsVisible ? Constraint.length(1) : Constraint.length(0),
+                        detailsVisible ? Constraint.percentage(30) : Constraint.length(0),
                         Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
 
-        if (diffOverlay.isActive()) {
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             renderConflicts(frame, zones.get(1));
-            if (showDetails) {
-                renderDetails(frame, zones.get(2));
+            if (detailsVisible) {
+                renderDetails(frame, zones.get(3));
             }
         }
 
-        renderInfoBar(frame, zones.get(3));
+        renderInfoBar(frame, zones.get(4));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -386,9 +447,7 @@ class ConflictsTui {
                     .distinct()
                     .collect(Collectors.joining(", "));
 
-            Style style = group.hasConflict()
-                    ? Style.create().fg(Color.YELLOW)
-                    : Style.create().fg(Color.GREEN);
+            Style style = group.hasConflict() ? Style.create().fg(Color.YELLOW) : Style.create();
 
             rows.add(Row.from(icon, group.ga, group.resolvedVersion(), versions).style(style));
         }
@@ -485,6 +544,8 @@ class ConflictsTui {
             spans.add(Span.raw(":Pin version  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }

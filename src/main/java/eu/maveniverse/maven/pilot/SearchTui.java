@@ -41,6 +41,7 @@ import jakarta.json.JsonObject;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -51,7 +52,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -77,14 +77,23 @@ class SearchTui {
         final String url;
         final String organization;
         final String license;
+        final String licenseUrl;
         final String date;
 
-        PomInfo(String name, String description, String url, String organization, String license, String date) {
+        PomInfo(
+                String name,
+                String description,
+                String url,
+                String organization,
+                String license,
+                String licenseUrl,
+                String date) {
             this.name = name;
             this.description = description;
             this.url = url;
             this.organization = organization;
             this.license = license;
+            this.licenseUrl = licenseUrl;
             this.date = date;
         }
     }
@@ -127,7 +136,7 @@ class SearchTui {
     private String selectedGav;
 
     // Background HTTP pool (limited to avoid saturating connections)
-    private final ExecutorService httpPool = Executors.newFixedThreadPool(3);
+    private final ExecutorService httpPool = MojoHelper.newHttpPool();
 
     // Dependencies
     private final SearchClient client;
@@ -821,6 +830,11 @@ class SearchTui {
      *         returns a PomInfo with all fields set to `null` if the POM cannot be retrieved or parsed
      */
     static PomInfo fetchPomFromCentral(String groupId, String artifactId, String version) {
+        // Try local Maven repository first (handles SNAPSHOTs and offline artifacts)
+        PomInfo local = fetchPomFromLocal(groupId, artifactId, version);
+        if (local != null) return local;
+
+        // Fall back to Maven Central
         try {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-"
                     + version + ".pom";
@@ -834,7 +848,7 @@ class SearchTui {
                 conn.setReadTimeout(5_000);
 
                 if (conn.getResponseCode() != 200) {
-                    return new PomInfo(null, null, null, null, null, null);
+                    return new PomInfo(null, null, null, null, null, null, null);
                 }
 
                 // Capture Last-Modified as publication date
@@ -848,34 +862,159 @@ class SearchTui {
                 }
 
                 try (InputStream is = conn.getInputStream()) {
-                    DocumentBuilder db = createSafeDocumentBuilder();
-                    Document doc = db.parse(is);
-                    Element root = doc.getDocumentElement();
-
-                    String name = getChildText(root, "name");
-                    String description = getChildText(root, "description");
-                    String url = getChildText(root, "url");
-
-                    String org = null;
-                    NodeList orgNodes = root.getElementsByTagName("organization");
-                    if (orgNodes.getLength() > 0) {
-                        org = getChildText((Element) orgNodes.item(0), "name");
-                    }
-
-                    String license = null;
-                    NodeList licNodes = root.getElementsByTagName("license");
-                    if (licNodes.getLength() > 0) {
-                        license = getChildText((Element) licNodes.item(0), "name");
-                    }
-
-                    return new PomInfo(name, description, url, org, license, date);
+                    return parsePomInfo(is, date);
                 }
             } finally {
                 conn.disconnect();
             }
         } catch (Exception e) {
-            return new PomInfo(null, null, null, null, null, null);
+            return new PomInfo(null, null, null, null, null, null, null);
         }
+    }
+
+    private static PomInfo fetchPomFromLocal(String groupId, String artifactId, String version) {
+        try {
+            String localRepo = System.getProperty("maven.repo.local");
+            if (localRepo == null) {
+                localRepo = System.getProperty("user.home") + "/.m2/repository";
+            }
+            Path pomFile = Path.of(
+                    localRepo, groupId.replace('.', '/'), artifactId, version, artifactId + "-" + version + ".pom");
+            if (!pomFile.toFile().isFile()) return null;
+
+            String date = Instant.ofEpochMilli(pomFile.toFile().lastModified())
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                    .toString();
+
+            try (InputStream is = java.nio.file.Files.newInputStream(pomFile)) {
+                return parsePomInfo(is, date);
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private record LicenseInfo(String name, String url) {}
+
+    private static PomInfo parsePomInfo(InputStream is, String date) throws Exception {
+        DocumentBuilder db = createSafeDocumentBuilder();
+        Document doc = db.parse(is);
+        Element root = doc.getDocumentElement();
+
+        String name = getChildText(root, "name");
+        String description = getChildText(root, "description");
+        String url = getChildText(root, "url");
+
+        String org = null;
+        Element orgEl = getChildElement(root, "organization");
+        if (orgEl != null) {
+            org = getChildText(orgEl, "name");
+        }
+
+        LicenseInfo licInfo = extractLicenseInfo(root);
+
+        // If no license found, follow parent POM chain
+        if (licInfo == null) {
+            licInfo = fetchLicenseInfoFromParent(root);
+        }
+
+        String license = licInfo != null ? licInfo.name : null;
+        String licenseUrl = licInfo != null ? licInfo.url : null;
+
+        return new PomInfo(name, description, url, org, license, licenseUrl, date);
+    }
+
+    /**
+     * Follow the parent POM chain to find a license declaration.
+     * Checks local Maven repository first, then Maven Central.
+     */
+    private static LicenseInfo fetchLicenseInfoFromParent(Element pomRoot) {
+        Element parentEl = getChildElement(pomRoot, "parent");
+        if (parentEl == null) return null;
+        String pGroupId = getChildText(parentEl, "groupId");
+        String pArtifactId = getChildText(parentEl, "artifactId");
+        String pVersion = getChildText(parentEl, "version");
+        if (pGroupId == null || pArtifactId == null || pVersion == null) return null;
+
+        Element parentRoot = loadPomElement(pGroupId, pArtifactId, pVersion);
+        if (parentRoot == null) return null;
+
+        LicenseInfo licInfo = extractLicenseInfo(parentRoot);
+        if (licInfo != null) return licInfo;
+        return fetchLicenseInfoFromParent(parentRoot);
+    }
+
+    /**
+     * Load a POM's root element, trying local repo first then Central.
+     */
+    private static Element loadPomElement(String groupId, String artifactId, String version) {
+        String relPath = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-" + version
+                + ".pom";
+
+        // Try local repo first
+        try {
+            String localRepo = System.getProperty("maven.repo.local");
+            if (localRepo == null) {
+                localRepo = System.getProperty("user.home") + "/.m2/repository";
+            }
+            Path pomFile = Path.of(
+                    localRepo, groupId.replace('.', '/'), artifactId, version, artifactId + "-" + version + ".pom");
+            if (pomFile.toFile().isFile()) {
+                try (InputStream is = java.nio.file.Files.newInputStream(pomFile)) {
+                    return createSafeDocumentBuilder().parse(is).getDocumentElement();
+                }
+            }
+        } catch (Exception e) {
+            // fall through to Central
+        }
+
+        // Try Maven Central
+        try {
+            String pomUrl = "https://repo1.maven.org/maven2/" + relPath;
+            HttpURLConnection conn =
+                    (HttpURLConnection) URI.create(pomUrl).toURL().openConnection();
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5_000);
+                conn.setReadTimeout(5_000);
+                if (conn.getResponseCode() != 200) return null;
+                try (InputStream is = conn.getInputStream()) {
+                    return createSafeDocumentBuilder().parse(is).getDocumentElement();
+                }
+            } finally {
+                conn.disconnect();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Extract license name and URL from a POM root element using direct child traversal.
+     */
+    private static LicenseInfo extractLicenseInfo(Element pomRoot) {
+        Element licensesEl = getChildElement(pomRoot, "licenses");
+        if (licensesEl == null) return null;
+        Element licenseEl = getChildElement(licensesEl, "license");
+        if (licenseEl == null) return null;
+        String name = getChildText(licenseEl, "name");
+        if (name == null) return null;
+        String url = getChildText(licenseEl, "url");
+        return new LicenseInfo(name, url);
+    }
+
+    /**
+     * Find a direct child element by tag name.
+     */
+    private static Element getChildElement(Element parent, String tagName) {
+        NodeList list = parent.getChildNodes();
+        for (int i = 0; i < list.getLength(); i++) {
+            if (list.item(i) instanceof Element el && el.getTagName().equals(tagName)) {
+                return el;
+            }
+        }
+        return null;
     }
 
     private static DocumentBuilder createSafeDocumentBuilder() throws Exception {

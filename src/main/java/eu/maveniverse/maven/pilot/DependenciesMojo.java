@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.inject.Inject;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -59,11 +60,14 @@ import org.eclipse.aether.resolution.DependencyResult;
  *
  * @since 0.1.0
  */
-@Mojo(name = "dependencies", requiresProject = true, threadSafe = true)
+@Mojo(name = "dependencies", requiresProject = true, aggregator = true, threadSafe = true)
 public class DependenciesMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    private MavenSession session;
 
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
@@ -75,83 +79,97 @@ public class DependenciesMojo extends AbstractMojo {
         this.repoSystem = repoSystem;
     }
 
-    /**
-     * Analyze the project's declared dependencies against the full transitive dependency tree and launch the interactive TUI.
-     *
-     * @throws MojoExecutionException if dependency collection, traversal, or the TUI run fails
-     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            // Collect direct declared dependencies
-            Set<String> declaredGAs = new HashSet<>();
-            List<DependenciesTui.DepEntry> declared = new ArrayList<>();
-            for (Dependency dep : project.getDependencies()) {
-                DependenciesTui.addDeclaredEntry(
-                        declaredGAs,
-                        declared,
-                        dep.getGroupId(),
-                        dep.getArtifactId(),
-                        dep.getClassifier(),
-                        dep.getVersion(),
-                        dep.getScope());
-            }
-
-            // Resolve full transitive tree and artifact files
-            DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(project), null);
-            DependencyResult depResult = repoSystem.resolveDependencies(repoSession, depRequest);
-
-            // Find transitive (undeclared) dependencies
-            Set<String> transitiveGAs = new HashSet<>();
-            List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
-            DependenciesTui.collectTransitive(depResult.getRoot(), declaredGAs, transitiveGAs, transitive);
-
-            // Build GA-to-JAR map from resolved artifacts
-            Map<String, File> gaToJar = new HashMap<>();
-            for (ArtifactResult ar : depResult.getArtifactResults()) {
-                var art = ar.getArtifact();
-                if (art != null
-                        && art.getFile() != null
-                        && art.getFile().getName().endsWith(".jar")) {
-                    gaToJar.put(art.getGroupId() + ":" + art.getArtifactId(), art.getFile());
-                }
-            }
-
-            // Bytecode usage analysis
-            Path classesDir = Path.of(project.getBuild().getOutputDirectory());
-            Path testClassesDir = Path.of(project.getBuild().getTestOutputDirectory());
-            boolean bytecodeAnalyzed = false;
-
-            if (Files.isDirectory(classesDir)) {
-                bytecodeAnalyzed = true;
-
-                Set<String> mainRefs = ClassFileScanner.scanDirectory(classesDir);
-                Set<String> testRefs =
-                        Files.isDirectory(testClassesDir) ? ClassFileScanner.scanDirectory(testClassesDir) : Set.of();
-
-                Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-                DependencyUsageAnalyzer.AnalysisResult usage =
-                        DependencyUsageAnalyzer.analyze(mainRefs, testRefs, classIndex, gaToJar, declared, transitive);
-
-                for (var dep : declared) {
-                    dep.usageStatus = usage.declaredUsage()
-                            .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
-                }
-                for (var dep : transitive) {
-                    dep.usageStatus = usage.transitiveUsage()
-                            .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
-                }
+            List<MavenProject> projects = session.getProjects();
+            if (projects.size() > 1) {
+                executeReactor(projects);
             } else {
-                getLog().warn("target/classes not found — skipping bytecode analysis. Run 'mvn compile' first.");
+                executeForProject(project);
             }
-
-            String pomPath = project.getFile().getAbsolutePath();
-            String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
-
-            DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, gav, bytecodeAnalyzed);
-            tui.run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to analyze dependencies: " + e.getMessage(), e);
         }
+    }
+
+    private void executeReactor(List<MavenProject> projects) throws Exception {
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        MavenProject root = projects.get(0);
+        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+
+        while (true) {
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "dependencies").pick();
+            if (selected == null) break;
+            executeForProject(selected);
+        }
+    }
+
+    private void executeForProject(MavenProject proj) throws Exception {
+        // Collect direct declared dependencies
+        Set<String> declaredGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> declared = new ArrayList<>();
+        for (Dependency dep : proj.getDependencies()) {
+            DependenciesTui.addDeclaredEntry(
+                    declaredGAs,
+                    declared,
+                    dep.getGroupId(),
+                    dep.getArtifactId(),
+                    dep.getClassifier(),
+                    dep.getVersion(),
+                    dep.getScope());
+        }
+
+        // Resolve full transitive tree and artifact files
+        DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(proj), null);
+        DependencyResult depResult = repoSystem.resolveDependencies(repoSession, depRequest);
+
+        // Find transitive (undeclared) dependencies
+        Set<String> transitiveGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
+        DependenciesTui.collectTransitive(depResult.getRoot(), declaredGAs, transitiveGAs, transitive);
+
+        // Build GA-to-JAR map from resolved artifacts
+        Map<String, File> gaToJar = new HashMap<>();
+        for (ArtifactResult ar : depResult.getArtifactResults()) {
+            var art = ar.getArtifact();
+            if (art != null && art.getFile() != null && art.getFile().getName().endsWith(".jar")) {
+                gaToJar.put(art.getGroupId() + ":" + art.getArtifactId(), art.getFile());
+            }
+        }
+
+        // Bytecode usage analysis
+        Path classesDir = Path.of(proj.getBuild().getOutputDirectory());
+        Path testClassesDir = Path.of(proj.getBuild().getTestOutputDirectory());
+        boolean bytecodeAnalyzed = false;
+
+        if (Files.isDirectory(classesDir)) {
+            bytecodeAnalyzed = true;
+
+            Set<String> mainRefs = ClassFileScanner.scanDirectory(classesDir);
+            Set<String> testRefs =
+                    Files.isDirectory(testClassesDir) ? ClassFileScanner.scanDirectory(testClassesDir) : Set.of();
+
+            Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+            DependencyUsageAnalyzer.AnalysisResult usage =
+                    DependencyUsageAnalyzer.analyze(mainRefs, testRefs, classIndex, gaToJar, declared, transitive);
+
+            for (var dep : declared) {
+                dep.usageStatus =
+                        usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+            }
+            for (var dep : transitive) {
+                dep.usageStatus = usage.transitiveUsage()
+                        .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+            }
+        } else {
+            getLog().warn("target/classes not found — skipping bytecode analysis. Run 'mvn compile' first.");
+        }
+
+        String pomPath = proj.getFile().getAbsolutePath();
+        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
+
+        DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, gav, bytecodeAnalyzed);
+        tui.run();
     }
 }

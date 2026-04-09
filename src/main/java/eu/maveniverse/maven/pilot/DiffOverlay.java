@@ -22,7 +22,9 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reusable diff overlay component for TUI screens.
@@ -62,6 +64,38 @@ class DiffOverlay {
         lines = UnifiedDiff.filterContext(fullDiff, 3);
         scroll = 0;
         return changes;
+    }
+
+    /**
+     * Open the diff overlay with diffs from multiple files.
+     *
+     * @param files ordered map of filename to (original, modified) pairs
+     * @return the total number of changed lines, or 0 if no changes detected
+     */
+    long openMulti(Map<String, Map.Entry<String, String>> files) {
+        List<UnifiedDiff.DiffLine> allLines = new ArrayList<>();
+        long totalChanges = 0;
+        for (var entry : files.entrySet()) {
+            var fullDiff = UnifiedDiff.compute(
+                    entry.getValue().getKey(), entry.getValue().getValue());
+            long changes = UnifiedDiff.changeCount(fullDiff);
+            if (changes > 0) {
+                if (!allLines.isEmpty()) {
+                    allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, ""));
+                }
+                allLines.add(new UnifiedDiff.DiffLine(
+                        UnifiedDiff.Type.CONTEXT, "\u2500\u2500 " + entry.getKey() + " \u2500\u2500"));
+                allLines.addAll(UnifiedDiff.filterContext(fullDiff, 3));
+                totalChanges += changes;
+            }
+        }
+        if (totalChanges == 0) {
+            close();
+            return 0;
+        }
+        lines = allLines;
+        scroll = 0;
+        return totalChanges;
     }
 
     void close() {

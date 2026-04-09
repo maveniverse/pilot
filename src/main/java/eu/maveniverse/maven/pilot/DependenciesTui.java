@@ -204,6 +204,7 @@ class DependenciesTui {
     private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
     private TuiRunner runner;
 
@@ -329,6 +330,16 @@ class DependenciesTui {
             return false;
         }
 
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
         if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
             requestQuit();
             return true;
@@ -371,6 +382,11 @@ class DependenciesTui {
 
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
 
@@ -562,6 +578,53 @@ class DependenciesTui {
         }
     }
 
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Analysis",
+                        List.of(
+                                new HelpOverlay.Entry("", "Uses bytecode analysis to compare what is declared"),
+                                new HelpOverlay.Entry("", "in the POM against what is actually used in code."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Declared view: dependencies in the POM that are not"),
+                                new HelpOverlay.Entry("", "referenced in compiled bytecode. These may be safe"),
+                                new HelpOverlay.Entry("", "to remove (but check for runtime/reflection use)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Transitive view: classes used in your code that come"),
+                                new HelpOverlay.Entry("", "from transitive dependencies. These should be declared"),
+                                new HelpOverlay.Entry("", "explicitly to avoid breakage when transitives change."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry("status", "unused (declared) or undeclared (transitive)"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("scope", "Maven scope (compile, test, runtime, provided)"),
+                                new HelpOverlay.Entry("classifier", "Artifact classifier (e.g. test-fixtures)"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("yellow", "Issue flag \u2014 unused or undeclared dependency"),
+                                new HelpOverlay.Entry("cyan", "Header and view tab indicators"),
+                                new HelpOverlay.Entry("dim", "Informational / secondary text"))),
+                new HelpOverlay.Section(
+                        "Declared View Actions",
+                        List.of(
+                                new HelpOverlay.Entry("x / Enter", "Remove the selected unused dependency"),
+                                new HelpOverlay.Entry(
+                                        "s", "Cycle scope (compile \u2192 test \u2192 runtime \u2192 ...)"))),
+                new HelpOverlay.Section(
+                        "Transitive View Actions",
+                        List.of(new HelpOverlay.Entry("a / Enter", "Add the dependency to the POM"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
     private void toggleDiffView() {
         long changes = diffOverlay.open(originalPomContent, editor.toXml());
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
@@ -621,7 +684,9 @@ class DependenciesTui {
 
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
-        if (diffOverlay.isActive()) {
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             renderTable(frame, zones.get(1));
@@ -812,6 +877,8 @@ class DependenciesTui {
             }
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }

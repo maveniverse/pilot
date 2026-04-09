@@ -47,7 +47,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -101,11 +100,14 @@ class ReactorUpdatesTui {
     private final UpdatesTui.VersionResolver versionResolver;
     private final TableState tableState = new TableState();
     private final TableState moduleTableState = new TableState();
-    private final ExecutorService httpPool = Executors.newFixedThreadPool(8);
+    private final ExecutorService httpPool = MojoHelper.newHttpPool();
 
     private View view = View.DEPENDENCIES;
     private List<ReactorRow> displayRows = new ArrayList<>();
     private Filter filter = Filter.ALL;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+    private int lastContentHeight;
     String status = "Loading updates\u2026";
     boolean loading = true;
     int loadedCount = 0;
@@ -274,6 +276,30 @@ class ReactorUpdatesTui {
             return true;
         }
 
+        // Diff overlay mode
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
+        }
+
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
+        }
+
         if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
             runner.quit();
             return true;
@@ -312,6 +338,10 @@ class ReactorUpdatesTui {
             deselectAll();
             return true;
         }
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
         if (key.isKey(KeyCode.ENTER)) {
             applyUpdates();
             return true;
@@ -334,6 +364,10 @@ class ReactorUpdatesTui {
         if (key.isCharIgnoreCase('4')) {
             filter = Filter.MAJOR;
             buildDisplayRows();
+            return true;
+        }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
         return false;
@@ -368,6 +402,10 @@ class ReactorUpdatesTui {
                     node.expanded = false;
                 }
             }
+            return true;
+        }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
         return false;
@@ -427,6 +465,79 @@ class ReactorUpdatesTui {
         for (var dep : reactorResult.ungroupedDependencies) {
             dep.selected = false;
         }
+    }
+
+    // -- Diff preview --
+
+    private void toggleDiffView() {
+        Map<String, Map.Entry<String, String>> fileDiffs = new LinkedHashMap<>();
+
+        // Build preview editors for all affected POMs
+        Map<Path, PomEditor> previewEditors = new LinkedHashMap<>();
+
+        for (var group : reactorResult.propertyGroups) {
+            if (group.selected && group.hasUpdate()) {
+                Path pomPath = group.origin.getFile().toPath();
+                PomEditor editor = previewEditors.computeIfAbsent(pomPath, p -> {
+                    try {
+                        return new PomEditor(Document.of(Files.readString(p)));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Cannot read POM: " + p, e);
+                    }
+                });
+                editor.properties().updateProperty(true, group.propertyName, group.newestVersion);
+            }
+        }
+
+        for (var dep : reactorResult.ungroupedDependencies) {
+            if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
+                var managedUsage = dep.usages.stream().filter(u -> u.managed).findFirst();
+                Path pomPath;
+                boolean managed;
+                if (managedUsage.isPresent()) {
+                    pomPath = managedUsage.orElseThrow().project.getFile().toPath();
+                    managed = true;
+                } else {
+                    pomPath = dep.usages.get(0).project.getFile().toPath();
+                    managed = false;
+                }
+                PomEditor editor = previewEditors.computeIfAbsent(pomPath, p -> {
+                    try {
+                        return new PomEditor(Document.of(Files.readString(p)));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Cannot read POM: " + p, e);
+                    }
+                });
+                var coords =
+                        eu.maveniverse.domtrip.maven.Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (managed) {
+                    editor.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    editor.dependencies().updateDependency(true, coords);
+                }
+            }
+        }
+
+        if (previewEditors.isEmpty()) {
+            status = "No updates selected";
+            return;
+        }
+
+        for (var entry : previewEditors.entrySet()) {
+            try {
+                String original = Files.readString(entry.getKey());
+                String modified = entry.getValue().toXml();
+                fileDiffs.put(entry.getKey().getFileName().toString(), Map.entry(original, modified));
+            } catch (Exception e) {
+                status = "Failed to compute diff: " + e.getMessage();
+                return;
+            }
+        }
+
+        long changes = diffOverlay.openMulti(fileDiffs);
+        status = changes == 0
+                ? "No changes to show"
+                : changes + " line(s) changed across " + fileDiffs.size() + " file(s)";
     }
 
     // -- Apply --
@@ -558,7 +669,12 @@ class ReactorUpdatesTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        if (view == View.DEPENDENCIES) {
+        lastContentHeight = zones.get(1).height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else if (view == View.DEPENDENCIES) {
             renderDepsTable(frame, zones.get(1));
         } else {
             renderModulesTable(frame, zones.get(1));
@@ -780,30 +896,92 @@ class ReactorUpdatesTui {
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        spans.add(Span.raw("Tab").bold());
-        spans.add(Span.raw(":View  "));
-        if (view == View.DEPENDENCIES) {
+        if (diffOverlay.isActive()) {
             spans.add(Span.raw("\u2191\u2193").bold());
-            spans.add(Span.raw(":Nav  "));
-            spans.add(Span.raw("Space").bold());
-            spans.add(Span.raw(":Toggle  "));
-            spans.add(Span.raw("a").bold());
-            spans.add(Span.raw(":All  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":None  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Apply  "));
-            spans.add(Span.raw("1-4").bold());
-            spans.add(Span.raw(":Filter  "));
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
-            spans.add(Span.raw(":Nav  "));
-            spans.add(Span.raw("\u2190\u2192").bold());
-            spans.add(Span.raw(":Expand  "));
+            spans.add(Span.raw("Tab").bold());
+            spans.add(Span.raw(":View  "));
+            if (view == View.DEPENDENCIES) {
+                spans.add(Span.raw("\u2191\u2193").bold());
+                spans.add(Span.raw(":Nav  "));
+                spans.add(Span.raw("Space").bold());
+                spans.add(Span.raw(":Toggle  "));
+                spans.add(Span.raw("a").bold());
+                spans.add(Span.raw(":All  "));
+                spans.add(Span.raw("n").bold());
+                spans.add(Span.raw(":None  "));
+                spans.add(Span.raw("d").bold());
+                spans.add(Span.raw(":Diff  "));
+                spans.add(Span.raw("Enter").bold());
+                spans.add(Span.raw(":Apply  "));
+                spans.add(Span.raw("1-4").bold());
+                spans.add(Span.raw(":Filter  "));
+                spans.add(Span.raw("h").bold());
+                spans.add(Span.raw(":Help  "));
+            } else {
+                spans.add(Span.raw("\u2191\u2193").bold());
+                spans.add(Span.raw(":Nav  "));
+                spans.add(Span.raw("\u2190\u2192").bold());
+                spans.add(Span.raw(":Expand  "));
+                spans.add(Span.raw("h").bold());
+                spans.add(Span.raw(":Help  "));
+            }
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
         }
-        spans.add(Span.raw("q").bold());
-        spans.add(Span.raw(":Quit"));
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(3));
+    }
+
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Reactor Dependency Updates",
+                        List.of(
+                                new HelpOverlay.Entry("", "Aggregates dependency updates across all reactor"),
+                                new HelpOverlay.Entry("", "modules. Dependencies managed via properties (e.g."),
+                                new HelpOverlay.Entry("", "${jackson.version}) are grouped together \u2014 selecting"),
+                                new HelpOverlay.Entry("", "the group header toggles all dependencies in it."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "The 'N mod' column shows how many reactor modules"),
+                                new HelpOverlay.Entry("", "use each dependency. 'M' indicates a managed"),
+                                new HelpOverlay.Entry("", "dependency (from dependencyManagement)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "When you apply updates, property-based deps edit"),
+                                new HelpOverlay.Entry("", "the <properties> in the POM that defines them;"),
+                                new HelpOverlay.Entry("", "direct deps edit the module's own POM."))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("green", "Patch update \u2014 bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update \u2014 new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update \u2014 breaking changes possible"),
+                                new HelpOverlay.Entry("cyan", "Property group header (${property.name})"))),
+                new HelpOverlay.Section(
+                        "Dependencies View",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
+                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
+                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
+                                new HelpOverlay.Entry("1-4", "Filter: all / patch / minor / major"),
+                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"))),
+                new HelpOverlay.Section(
+                        "Modules View",
+                        List.of(
+                                new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand module tree"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("Tab", "Switch Dependencies / Modules view"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit"))));
     }
 }

@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.inject.Inject;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.InputLocation;
 import org.apache.maven.model.InputLocationTracker;
 import org.apache.maven.model.InputSource;
@@ -55,11 +56,14 @@ import org.eclipse.aether.resolution.ArtifactRequest;
  *
  * @since 0.1.0
  */
-@Mojo(name = "pom", requiresProject = true, threadSafe = true)
+@Mojo(name = "pom", requiresProject = true, aggregator = true, threadSafe = true)
 public class PomMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    private MavenSession session;
 
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
@@ -67,45 +71,54 @@ public class PomMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repoSystem;
 
-    /**
-     * Displays the project's effective POM in an interactive terminal UI annotated with source origins.
-     *
-     * <p>The goal reads the project's POM and its resolved parents, constructs the effective model,
-     * maps XML elements to origin locations (including parent POMs when available), and launches the
-     * PomTui to present the annotated POM to the user.</p>
-     *
-     * @throws MojoExecutionException if the POM cannot be read, parsed, or displayed
-     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            File pomFile = project.getFile();
-            String rawPom = Files.readString(pomFile.toPath());
-            String[] rawLines = rawPom.split("\n");
-
-            // Build effective POM as XML string
-            StringWriter sw = new StringWriter();
-            new MavenXpp3Writer().write(sw, project.getModel());
-            String effectivePom = sw.toString();
-
-            // Read parent POM contents for origin snippets
-            Map<String, String[]> parentPomContents = readParentPomContents();
-
-            // Parse effective POM and attach origins by walking Model + XmlTree in parallel
-            XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
-            var originMap = new IdentityHashMap<Node, PomTui.OriginInfo>();
-            attachOrigins(originMap, effectiveTree.root, project.getModel(), rawLines, parentPomContents);
-
-            PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
-            tui.run();
+            List<MavenProject> projects = session.getProjects();
+            if (projects.size() > 1) {
+                executeReactor(projects);
+            } else {
+                executeForProject(project);
+            }
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to display POM: " + e.getMessage(), e);
         }
     }
 
-    private Map<String, String[]> readParentPomContents() {
+    private void executeReactor(List<MavenProject> projects) throws Exception {
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        MavenProject root = projects.get(0);
+        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+
+        while (true) {
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "pom").pick();
+            if (selected == null) break;
+            executeForProject(selected);
+        }
+    }
+
+    private void executeForProject(MavenProject proj) throws Exception {
+        File pomFile = proj.getFile();
+        String rawPom = Files.readString(pomFile.toPath());
+        String[] rawLines = rawPom.split("\n");
+
+        StringWriter sw = new StringWriter();
+        new MavenXpp3Writer().write(sw, proj.getModel());
+        String effectivePom = sw.toString();
+
+        Map<String, String[]> parentPomContents = readParentPomContents(proj);
+
+        XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
+        var originMap = new IdentityHashMap<Node, PomTui.OriginInfo>();
+        attachOrigins(originMap, effectiveTree.root, proj.getModel(), rawLines, parentPomContents);
+
+        PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
+        tui.run();
+    }
+
+    private Map<String, String[]> readParentPomContents(MavenProject proj) {
         Map<String, String[]> contents = new LinkedHashMap<>();
-        MavenProject current = project;
+        MavenProject current = proj;
         while (current.getParent() != null) {
             current = current.getParent();
             String modelId = current.getGroupId() + ":" + current.getArtifactId() + ":" + current.getVersion();

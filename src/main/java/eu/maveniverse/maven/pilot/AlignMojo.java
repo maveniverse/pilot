@@ -22,6 +22,8 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -43,26 +45,50 @@ import org.apache.maven.project.MavenProject;
  *
  * @since 0.2.0
  */
-@Mojo(name = "align", requiresProject = true, threadSafe = true)
+@Mojo(name = "align", requiresProject = true, aggregator = true, threadSafe = true)
 public class AlignMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
 
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    private MavenSession session;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            String pomPath = project.getFile().getAbsolutePath();
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-            var detectedOptions = editor.dependencies().detectConventions();
-
-            String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
-
-            AlignTui tui = new AlignTui(pomPath, gav, detectedOptions);
-            tui.run();
+            List<MavenProject> projects = session.getProjects();
+            if (projects.size() > 1) {
+                executeReactor(projects);
+            } else {
+                executeForProject(project);
+            }
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run alignment TUI: " + e.getMessage(), e);
         }
+    }
+
+    private void executeReactor(List<MavenProject> projects) throws Exception {
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        MavenProject root = projects.get(0);
+        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+
+        while (true) {
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "align").pick();
+            if (selected == null) break;
+            executeForProject(selected);
+        }
+    }
+
+    private void executeForProject(MavenProject proj) throws Exception {
+        String pomPath = proj.getFile().getAbsolutePath();
+        String pomContent = Files.readString(Path.of(pomPath));
+        PomEditor editor = new PomEditor(Document.of(pomContent));
+        var detectedOptions = editor.dependencies().detectConventions();
+
+        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
+
+        AlignTui tui = new AlignTui(pomPath, gav, detectedOptions);
+        tui.run();
     }
 }

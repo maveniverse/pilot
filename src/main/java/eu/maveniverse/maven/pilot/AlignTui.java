@@ -75,6 +75,7 @@ class AlignTui {
 
     // Preview state
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
     private String alignedPomContent;
 
     private TuiRunner runner;
@@ -107,6 +108,15 @@ class AlignTui {
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
+        }
+
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
         }
 
         if (key.isCtrlC() || key.isCharIgnoreCase('q')) {
@@ -151,6 +161,11 @@ class AlignTui {
 
         if (key.isCharIgnoreCase('w')) {
             applyAlignment();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
 
@@ -254,6 +269,36 @@ class AlignTui {
         }
     }
 
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "BOM Alignment",
+                        List.of(
+                                new HelpOverlay.Entry("", "Restructures dependency declarations to follow a"),
+                                new HelpOverlay.Entry("", "consistent convention. Configure three options:"),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Version Style: how versions are expressed \u2014 inline"),
+                                new HelpOverlay.Entry("", "in <version> tags, via <properties>, or managed"),
+                                new HelpOverlay.Entry("", "through <dependencyManagement>."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Version Source: where version values come from \u2014"),
+                                new HelpOverlay.Entry("", "keep current versions, import from a BOM, etc."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Property Naming: convention for property names"),
+                                new HelpOverlay.Entry("", "(e.g. groupId.artifactId.version or artifact.version)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Preview the diff before applying to verify changes."))),
+                new HelpOverlay.Section(
+                        "Keys",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move between options"),
+                                new HelpOverlay.Entry("\u2190 / \u2192 / Enter", "Cycle through option values"),
+                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
+                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit"))));
+    }
+
     private void writeAlignedPom() {
         try {
             String currentPom = Files.readString(Path.of(pomPath));
@@ -281,7 +326,9 @@ class AlignTui {
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
 
-        if (phase == Phase.PREVIEW && diffOverlay.isActive()) {
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (phase == Phase.PREVIEW && diffOverlay.isActive()) {
             diffOverlay.render(frame, zones.get(1), " POM Changes Preview ");
         } else {
             renderConventionTable(frame, zones.get(1));
@@ -387,6 +434,8 @@ class AlignTui {
             spans.add(Span.raw(":Preview  "));
             spans.add(Span.raw("w").bold());
             spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }

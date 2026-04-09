@@ -18,7 +18,9 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import java.util.List;
 import javax.inject.Inject;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -40,11 +42,14 @@ import org.eclipse.aether.collection.CollectResult;
  *
  * @since 0.1.0
  */
-@Mojo(name = "tree", requiresProject = true, threadSafe = true)
+@Mojo(name = "tree", requiresProject = true, aggregator = true, threadSafe = true)
 public class TreeMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    private MavenSession session;
 
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
@@ -58,22 +63,36 @@ public class TreeMojo extends AbstractMojo {
     @Parameter(property = "scope", defaultValue = "compile")
     private String scope;
 
-    /**
-     * Builds the project's dependency tree model and launches the interactive tree TUI for the current Maven project.
-     *
-     * @throws MojoExecutionException if dependency collection or TUI execution fails
-     */
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
-            DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
-
-            TreeTui tui = new TreeTui(
-                    model, project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion());
-            tui.run();
+            List<MavenProject> projects = session.getProjects();
+            if (projects.size() > 1) {
+                executeReactor(projects);
+            } else {
+                executeForProject(project);
+            }
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to display dependency tree: " + e.getMessage(), e);
         }
+    }
+
+    private void executeReactor(List<MavenProject> projects) throws Exception {
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        MavenProject root = projects.get(0);
+        String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
+
+        while (true) {
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "tree").pick();
+            if (selected == null) break;
+            executeForProject(selected);
+        }
+    }
+
+    private void executeForProject(MavenProject proj) throws Exception {
+        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        DependencyTreeModel model = DependencyTreeModel.fromDependencyNode(result.getRoot(), scope);
+        TreeTui tui = new TreeTui(model, proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion());
+        tui.run();
     }
 }

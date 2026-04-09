@@ -18,8 +18,11 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
@@ -35,6 +38,19 @@ final class MojoHelper {
      * Private constructor to prevent instantiation of this utility class.
      */
     private MojoHelper() {}
+
+    /**
+     * Create an ExecutorService using virtual threads (Java 21+) if available,
+     * falling back to a fixed thread pool sized at 2x available processors.
+     */
+    static ExecutorService newHttpPool() {
+        try {
+            Method m = Executors.class.getMethod("newVirtualThreadPerTaskExecutor");
+            return (ExecutorService) m.invoke(null);
+        } catch (Exception e) {
+            return Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
+        }
+    }
 
     /**
      * Convert a Maven model Dependency into an Aether Dependency.

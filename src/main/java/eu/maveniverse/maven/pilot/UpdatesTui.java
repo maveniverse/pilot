@@ -49,7 +49,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -113,7 +112,7 @@ class UpdatesTui {
     private final String projectGav;
     private final VersionResolver versionResolver;
     private final TableState tableState = new TableState();
-    private final ExecutorService httpPool = Executors.newFixedThreadPool(5);
+    private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
 
     private Filter filter = Filter.ALL;
@@ -126,6 +125,7 @@ class UpdatesTui {
     private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
 
     private TuiRunner runner;
@@ -326,6 +326,16 @@ class UpdatesTui {
             return false;
         }
 
+        // Help overlay mode
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                requestQuit();
+                return true;
+            }
+            return false;
+        }
+
         if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
             requestQuit();
             return true;
@@ -385,6 +395,11 @@ class UpdatesTui {
 
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelp());
             return true;
         }
 
@@ -548,7 +563,9 @@ class UpdatesTui {
 
         renderHeader(frame, zones.get(0));
         lastContentHeight = zones.get(1).height();
-        if (diffOverlay.isActive()) {
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else {
             renderUpdatesTable(frame, zones.get(1));
@@ -687,6 +704,8 @@ class UpdatesTui {
             spans.add(Span.raw(":Filter  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("h").bold());
+            spans.add(Span.raw(":Help  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         }
@@ -733,6 +752,53 @@ class UpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
+    private List<HelpOverlay.Section> buildHelp() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Updates",
+                        List.of(
+                                new HelpOverlay.Entry("", "Checks Maven Central for newer versions of each"),
+                                new HelpOverlay.Entry("", "declared dependency. The table shows the current"),
+                                new HelpOverlay.Entry("", "version, the latest available version, and the"),
+                                new HelpOverlay.Entry("", "update type (patch, minor, or major)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Select the updates you want with Space, then press"),
+                                new HelpOverlay.Entry("", "Enter to write changes to the POM. Use 'd' to"),
+                                new HelpOverlay.Entry("", "preview the exact POM diff before applying."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry("[ ] / [x]", "Selection checkbox"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("current", "Version currently in the POM"),
+                                new HelpOverlay.Entry("latest", "Newest version on Maven Central"),
+                                new HelpOverlay.Entry("type", "patch / minor / major"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("green", "Patch update \u2014 bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update \u2014 new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update \u2014 breaking changes possible"),
+                                new HelpOverlay.Entry("cyan", "Artifact name/info in footer"))),
+                new HelpOverlay.Section(
+                        "Selection & Filtering",
+                        List.of(
+                                new HelpOverlay.Entry("Space", "Toggle selection of current dependency"),
+                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
+                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM"),
+                                new HelpOverlay.Entry("1", "Show all updates"),
+                                new HelpOverlay.Entry("2", "Patch only (e.g. 1.0.0 \u2192 1.0.1)"),
+                                new HelpOverlay.Entry("3", "Minor only (e.g. 1.0.0 \u2192 1.1.0)"),
+                                new HelpOverlay.Entry("4", "Major only (e.g. 1.0.0 \u2192 2.0.0)"))),
+                new HelpOverlay.Section(
+                        "General",
+                        List.of(
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                                new HelpOverlay.Entry("h", "Toggle this help screen"),
+                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    }
+
     /**
      * Fetches and caches POM metadata for the currently selected dependency if it is not already cached.
      *
@@ -747,7 +813,7 @@ class UpdatesTui {
         var dep = displayDeps.get(sel);
         String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
         if (pomInfoCache.containsKey(pomKey)) return;
-        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null));
+        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null, null));
 
         CompletableFuture.supplyAsync(
                         () -> SearchTui.fetchPomFromCentral(dep.groupId, dep.artifactId, dep.version), httpPool)
