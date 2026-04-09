@@ -39,8 +39,11 @@ import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
 import eu.maveniverse.domtrip.maven.PomEditor;
+import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -508,20 +511,50 @@ class AlignTui {
 
     void applyCrossPomAlignment() {
         try {
-            String childContent = Files.readString(Path.of(pomPath));
-            String parentContent = Files.readString(Path.of(parentInfo.pomPath()));
+            Path parentPath = Path.of(parentInfo.pomPath());
+            Path childPath = Path.of(pomPath);
+
+            String childContent = Files.readString(childPath);
+            String parentContent = Files.readString(parentPath);
 
             PomEditor childEditor = new PomEditor(Document.of(childContent));
             PomEditor parentEditor = new PomEditor(Document.of(parentContent));
 
             int count = childEditor.dependencies().alignAllToParent(parentEditor, buildSelectedOptions());
 
-            // Writes are not atomic across the two files; users can roll back via git if interrupted
-            Files.writeString(Path.of(parentInfo.pomPath()), parentEditor.toXml());
-            Files.writeString(Path.of(pomPath), childEditor.toXml());
+            // Write to temp files first, then atomically replace originals
+            atomicWritePair(parentPath, parentEditor.toXml(), childPath, childEditor.toXml());
             status = "Aligned " + count + " dependency(ies) across 2 POMs";
         } catch (Exception e) {
             status = "Failed to apply alignment: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Writes two POM files atomically: first to temp files, then moved to replace originals.
+     * Falls back to non-atomic move if the filesystem does not support ATOMIC_MOVE.
+     */
+    static void atomicWritePair(Path path1, String content1, Path path2, String content2) throws IOException {
+        Path tmp1 = Files.createTempFile(path1.getParent(), ".pom", ".tmp");
+        Path tmp2 = Files.createTempFile(path2.getParent(), ".pom", ".tmp");
+        try {
+            Files.writeString(tmp1, content1);
+            Files.writeString(tmp2, content2);
+            atomicMove(tmp1, path1);
+            tmp1 = null; // moved successfully
+            atomicMove(tmp2, path2);
+            tmp2 = null; // moved successfully
+        } finally {
+            if (tmp1 != null) Files.deleteIfExists(tmp1);
+            if (tmp2 != null) Files.deleteIfExists(tmp2);
+        }
+    }
+
+    private static void atomicMove(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
