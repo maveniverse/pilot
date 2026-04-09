@@ -78,6 +78,7 @@ class AlignTui {
     private static final String PROPERTIES_ELEMENT = "properties";
 
     private final String pomPath;
+    private final List<String> additionalPomPaths; // batch mode: additional POMs to align
     private final String projectGav;
     private final AlignOptions detectedOptions;
     private final ParentPomInfo parentInfo;
@@ -100,7 +101,17 @@ class AlignTui {
     private TuiRunner runner;
 
     AlignTui(String pomPath, String projectGav, AlignOptions detectedOptions, ParentPomInfo parentInfo) {
+        this(pomPath, List.of(), projectGav, detectedOptions, parentInfo);
+    }
+
+    AlignTui(
+            String pomPath,
+            List<String> additionalPomPaths,
+            String projectGav,
+            AlignOptions detectedOptions,
+            ParentPomInfo parentInfo) {
         this.pomPath = pomPath;
+        this.additionalPomPaths = additionalPomPaths;
         this.projectGav = projectGav;
         this.parentInfo = parentInfo;
 
@@ -118,9 +129,13 @@ class AlignTui {
         this.selectedStyle = this.detectedOptions.versionStyle();
         this.selectedSource = this.detectedOptions.versionSource();
         this.selectedNaming = this.detectedOptions.namingConvention();
-        this.status = parentInfo != null
-                ? "Reactor-aware mode: parent dependency management detected"
-                : "Detected conventions from POM";
+        if (!additionalPomPaths.isEmpty()) {
+            this.status = "Batch mode: aligning " + (1 + additionalPomPaths.size()) + " modules";
+        } else if (parentInfo != null) {
+            this.status = "Reactor-aware mode: parent dependency management detected";
+        } else {
+            this.status = "Detected conventions from POM";
+        }
         tableState.select(0);
     }
 
@@ -276,7 +291,15 @@ class AlignTui {
 
     // -- Actions --
 
+    private boolean isBatchMode() {
+        return !additionalPomPaths.isEmpty();
+    }
+
     private void showPreview() {
+        if (isBatchMode()) {
+            showBatchPreview();
+            return;
+        }
         if (isCrossPomMode()) {
             showCrossPomPreview();
             return;
@@ -290,7 +313,7 @@ class AlignTui {
             long changes = diffOverlay.open(currentPom, alignedPomContent);
 
             if (changes == 0) {
-                status = "No changes needed \u2014 POM already aligned";
+                status = count + " dependency(ies) processed \u2014 no POM changes";
                 return;
             }
 
@@ -302,37 +325,136 @@ class AlignTui {
     }
 
     private void applyAlignment() {
+        if (isBatchMode()) {
+            applyBatchAlignment();
+            return;
+        }
         if (isCrossPomMode()) {
             applyCrossPomAlignment();
             return;
         }
         try {
+            AlignOptions opts = buildSelectedOptions();
             String currentPom = Files.readString(Path.of(pomPath));
             PomEditor editor = new PomEditor(Document.of(currentPom));
-            int count = editor.dependencies().alignAllDependencies(buildSelectedOptions());
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Aligned " + count + " dependency(ies) in POM";
+            int count = editor.dependencies().alignAllDependencies(opts);
+            String aligned = editor.toXml();
+
+            if (currentPom.equals(aligned)) {
+                status = count + " dependency(ies) processed \u2014 no POM changes";
+            } else {
+                Files.writeString(Path.of(pomPath), aligned);
+                status = "Aligned POM";
+            }
         } catch (Exception e) {
             status = "Failed to apply alignment: " + e.getMessage();
         }
     }
 
     private void writeAlignedPom() {
-        if (isCrossPomMode() && alignedPomContents != null) {
+        if ((isBatchMode() || isCrossPomMode()) && alignedPomContents != null) {
             writeCrossPomChanges();
             return;
         }
         try {
+            AlignOptions opts = buildSelectedOptions();
             String currentPom = Files.readString(Path.of(pomPath));
             PomEditor editor = new PomEditor(Document.of(currentPom));
-            editor.dependencies().alignAllDependencies(buildSelectedOptions());
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            status = "Changes written to POM";
+            editor.dependencies().alignAllDependencies(opts);
+            String aligned = editor.toXml();
+
+            if (currentPom.equals(aligned)) {
+                status = "No POM changes to write";
+            } else {
+                Files.writeString(Path.of(pomPath), aligned);
+                status = "Changes written to POM";
+            }
             phase = Phase.SELECT;
             diffOverlay.close();
             alignedPomContent = null;
         } catch (Exception e) {
             status = "Failed to write POM: " + e.getMessage();
+        }
+    }
+
+    // -- Batch alignment (parent selected, children as additional POMs) --
+
+    void showBatchPreview() {
+        try {
+            String parentContent = Files.readString(Path.of(pomPath));
+            PomEditor parentEditor = new PomEditor(Document.of(parentContent));
+            int totalCount = 0;
+
+            // Single pass: align all children against parent, collect diffs and results
+            Map<String, Map.Entry<String, String>> fileDiffs = new LinkedHashMap<>();
+            alignedPomContents = new LinkedHashMap<>();
+
+            for (String childPath : additionalPomPaths) {
+                String childContent = Files.readString(Path.of(childPath));
+                PomEditor childEditor = new PomEditor(Document.of(childContent));
+                totalCount += alignCrossPom(childEditor, parentEditor);
+                String childModified = childEditor.toXml();
+                if (!childContent.equals(childModified)) {
+                    String label = Path.of(childPath).getParent().getFileName() + "/pom.xml";
+                    fileDiffs.put(label, Map.entry(childContent, childModified));
+                    alignedPomContents.put(Path.of(childPath), childModified);
+                }
+            }
+
+            // Parent diff (accumulated dependency management entries from all children)
+            String parentModified = parentEditor.toXml();
+            if (!parentContent.equals(parentModified)) {
+                String label = Path.of(pomPath).getParent().getFileName() + "/pom.xml";
+                fileDiffs.put(label, Map.entry(parentContent, parentModified));
+                alignedPomContents.put(Path.of(pomPath), parentModified);
+            }
+
+            if (fileDiffs.isEmpty()) {
+                status = totalCount + " dependency(ies) processed \u2014 no POM changes";
+                alignedPomContents = null;
+                return;
+            }
+
+            long changes = diffOverlay.openMulti(fileDiffs);
+            phase = Phase.PREVIEW;
+            status = totalCount + " dependency(ies) aligned across " + fileDiffs.size() + " file(s), " + changes
+                    + " line(s) changed";
+        } catch (Exception e) {
+            status = "Failed to compute preview: " + e.getMessage();
+        }
+    }
+
+    void applyBatchAlignment() {
+        try {
+            String parentContent = Files.readString(Path.of(pomPath));
+            PomEditor parentEditor = new PomEditor(Document.of(parentContent));
+            int totalCount = 0;
+            int filesChanged = 0;
+
+            for (String childPath : additionalPomPaths) {
+                String childContent = Files.readString(Path.of(childPath));
+                PomEditor childEditor = new PomEditor(Document.of(childContent));
+                totalCount += alignCrossPom(childEditor, parentEditor);
+                String childModified = childEditor.toXml();
+                if (!childContent.equals(childModified)) {
+                    Files.writeString(Path.of(childPath), childModified);
+                    filesChanged++;
+                }
+            }
+
+            String parentModified = parentEditor.toXml();
+            if (!parentContent.equals(parentModified)) {
+                Files.writeString(Path.of(pomPath), parentModified);
+                filesChanged++;
+            }
+
+            if (filesChanged == 0) {
+                status = totalCount + " dependency(ies) processed \u2014 no POM changes";
+            } else {
+                status = "Aligned " + totalCount + " dependency(ies) across " + filesChanged + " POM(s)";
+            }
+        } catch (Exception e) {
+            status = "Failed to apply alignment: " + e.getMessage();
         }
     }
 

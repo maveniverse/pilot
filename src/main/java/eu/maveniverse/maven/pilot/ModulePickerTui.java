@@ -50,7 +50,11 @@ import org.apache.maven.project.MavenProject;
  */
 class ModulePickerTui {
 
-    record PickResult(List<MavenProject> projects) {}
+    record PickResult(List<MavenProject> projects, String directTool) {
+        PickResult(List<MavenProject> projects) {
+            this(projects, null);
+        }
+    }
 
     @FunctionalInterface
     interface ProjectAction {
@@ -86,6 +90,7 @@ class ModulePickerTui {
     private final ReactorModel reactorModel;
     private final String reactorGav;
     private final String goalName;
+    private final boolean searchEnabled;
     private final TableState tableState = new TableState();
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private PickResult pickResult;
@@ -95,9 +100,14 @@ class ModulePickerTui {
     }
 
     ModulePickerTui(ReactorModel reactorModel, String reactorGav, String goalName) {
+        this(reactorModel, reactorGav, goalName, false);
+    }
+
+    ModulePickerTui(ReactorModel reactorModel, String reactorGav, String goalName, boolean searchEnabled) {
         this.reactorModel = reactorModel;
         this.reactorGav = reactorGav;
         this.goalName = goalName;
+        this.searchEnabled = searchEnabled;
         tableState.select(0);
     }
 
@@ -222,19 +232,9 @@ class ModulePickerTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('r')) {
-            List<MavenProject> all =
-                    reactorModel.allModules.stream().map(n -> n.project).toList();
-            pickResult = new PickResult(all);
+        if (searchEnabled && key.isCharIgnoreCase('s')) {
+            pickResult = new PickResult(List.of(), "search");
             runner.quit();
-            return true;
-        }
-        if (key.isCharIgnoreCase('t')) {
-            Integer sel = tableState.selected();
-            if (sel != null && sel >= 0 && sel < visible.size()) {
-                pickResult = new PickResult(reactorModel.collectSubtree(visible.get(sel)));
-                runner.quit();
-            }
             return true;
         }
 
@@ -355,18 +355,22 @@ class ModulePickerTui {
                                 new HelpOverlay.Entry("", ""),
                                 new HelpOverlay.Entry("", "The two columns show the module directory name"),
                                 new HelpOverlay.Entry("", "and its Maven coordinates (groupId:artifactId)."))),
-                new HelpOverlay.Section(
-                        "Keys",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
-                                new HelpOverlay.Entry("Space", "Expand node or move down"),
-                                new HelpOverlay.Entry("e / w", "Expand all / collapse all"),
-                                new HelpOverlay.Entry("Enter", "Select the highlighted module"),
-                                new HelpOverlay.Entry("r", "Run on all modules"),
-                                new HelpOverlay.Entry("t", "Run on subtree of selected node"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit without selecting"))));
+                new HelpOverlay.Section("Keys", buildKeyEntries()));
+    }
+
+    private List<HelpOverlay.Entry> buildKeyEntries() {
+        List<HelpOverlay.Entry> entries = new ArrayList<>();
+        entries.add(new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"));
+        entries.add(new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"));
+        entries.add(new HelpOverlay.Entry("Space", "Expand node or move down"));
+        entries.add(new HelpOverlay.Entry("e / w", "Expand all / collapse all"));
+        entries.add(new HelpOverlay.Entry("Enter", "Select the highlighted module"));
+        if (searchEnabled) {
+            entries.add(new HelpOverlay.Entry("s", "Search Maven Central"));
+        }
+        entries.add(new HelpOverlay.Entry("h", "Toggle this help screen"));
+        entries.add(new HelpOverlay.Entry("q / Esc", "Quit without selecting"));
+        return entries;
     }
 
     private void renderInfoBar(Frame frame, Rect area) {
@@ -390,10 +394,10 @@ class ModulePickerTui {
         spans.add(Span.raw(":Collapse All  "));
         spans.add(Span.raw("Enter").bold());
         spans.add(Span.raw(":Select  "));
-        spans.add(Span.raw("r").bold());
-        spans.add(Span.raw(":Run All  "));
-        spans.add(Span.raw("t").bold());
-        spans.add(Span.raw(":Subtree  "));
+        if (searchEnabled) {
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Search  "));
+        }
         spans.add(Span.raw("h").bold());
         spans.add(Span.raw(":Help  "));
         spans.add(Span.raw("q").bold());

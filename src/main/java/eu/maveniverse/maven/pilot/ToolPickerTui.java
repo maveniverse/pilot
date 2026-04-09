@@ -48,13 +48,13 @@ import java.util.List;
  */
 class ToolPickerTui {
 
-    record Tool(String name, String description, boolean reactorWide) {}
+    record Tool(String name, String description, boolean aggregatable) {}
 
-    private static final List<Tool> TOOLS = List.of(
+    private static final List<Tool> ALL_TOOLS = List.of(
             new Tool("tree", "Browse dependency tree", false),
             new Tool("dependencies", "Analyze declared vs used dependencies", false),
             new Tool("pom", "Browse effective POM", false),
-            new Tool("align", "Align dependency conventions", false),
+            new Tool("align", "Align dependency conventions", true),
             new Tool("updates", "Check for dependency updates", true),
             new Tool("conflicts", "Detect version conflicts", true),
             new Tool("audit", "Security audit of dependencies", true),
@@ -62,13 +62,23 @@ class ToolPickerTui {
 
     private final String contextLabel;
     private final boolean isReactor;
+    private final boolean isParentSelected;
+    private final List<Tool> tools;
     private final TableState tableState = new TableState();
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private String selectedTool;
 
     ToolPickerTui(String contextLabel, boolean isReactor) {
+        this(contextLabel, isReactor, false);
+    }
+
+    ToolPickerTui(String contextLabel, boolean isReactor, boolean isParentSelected) {
         this.contextLabel = contextLabel;
         this.isReactor = isReactor;
+        this.isParentSelected = isParentSelected;
+        this.tools = isParentSelected
+                ? ALL_TOOLS.stream().filter(t -> !"dependencies".equals(t.name)).toList()
+                : ALL_TOOLS;
         tableState.select(0);
     }
 
@@ -110,14 +120,14 @@ class ToolPickerTui {
             return true;
         }
         if (key.isDown()) {
-            tableState.selectNext(TOOLS.size());
+            tableState.selectNext(tools.size());
             return true;
         }
 
         if (key.isKey(KeyCode.ENTER)) {
             Integer sel = tableState.selected();
-            if (sel != null && sel >= 0 && sel < TOOLS.size()) {
-                selectedTool = TOOLS.get(sel).name;
+            if (sel != null && sel >= 0 && sel < tools.size()) {
+                selectedTool = tools.get(sel).name;
                 runner.quit();
             }
             return true;
@@ -162,7 +172,7 @@ class ToolPickerTui {
 
     private void renderTools(Frame frame, Rect area) {
         Block block = Block.builder()
-                .title(" Tools (" + TOOLS.size() + ") ")
+                .title(" Tools (" + tools.size() + ") ")
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(Style.create().fg(Color.DARK_GRAY))
                 .build();
@@ -171,8 +181,15 @@ class ToolPickerTui {
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
-        for (Tool tool : TOOLS) {
-            String scope = isReactor ? (tool.reactorWide ? "reactor" : "module") : "";
+        for (Tool tool : tools) {
+            String scope = "";
+            if (isReactor && !"search".equals(tool.name)) {
+                if (tool.aggregatable && isParentSelected) {
+                    scope = "subtree";
+                } else {
+                    scope = "module";
+                }
+            }
             rows.add(Row.from(tool.name, tool.description, scope));
         }
 

@@ -62,6 +62,7 @@ class AuditTui {
         final String artifactId;
         final String version;
         final String scope;
+        final List<String> modules = new ArrayList<>();
         String license;
         String licenseUrl;
         List<OsvClient.Vulnerability> vulnerabilities;
@@ -551,7 +552,7 @@ class AuditTui {
     private void renderLicenses(Frame frame, Rect area) {
         // Split into table + separator + detail pane
         var zones = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(5))
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
 
         Block block = Block.builder()
@@ -565,7 +566,9 @@ class AuditTui {
 
         List<Row> rows = new ArrayList<>();
         for (var entry : entries) {
-            String license = entry.license != null ? entry.license : (entry.licenseLoaded ? "-" : "\u2026");
+            String license = entry.license != null
+                    ? normalizeLicense(entry.license, entry.licenseUrl)
+                    : (entry.licenseLoaded ? "-" : "\u2026");
             Style style = getLicenseStyle(entry.license);
             rows.add(Row.from(entry.ga(), entry.version, license, entry.scope).style(style));
         }
@@ -631,14 +634,25 @@ class AuditTui {
         List<Line> lines = new ArrayList<>();
         lines.add(Line.from(spans));
         lines.add(Line.from(licSpans));
-        Line pathLine = buildPathLine(entry);
-        if (pathLine != null) lines.add(pathLine);
+        Line modulesLine = buildModulesLine(entry);
+        if (modulesLine != null) lines.add(modulesLine);
 
         Paragraph detail = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(lines))
                 .block(block)
                 .build();
         frame.renderWidget(detail, area);
+    }
+
+    private Line buildModulesLine(AuditEntry entry) {
+        if (entry.modules.isEmpty()) return null;
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw("Modules: ").fg(Color.DARK_GRAY));
+        for (int i = 0; i < entry.modules.size(); i++) {
+            if (i > 0) spans.add(Span.raw(", ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw(entry.modules.get(i)).fg(Color.MAGENTA));
+        }
+        return Line.from(spans);
     }
 
     private Line buildPathLine(AuditEntry entry) {
@@ -699,7 +713,7 @@ class AuditTui {
 
         // Split into table + separator + detail pane
         var zones = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(4))
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
 
         Block block = Block.builder()
@@ -795,8 +809,8 @@ class AuditTui {
                 }
                 lines.add(Line.from(licSpans));
             }
-            Line pathLine = buildPathLine(row.entry);
-            if (pathLine != null) lines.add(pathLine);
+            Line modulesLine = buildModulesLine(row.entry);
+            if (modulesLine != null) lines.add(modulesLine);
         }
 
         Paragraph detail = Paragraph.builder()
@@ -824,7 +838,7 @@ class AuditTui {
 
         // Split into table + separator + detail pane
         var zones = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(7))
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(8))
                 .split(area);
 
         // -- Vulnerability table --
@@ -907,8 +921,8 @@ class AuditTui {
             lines.add(Line.from(Span.raw("Published: ").fg(Color.DARK_GRAY), Span.raw(pub)));
         }
         lines.add(Line.from(Span.raw(vuln.summary)));
-        Line pathLine = buildPathLine(vr.entry);
-        if (pathLine != null) lines.add(pathLine);
+        Line modulesLine = buildModulesLine(vr.entry);
+        if (modulesLine != null) lines.add(modulesLine);
 
         Paragraph detail = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(lines))

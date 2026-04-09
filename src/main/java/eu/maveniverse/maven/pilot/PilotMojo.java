@@ -121,24 +121,38 @@ public class PilotMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = gavOf(root);
 
+        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "pilot", true);
         while (true) {
-            ModulePickerTui.PickResult result = new ModulePickerTui(reactorModel, reactorGav, "pilot").pick();
+            ModulePickerTui.PickResult result = picker.pick();
             if (result == null) break;
-            List<MavenProject> selected = result.projects();
-            String tool = new ToolPickerTui(gavOf(selected.get(0)), true).pick();
+            if (result.directTool() != null) {
+                runTool(result.directTool(), root, projects);
+                continue;
+            }
+            MavenProject selected = result.projects().get(0);
+            ReactorModel.ModuleNode node = findNode(reactorModel, selected);
+            boolean isParent = node != null && node.hasChildren();
+            String tool = new ToolPickerTui(gavOf(selected), true, isParent).pick();
             if (tool == null) continue;
-            switch (tool) {
-                case "updates", "conflicts", "audit" ->
-                    // Aggregate tools: call once with the selected subset
-                    runTool(tool, selected.get(0), selected);
-                default -> {
-                    // Per-project tools: iterate over each selected project
-                    for (MavenProject p : selected) {
-                        runTool(tool, p, selected);
-                    }
-                }
+
+            // For parent modules, auto-scope aggregate tools to the subtree
+            List<MavenProject> scope;
+            if (isParent) {
+                scope = reactorModel.collectSubtree(node);
+            } else {
+                scope = List.of(selected);
+            }
+            runTool(tool, selected, scope);
+        }
+    }
+
+    private static ReactorModel.ModuleNode findNode(ReactorModel model, MavenProject project) {
+        for (ReactorModel.ModuleNode node : model.allModules) {
+            if (node.project == project) {
+                return node;
             }
         }
+        return null;
     }
 
     private void runTool(String tool, MavenProject proj, List<MavenProject> projects) throws Exception {
@@ -146,7 +160,7 @@ public class PilotMojo extends AbstractMojo {
             case "tree" -> runTree(proj);
             case "dependencies" -> runDependencies(proj);
             case "pom" -> runPom(proj);
-            case "align" -> runAlign(proj);
+            case "align" -> runAlign(proj, projects);
             case "updates" -> runUpdates(proj, projects);
             case "conflicts" -> runConflicts(proj, projects);
             case "audit" -> runAudit(proj, projects);
@@ -359,14 +373,63 @@ public class PilotMojo extends AbstractMojo {
 
     // ── align ───────────────────────────────────────────────────────────────
 
-    private void runAlign(MavenProject proj) throws Exception {
-        String pomPath = proj.getFile().getAbsolutePath();
-        String pomContent = Files.readString(Path.of(pomPath));
-        PomEditor editor = new PomEditor(Document.of(pomContent));
-        var detectedOptions = editor.dependencies().detectConventions();
+    private void runAlign(MavenProject proj, List<MavenProject> projects) throws Exception {
+        if (projects.size() > 1) {
+            // Batch mode: find the actual management POM from a child's perspective
+            MavenProject managementTarget = findManagementPom(projects);
+            String mgmtPomPath = managementTarget.getFile().getAbsolutePath();
+            String mgmtContent = Files.readString(Path.of(mgmtPomPath));
+            PomEditor mgmtEditor = new PomEditor(Document.of(mgmtContent));
+            var detectedOptions = mgmtEditor.dependencies().detectConventions();
 
-        AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
-        new AlignTui(pomPath, gavOf(proj), detectedOptions, parentInfo).run();
+            // Children = all modules except the management POM
+            List<String> childPomPaths = projects.stream()
+                    .filter(p -> p != managementTarget)
+                    .map(p -> p.getFile().getAbsolutePath())
+                    .toList();
+
+            new AlignTui(mgmtPomPath, childPomPaths, gavOf(managementTarget), detectedOptions, null).run();
+        } else {
+            String pomPath = proj.getFile().getAbsolutePath();
+            String pomContent = Files.readString(Path.of(pomPath));
+            PomEditor editor = new PomEditor(Document.of(pomContent));
+            var detectedOptions = editor.dependencies().detectConventions();
+
+            AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
+            new AlignTui(pomPath, gavOf(proj), detectedOptions, parentInfo).run();
+        }
+    }
+
+    /**
+     * Find the POM in the project list that holds (or should hold) dependency management.
+     * Walks the parent chain of the first leaf module to find the nearest ancestor with
+     * {@code <dependencyManagement>}. Falls back to the first project.
+     */
+    private MavenProject findManagementPom(List<MavenProject> projects) {
+        Set<String> projectPaths = new HashSet<>();
+        for (MavenProject p : projects) {
+            projectPaths.add(p.getFile().getAbsolutePath());
+        }
+
+        // Find a child module (non-root) to walk up from
+        MavenProject child = projects.size() > 1 ? projects.get(1) : projects.get(0);
+        MavenProject current = child.getParent();
+
+        while (current != null && current.getFile() != null) {
+            if (!projectPaths.contains(current.getFile().getAbsolutePath())) {
+                break;
+            }
+            var mgmt = current.getOriginalModel().getDependencyManagement();
+            if (mgmt != null
+                    && mgmt.getDependencies() != null
+                    && !mgmt.getDependencies().isEmpty()) {
+                return current;
+            }
+            current = current.getParent();
+        }
+
+        // Fallback: use the first project (root)
+        return projects.get(0);
     }
 
     // ── updates ─────────────────────────────────────────────────────────────
@@ -493,41 +556,46 @@ public class PilotMojo extends AbstractMojo {
                     repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
             DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
 
-            List<AuditTui.AuditEntry> entries = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
+            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
             for (MavenProject p : projects) {
                 CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(p));
-                collectAuditNode(result.getRoot(), entries, seen, true);
+                collectAuditNode(result.getRoot(), entryMap, p.getArtifactId(), true);
             }
+            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
             String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
             String pomPath = root.getFile().getAbsolutePath();
             new AuditTui(entries, gav, treeModel, pomPath).run();
         } else {
             CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
             DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
-            List<AuditTui.AuditEntry> entries = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
-            collectAuditNode(result.getRoot(), entries, seen, true);
+            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
+            collectAuditNode(result.getRoot(), entryMap, null, true);
+            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
             String pomPath = proj.getFile().getAbsolutePath();
             new AuditTui(entries, gavOf(proj), treeModel, pomPath).run();
         }
     }
 
     private void collectAuditNode(
-            DependencyNode node, List<AuditTui.AuditEntry> entries, Set<String> seen, boolean isRoot) {
+            DependencyNode node, Map<String, AuditTui.AuditEntry> entryMap, String moduleName, boolean isRoot) {
         if (!isRoot && node.getDependency() != null) {
             var art = node.getDependency().getArtifact();
             String ga = art.getGroupId() + ":" + art.getArtifactId();
-            if (seen.add(ga)) {
-                entries.add(new AuditTui.AuditEntry(
+            AuditTui.AuditEntry entry = entryMap.get(ga);
+            if (entry == null) {
+                entry = new AuditTui.AuditEntry(
                         art.getGroupId(),
                         art.getArtifactId(),
                         art.getVersion(),
-                        node.getDependency().getScope()));
+                        node.getDependency().getScope());
+                entryMap.put(ga, entry);
+            }
+            if (moduleName != null && !entry.modules.contains(moduleName)) {
+                entry.modules.add(moduleName);
             }
         }
         for (DependencyNode child : node.getChildren()) {
-            collectAuditNode(child, entries, seen, false);
+            collectAuditNode(child, entryMap, moduleName, false);
         }
     }
 

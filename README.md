@@ -60,7 +60,7 @@ mvn pilot:align
 
 In multi-module builds, Pilot automatically detects the reactor and shows a **module picker** -- an interactive tree view mirroring the Maven reactor hierarchy. Select a module, then choose a tool. Your selection is preserved when returning from a tool.
 
-Some tools operate reactor-wide (updates, conflicts, audit), analyzing all modules at once. Others are per-module (tree, dependencies, pom, align). The module picker supports batch execution: press `r` to run a tool on all modules, or `t` to run on the selected subtree.
+Some tools operate reactor-wide (updates, conflicts, audit), analyzing all modules at once. Others are per-module (tree, dependencies, pom). When selecting a parent/aggregator module, the tool picker filters out tools that don't apply (e.g., bytecode analysis). For **align**, selecting a parent module automatically aligns all child modules in one go.
 
 ## Features
 
@@ -126,7 +126,7 @@ Two views: **Licenses** shows all transitive dependencies with their licenses (c
 
 ### Convention Alignment (`pilot:align`)
 
-Detects the project's current dependency conventions (inline vs managed versions, literal vs property references, property naming patterns) and lets you choose a target convention. Preview the diff before applying. In reactor builds, understands the parent POM hierarchy -- managed dependencies are written to the correct parent POM while child modules get version-less references.
+Detects the project's current dependency conventions (inline vs managed versions, literal vs property references, property naming patterns) and lets you choose a target convention. Preview the diff before applying. In reactor builds, understands the parent POM hierarchy -- managed dependencies are written to the correct parent POM while child modules get version-less references. Selecting a parent module automatically applies alignment across all child modules in one go.
 
 **Keys:** `jk` -- navigate options, `<>/Enter` -- cycle values, `p` -- preview diff, `w` -- apply, `h` -- help
 

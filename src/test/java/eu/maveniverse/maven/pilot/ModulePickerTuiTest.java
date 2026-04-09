@@ -27,7 +27,6 @@ import dev.tamboui.layout.Size;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.apache.maven.project.MavenProject;
@@ -112,55 +111,40 @@ class ModulePickerTuiTest {
     }
 
     @Test
-    void rSelectsAllModules() throws Exception {
-        Path coreDir = subdir(tempDir, "core");
-        Path apiDir = subdir(tempDir, "api");
+    void sSearchReturnsDirectTool() throws Exception {
+        Path childDir = subdir(tempDir, "child");
         MavenProject root = createProject("parent", tempDir);
-        MavenProject core = createProject("core", coreDir);
-        MavenProject api = createProject("api", apiDir);
+        MavenProject child = createProject("child", childDir);
 
-        ReactorModel model = ReactorModel.build(List.of(root, core, api));
-        ModulePickerTui picker = new ModulePickerTui(model, "com.example:parent:1.0", "test");
+        ReactorModel model = ReactorModel.build(List.of(root, child));
+        ModulePickerTui picker = new ModulePickerTui(model, "com.example:parent:1.0", "test", true);
 
         try (var testRunner = TuiTestRunner.runTest(picker::handleEvent, picker::render, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
-            pilot.press('r');
+            pilot.press('s');
         }
 
         assertThat(picker.getPickResult()).isNotNull();
-        assertThat(picker.getPickResult().projects()).hasSize(3);
-        assertThat(picker.getPickResult().projects())
-                .extracting(MavenProject::getArtifactId)
-                .containsExactly("parent", "core", "api");
+        assertThat(picker.getPickResult().directTool()).isEqualTo("search");
+        assertThat(picker.getPickResult().projects()).isEmpty();
     }
 
     @Test
-    void tSelectsSubtree() throws Exception {
-        Path coreDir = subdir(tempDir, "core");
-        Path modelDir = Files.createDirectories(coreDir.resolve("model"));
-        Path apiDir = subdir(tempDir, "api");
-        MavenProject root = createProject("parent", tempDir);
-        MavenProject core = createProject("core", coreDir);
-        MavenProject coreModel = createProject("model", modelDir);
-        MavenProject api = createProject("api", apiDir);
-
-        ReactorModel model = ReactorModel.build(List.of(root, core, coreModel, api));
-        ModulePickerTui picker = new ModulePickerTui(model, "com.example:parent:1.0", "test");
+    void sIgnoredWithoutSearchEnabled() throws Exception {
+        MavenProject root = createProject("app", tempDir);
+        ReactorModel model = ReactorModel.build(List.of(root));
+        ModulePickerTui picker = new ModulePickerTui(model, "com.example:app:1.0", "test");
 
         try (var testRunner = TuiTestRunner.runTest(picker::handleEvent, picker::render, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
-            pilot.press(KeyCode.DOWN);
+            pilot.press('s');
             pilot.pause();
-            pilot.press('t');
+            pilot.press('q');
         }
 
-        assertThat(picker.getPickResult()).isNotNull();
-        assertThat(picker.getPickResult().projects()).hasSize(2);
-        assertThat(picker.getPickResult().projects())
-                .extracting(MavenProject::getArtifactId)
-                .containsExactly("core", "model");
+        assertThat(picker.getPickResult()).isNull();
     }
 
     @Test
