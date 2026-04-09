@@ -82,9 +82,8 @@ public class TreeMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
-        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "tree");
         while (true) {
-            MavenProject selected = picker.pick();
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "tree").pick();
             if (selected == null) break;
             executeForProject(selected);
         }

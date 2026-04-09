@@ -73,9 +73,8 @@ public class AlignMojo extends AbstractMojo {
         MavenProject root = projects.get(0);
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
-        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "align");
         while (true) {
-            MavenProject selected = picker.pick();
+            MavenProject selected = new ModulePickerTui(reactorModel, reactorGav, "align").pick();
             if (selected == null) break;
             executeForProject(selected);
         }
@@ -89,7 +88,8 @@ public class AlignMojo extends AbstractMojo {
 
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
 
-        AlignTui tui = new AlignTui(pomPath, gav, detectedOptions);
+        AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
+        AlignTui tui = new AlignTui(pomPath, gav, detectedOptions, parentInfo);
         tui.run();
     }
 }
