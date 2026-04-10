@@ -1,0 +1,9 @@
+{
+  "title": "pilot:conflicts",
+  "scenes": [
+    {"frame": 0, "text": "The conflicts view lists all dependency version conflicts in your project. Each row shows a dependency that is requested at different versions."},
+    {"frame": 1, "text": "Press Enter to expand the details panel. It shows which paths requested which version, and which version Maven resolved to."},
+    {"frame": 2, "text": "Navigate between conflict groups. Conflicts where the resolved version differs from the requested version are highlighted as warnings."},
+    {"frame": 3, "text": "Toggle the details panel on and off as you browse. This helps you understand exactly how Maven resolves version conflicts in your project."}
+  ]
+}

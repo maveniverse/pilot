@@ -1,0 +1,10 @@
+{
+  "title": "pilot:tree",
+  "scenes": [
+    {"frame": 0, "text": "The dependency tree shows your project's full dependency graph with transitive dependencies indented below their parents."},
+    {"frame": 1, "text": "Navigate through the tree with arrow keys. Non-compile scopes like test are labeled in brackets next to the dependency."},
+    {"frame": 2, "text": "Press left to collapse a subtree, hiding all its transitive dependencies."},
+    {"frame": 3, "text": "Press right to expand it again. The tree remembers which nodes were expanded."},
+    {"frame": 4, "text": "Version conflicts are highlighted in the tree. Here, slf4j-api is requested at version 1.7.36 but resolved to 2.0.9."}
+  ]
+}

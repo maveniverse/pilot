@@ -1,0 +1,10 @@
+{
+  "title": "pilot:dependencies",
+  "scenes": [
+    {"frame": 0, "text": "The dependency analysis view uses bytecode analysis to detect which declared dependencies are actually used in your code."},
+    {"frame": 1, "text": "Dependencies marked as unused are highlighted, helping you identify candidates for removal to keep your POM clean."},
+    {"frame": 2, "text": "Press Tab to switch to the transitive dependencies view. These are dependencies pulled in by your declared dependencies."},
+    {"frame": 3, "text": "Transitive dependencies also show their usage status. If your code uses a transitive dependency directly, consider declaring it explicitly."},
+    {"frame": 4, "text": "Press Tab again to return to the declared dependencies view."}
+  ]
+}

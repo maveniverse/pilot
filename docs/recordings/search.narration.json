@@ -1,0 +1,9 @@
+{
+  "title": "pilot:search",
+  "scenes": [
+    {"frame": 0, "text": "The search tool queries Maven Central right from the terminal. Type your search term and results appear instantly."},
+    {"frame": 1, "text": "Press Down or Enter to move into the results table. Each row shows the groupId, artifactId, and latest version."},
+    {"frame": 2, "text": "Navigate with arrow keys. The detail bar shows artifact metadata like name, license, and organization."},
+    {"frame": 3, "text": "Use left and right arrows to cycle through all available versions. Press Enter to select an artifact for use in your project."}
+  ]
+}

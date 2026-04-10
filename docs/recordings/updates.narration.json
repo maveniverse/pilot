@@ -1,0 +1,11 @@
+{
+  "title": "pilot:updates",
+  "scenes": [
+    {"frame": 0, "text": "The updates view shows all dependencies with newer versions available. Updates are color-coded: blue for patch, yellow for minor, red for major."},
+    {"frame": 1, "text": "Navigate to a dependency and see its current version alongside the newest available version."},
+    {"frame": 2, "text": "Press space to select individual dependencies for batch update."},
+    {"frame": 3, "text": "Select multiple dependencies. Selected ones are marked with a checkmark."},
+    {"frame": 4, "text": "Press number keys to filter by update type. Here we filter to show only patch updates, the safest to apply."},
+    {"frame": 5, "text": "Press 1 to return to the full list showing all available updates."}
+  ]
+}
