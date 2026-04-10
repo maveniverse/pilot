@@ -7,7 +7,7 @@
 
   <servers>
     <server>
-      <id>pilot-publish</id>
+      <id>sonatype-central-portal</id>
       <username>${env.MAVEN_USER}</username>
       <password>${env.MAVEN_PASSWORD}</password>
       <configuration>
