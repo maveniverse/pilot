@@ -1,9 +1,0 @@
-{
-  "title": "pilot:audit",
-  "scenes": [
-    {"frame": 0, "text": "The audit tool scans all your dependencies for license compliance and known security vulnerabilities."},
-    {"frame": 1, "text": "Each dependency's license is fetched from Maven Central. Permissive licenses like Apache and MIT appear in default text. Weak copyleft licenses are highlighted in yellow."},
-    {"frame": 2, "text": "The detail pane shows the full artifact coordinates, scope, and a direct link to the license text."},
-    {"frame": 3, "text": "Three views are available via Tab: per-dependency licenses, grouped by license type, and a vulnerability scanner powered by the OSV database."}
-  ]
-}
