@@ -136,7 +136,7 @@ Detects the project's current dependency conventions (inline vs managed versions
 
 ## How POM Editing Works
 
-Pilot uses [DomTrip](https://github.com/maveniverse/domtrip) for all POM modifications. DomTrip is a lossless XML editor that preserves your formatting, comments, whitespace, and element ordering. When Pilot adds, removes, or updates a dependency, the rest of your POM stays exactly as you wrote it.
+Pilot uses [DomTrip](https://maveniverse.github.io/domtrip) for all POM modifications. DomTrip is a lossless XML editor that preserves your formatting, comments, whitespace, and element ordering. When Pilot adds, removes, or updates a dependency, the rest of your POM stays exactly as you wrote it.
 
 ## Requirements
 
@@ -152,8 +152,8 @@ mvn install
 
 ## Technology
 
-- **[TamboUI](https://github.com/maveniverse/tamboui)** -- Terminal UI framework (Rust Ratatui-inspired, Java-native)
-- **[DomTrip](https://github.com/maveniverse/domtrip)** -- Lossless XML/POM editor
+- **[TamboUI](https://tamboui.dev)** -- Terminal UI framework (Rust Ratatui-inspired, Java-native)
+- **[DomTrip](https://maveniverse.github.io/domtrip)** -- Lossless XML/POM editor
 - **[ASM](https://asm.ow2.io/)** -- Bytecode analysis for dependency usage detection
 - **Maven Plugin API** -- Standard Maven plugin infrastructure
 - **OSV.dev** -- Open Source Vulnerability database for security auditing
