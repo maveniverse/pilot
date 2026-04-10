@@ -1,0 +1,48 @@
+name: Deploy Snapshots
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: Deploy snapshot to OSSRH
+    runs-on: ubuntu-latest
+    # Skip snapshot deployment for Dependabot PRs
+    if: github.actor != 'dependabot[bot]'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if SNAPSHOT version
+        id: check
+        run: |
+          version=$(git describe --tags --always)
+          echo "Resolved version hint: $version"
+          if [[ "$version" == *SNAPSHOT* ]]; then
+            echo "is_snapshot=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_snapshot=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Java
+        if: steps.check.outputs.is_snapshot == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Deploy snapshot
+        if: steps.check.outputs.is_snapshot == 'true'
+        env:
+          MAVEN_USER: ${{ secrets.MAVEN_USER }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+        run: |
+          mvn -B deploy -DskipTests -Dgpg.skip=true -Denforcer.skip=true -Dnjord.autoPublish -Pmaveniverse-release -s .github/release-settings.xml
