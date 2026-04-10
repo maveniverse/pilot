@@ -72,7 +72,7 @@ The main entry point. In a reactor, shows the module picker first, then the tool
 
 Type to search Maven Central. Results load asynchronously with pagination. Use `Left`/`Right` arrows to cycle through available versions. Bottom bar shows POM metadata (name, license, organization, date).
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/search.mp4" controls width="100%"></video>
+[![pilot:search](docs/images/search.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/search.mp4)
 
 **Keys:** `Enter` -- focus results, `Left`/`Right` -- cycle versions, `Esc` -- back to search, `q` -- quit
 
@@ -80,7 +80,7 @@ Type to search Maven Central. Results load asynchronously with pagination. Use `
 
 Interactive collapsible tree view of all resolved dependencies. Conflicts are highlighted with markers. Filter by name, jump between conflicts, and trace any dependency back to the root with reverse path mode. Toggle scope (`s`) to cycle between compile, runtime, and test views.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/dependency-tree.mp4" controls width="100%"></video>
+[![pilot:tree](docs/images/tree.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/dependency-tree.mp4)
 
 **Keys:** `<>` -- expand/collapse, `jk` -- navigate, `/` -- filter, `c` -- next conflict, `r` -- reverse path, `s` -- cycle scope, `e/w` -- expand/collapse all
 
@@ -88,7 +88,7 @@ Interactive collapsible tree view of all resolved dependencies. Conflicts are hi
 
 Syntax-highlighted XML viewer with two switchable modes: **Raw POM** shows your `pom.xml` as-is, **Effective POM** shows the fully resolved model with origin annotations. When a line has a known origin, a detail pane shows the relevant source lines from the parent POM.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/pom-viewer.mp4" controls width="100%"></video>
+[![pilot:pom](docs/images/pom.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/pom-viewer.mp4)
 
 **Keys:** `Tab` -- switch Raw/Effective, `<>` -- expand/collapse, `/` -- search, `n/N` -- next/prev match, `e/w` -- expand/collapse all
 
@@ -100,7 +100,7 @@ A details pane shows per-class member references and SPI service interfaces. Pro
 
 Run `mvn compile` before this goal for full bytecode analysis. A warning banner appears when classes are not compiled.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/dependencies.mp4" controls width="100%"></video>
+[![pilot:dependencies](docs/images/dependencies.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/dependencies.mp4)
 
 **Keys:** `Tab` -- switch Declared/Transitive, `d` -- remove declared, `a` -- add transitive, `s` -- change scope, `h` -- help
 
@@ -108,7 +108,7 @@ Run `mvn compile` before this goal for full bytecode analysis. A warning banner 
 
 Scans all dependencies for newer versions. Updates are color-coded: green (patch), yellow (minor), red (major). Select individually or batch-select, then apply -- Pilot edits your POM directly using lossless XML editing that preserves formatting and comments. In reactor builds, shows a reactor-wide view with per-module breakdown.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/updates.mp4" controls width="100%"></video>
+[![pilot:updates](docs/images/updates.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/updates.mp4)
 
 **Keys:** `Space` -- toggle, `a` -- select all, `n` -- deselect all, `Enter` -- apply, `1-4` -- filter by type
 
@@ -116,7 +116,7 @@ Scans all dependencies for newer versions. Updates are color-coded: green (patch
 
 Groups dependencies by `groupId:artifactId` and shows where different versions are requested. Toggle between actual conflicts only or all dependency groups (`a`). Expand any conflict to see the full dependency paths. Pin a version to `dependencyManagement` with one keypress.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/conflicts.mp4" controls width="100%"></video>
+[![pilot:conflicts](docs/images/conflicts.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/conflicts.mp4)
 
 **Keys:** `Enter/Space` -- toggle details, `p` -- pin version, `a` -- toggle show all, `jk` -- navigate
 
@@ -124,7 +124,7 @@ Groups dependencies by `groupId:artifactId` and shows where different versions a
 
 Two views: **Licenses** shows all transitive dependencies with their licenses (color-coded by permissiveness), **Vulnerabilities** queries OSV.dev for known CVEs. Data loads asynchronously.
 
-<video src="https://github.com/maveniverse/pilot/releases/download/demo-assets/audit.mp4" controls width="100%"></video>
+[![pilot:audit](docs/images/audit.svg)](https://github.com/maveniverse/pilot/releases/download/demo-assets/audit.mp4)
 
 **Keys:** `Tab` -- switch view, `jk` -- navigate
 
