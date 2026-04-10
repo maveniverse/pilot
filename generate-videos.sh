@@ -46,10 +46,12 @@ fi
 
 case "$TTS_ENGINE" in
     edge-tts)
+        command -v edge-tts >/dev/null 2>&1 || { echo "ERROR: edge-tts not found. Install: pipx install edge-tts" >&2; exit 1; }
         TTS_VOICE="${PILOT_TTS_VOICE:-en-US-AndrewNeural}"
         echo "TTS engine: edge-tts (voice: $TTS_VOICE)"
         ;;
     say)
+        command -v say >/dev/null 2>&1 || { echo "ERROR: say not found (macOS only)" >&2; exit 1; }
         TTS_VOICE="${PILOT_TTS_VOICE:-Samantha}"
         echo "TTS engine: macOS say (voice: $TTS_VOICE)"
         ;;

@@ -723,7 +723,7 @@ class RecordingDemoTest {
             pilot.press(KeyCode.DOWN);
             pilot.pause();
             recorder.scene(
-                    "Use left and right arrows to cycle through all available versions. Press Enter to select an artifact for use in your project.");
+                    "The detail bar updates as you navigate. Press Enter to select an artifact for use in your project.");
 
             pilot.press('q');
         }
