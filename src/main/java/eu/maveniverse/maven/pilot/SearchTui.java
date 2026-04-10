@@ -125,6 +125,11 @@ class SearchTui {
     // POM info
     private final Map<String, PomInfo> pomInfoCache = new HashMap<>();
 
+    // Package-private for testing
+    void cachePomInfo(String groupId, String artifactId, String version, PomInfo info) {
+        pomInfoCache.put(groupId + ":" + artifactId + ":" + version, info);
+    }
+
     // Status
     private String status;
     private boolean loading;
