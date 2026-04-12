@@ -19,9 +19,12 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.DependencyManagement;
+import org.apache.maven.model.Model;
 import org.apache.maven.project.MavenProject;
 
 /**
@@ -46,21 +49,23 @@ final class UpdatesHelper {
      */
     static List<UpdatesTui.DependencyInfo> collectDependencies(MavenProject proj) {
         List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
+        Set<String> seenGAs = new HashSet<>();
 
         for (Dependency dep : proj.getDependencies()) {
+            seenGAs.add(dep.getGroupId() + ":" + dep.getArtifactId());
             dependencies.add(new UpdatesTui.DependencyInfo(
                     dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType()));
         }
 
-        DependencyManagement mgmt = proj.getOriginalModel().getDependencyManagement();
+        Model originalModel = proj.getOriginalModel();
+        DependencyManagement mgmt = originalModel != null ? originalModel.getDependencyManagement() : null;
         if (mgmt != null && mgmt.getDependencies() != null) {
             for (Dependency dep : mgmt.getDependencies()) {
                 if ("pom".equals(dep.getType()) && "import".equals(dep.getScope())) {
                     continue;
                 }
-                boolean alreadyListed = dependencies.stream()
-                        .anyMatch(d -> d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
-                if (!alreadyListed) {
+                String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+                if (seenGAs.add(ga)) {
                     var info = new UpdatesTui.DependencyInfo(
                             dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
                     info.managed = true;
