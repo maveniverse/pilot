@@ -19,10 +19,12 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.maven.model.Dependency;
@@ -170,8 +172,22 @@ class ReactorCollector {
                     ? originalMgmt.getDependencies()
                     : List.of();
 
+            // Build set of GA keys from original model to filter out BOM-imported deps
+            Set<String> originalGAs = new HashSet<>();
+            for (Dependency orig : originalMgmtDeps) {
+                if (!("pom".equals(orig.getType()) && "import".equals(orig.getScope()))) {
+                    originalGAs.add(orig.getGroupId() + ":" + orig.getArtifactId());
+                }
+            }
+
             for (Dependency dep : mgmt.getDependencies()) {
                 String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+
+                // Skip deps not explicitly declared in the original model (i.e. BOM-imported)
+                if (!originalGAs.contains(ga)) {
+                    continue;
+                }
+
                 AggregatedDependency agg =
                         byGA.computeIfAbsent(ga, k -> new AggregatedDependency(dep.getGroupId(), dep.getArtifactId()));
 

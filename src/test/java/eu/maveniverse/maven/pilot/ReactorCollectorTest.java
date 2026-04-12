@@ -327,4 +327,36 @@ class ReactorCollectorTest {
         assertThat(dep.propertyName).isEqualTo("junit.version");
         assertThat(dep.propertyOrigin).isEqualTo(parent);
     }
+
+    @Test
+    void collectExcludesBomImportedManagedDeps() {
+        MavenProject project = createProject("com.example", "app", "1.0", tempDir);
+
+        // Effective model has many managed deps (as if a BOM was imported)
+        DependencyManagement effectiveMgmt = new DependencyManagement();
+        effectiveMgmt.addDependency(dep("org.slf4j", "slf4j-api", "2.0.9"));
+        effectiveMgmt.addDependency(dep("com.fasterxml", "jackson-core", "2.17.0"));
+        effectiveMgmt.addDependency(dep("com.fasterxml", "jackson-databind", "2.17.0"));
+        effectiveMgmt.addDependency(dep("io.netty", "netty-all", "4.1.100"));
+        effectiveMgmt.addDependency(dep("io.micrometer", "micrometer-core", "1.12.0"));
+        project.getModel().setDependencyManagement(effectiveMgmt);
+
+        // Original model only declares 2 managed deps (plus a BOM import)
+        DependencyManagement origMgmt = new DependencyManagement();
+        origMgmt.addDependency(dep("org.slf4j", "slf4j-api", "2.0.9"));
+        origMgmt.addDependency(dep("com.fasterxml", "jackson-core", "2.17.0"));
+        Dependency bomImport = dep("org.springframework.boot", "spring-boot-dependencies", "3.2.0");
+        bomImport.setType("pom");
+        bomImport.setScope("import");
+        origMgmt.addDependency(bomImport);
+        project.getOriginalModel().setDependencyManagement(origMgmt);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        // Only the 2 explicitly declared deps should appear, not the 5 from effective model
+        assertThat(result.allDependencies).hasSize(2);
+        assertThat(result.allDependencies)
+                .extracting(d -> d.groupId + ":" + d.artifactId)
+                .containsExactlyInAnyOrder("org.slf4j:slf4j-api", "com.fasterxml:jackson-core");
+    }
 }

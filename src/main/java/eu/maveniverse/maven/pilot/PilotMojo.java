@@ -442,24 +442,7 @@ public class PilotMojo extends AbstractMojo {
             String reactorGav = gavOf(projects.get(0));
             new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver).run();
         } else {
-            List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
-            for (Dependency dep : proj.getDependencies()) {
-                dependencies.add(new UpdatesTui.DependencyInfo(
-                        dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType()));
-            }
-            if (proj.getDependencyManagement() != null) {
-                for (Dependency dep : proj.getDependencyManagement().getDependencies()) {
-                    boolean alreadyListed = dependencies.stream()
-                            .anyMatch(d ->
-                                    d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
-                    if (!alreadyListed) {
-                        var info = new UpdatesTui.DependencyInfo(
-                                dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
-                        info.managed = true;
-                        dependencies.add(info);
-                    }
-                }
-            }
+            List<UpdatesTui.DependencyInfo> dependencies = UpdatesHelper.collectDependencies(proj);
             String pomPath = proj.getFile().getAbsolutePath();
             new UpdatesTui(dependencies, pomPath, gavOf(proj), versionResolver).run();
         }
