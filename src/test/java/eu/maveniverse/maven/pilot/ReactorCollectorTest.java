@@ -304,6 +304,36 @@ class ReactorCollectorTest {
     }
 
     @Test
+    void collectExcludesBomImportedDependencies() {
+        MavenProject project = createProject("com.example", "app", "1.0", tempDir);
+
+        // Original model: one BOM import and one direct managed dep
+        DependencyManagement origMgmt = new DependencyManagement();
+        Dependency bomImport = dep("io.quarkus", "quarkus-bom", "3.0.0");
+        bomImport.setType("pom");
+        bomImport.setScope("import");
+        origMgmt.addDependency(bomImport);
+        origMgmt.addDependency(dep("com.example", "my-lib", "1.0"));
+        project.getOriginalModel().setDependencyManagement(origMgmt);
+
+        // Effective model: BOM is flattened — contains the direct dep
+        // plus all deps from the BOM (simulating Maven's behavior)
+        DependencyManagement mgmt = new DependencyManagement();
+        mgmt.addDependency(dep("com.example", "my-lib", "1.0"));
+        mgmt.addDependency(dep("io.quarkus", "quarkus-core", "3.0.0"));
+        mgmt.addDependency(dep("io.quarkus", "quarkus-arc", "3.0.0"));
+        mgmt.addDependency(dep("jakarta.enterprise", "jakarta.enterprise.cdi-api", "4.0.1"));
+        project.getModel().setDependencyManagement(mgmt);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        // Only the directly declared managed dep should appear, not BOM-imported ones
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).groupId).isEqualTo("com.example");
+        assertThat(result.allDependencies.get(0).artifactId).isEqualTo("my-lib");
+    }
+
+    @Test
     void collectWithPropertyInParent() throws IOException {
         Path parentDir = subdir("parent2");
         Path childDir = subdir("child2");
