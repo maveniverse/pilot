@@ -49,6 +49,7 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -60,6 +61,7 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResult;
+import org.eclipse.aether.transfer.AbstractTransferListener;
 
 /**
  * Interactive launcher that displays the reactor module tree and lets the user
@@ -95,6 +97,11 @@ public class PilotMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        // Suppress transfer progress output to prevent corruption of TUI rendering
+        DefaultRepositorySystemSession quietSession = new DefaultRepositorySystemSession(repoSession);
+        quietSession.setTransferListener(new AbstractTransferListener() {});
+        this.repoSession = quietSession;
+
         try {
             List<MavenProject> projects = session.getProjects();
             if (projects.size() > 1) {
