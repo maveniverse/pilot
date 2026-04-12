@@ -19,10 +19,12 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.maven.model.Dependency;
@@ -170,8 +172,20 @@ class ReactorCollector {
                     ? originalMgmt.getDependencies()
                     : List.of();
 
+            // Only include dependencies explicitly declared in this project's POM,
+            // not those inherited from imported BOMs
+            Set<String> declaredManagedGAs = new HashSet<>();
+            for (Dependency dep : originalMgmtDeps) {
+                if (!("pom".equals(dep.getType()) && "import".equals(dep.getScope()))) {
+                    declaredManagedGAs.add(dep.getGroupId() + ":" + dep.getArtifactId());
+                }
+            }
+
             for (Dependency dep : mgmt.getDependencies()) {
                 String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+                if (!declaredManagedGAs.contains(ga)) {
+                    continue;
+                }
                 AggregatedDependency agg =
                         byGA.computeIfAbsent(ga, k -> new AggregatedDependency(dep.getGroupId(), dep.getArtifactId()));
 
