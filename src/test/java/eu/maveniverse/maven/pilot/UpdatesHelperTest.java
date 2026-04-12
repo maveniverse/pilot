@@ -92,8 +92,7 @@ class UpdatesHelperTest {
 
         List<UpdatesTui.DependencyInfo> result = UpdatesHelper.collectDependencies(project);
 
-        assertThat(result).hasSize(2);
-        assertThat(result).allMatch(d -> d.managed);
+        assertThat(result).hasSize(2).allMatch(d -> d.managed);
         assertThat(result)
                 .extracting(d -> d.groupId + ":" + d.artifactId)
                 .containsExactly("org.slf4j:slf4j-api", "com.fasterxml:jackson-core");
