@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 import javax.inject.Inject;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
+import org.apache.maven.model.DependencyManagement;
 import org.apache.maven.model.InputLocation;
 import org.apache.maven.model.InputLocationTracker;
 import org.apache.maven.model.InputSource;
@@ -447,36 +448,46 @@ public class PilotMojo extends AbstractMojo {
                 dependencies.add(new UpdatesTui.DependencyInfo(
                         dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType()));
             }
-            // Use the original model to only show deps explicitly declared in this POM,
-            // not the hundreds of entries inherited from imported BOMs
-            if (proj.getOriginalModel().getDependencyManagement() != null) {
-                Map<String, String> effectiveVersions = new HashMap<>();
-                if (proj.getDependencyManagement() != null) {
-                    for (Dependency d : proj.getDependencyManagement().getDependencies()) {
-                        effectiveVersions.put(d.getGroupId() + ":" + d.getArtifactId(), d.getVersion());
-                    }
-                }
-                for (Dependency dep :
-                        proj.getOriginalModel().getDependencyManagement().getDependencies()) {
-                    // Skip BOM imports — they are not regular dependencies
-                    if ("pom".equals(dep.getType()) && "import".equals(dep.getScope())) {
-                        continue;
-                    }
-                    boolean alreadyListed = dependencies.stream()
-                            .anyMatch(d ->
-                                    d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
-                    if (!alreadyListed) {
-                        String ga = dep.getGroupId() + ":" + dep.getArtifactId();
-                        String version = effectiveVersions.getOrDefault(ga, dep.getVersion());
-                        var info = new UpdatesTui.DependencyInfo(
-                                dep.getGroupId(), dep.getArtifactId(), version, dep.getScope(), dep.getType());
-                        info.managed = true;
-                        dependencies.add(info);
-                    }
-                }
-            }
+            collectManagedDependencies(
+                    proj.getOriginalModel().getDependencyManagement(), proj.getDependencyManagement(), dependencies);
             String pomPath = proj.getFile().getAbsolutePath();
             new UpdatesTui(dependencies, pomPath, gavOf(proj), versionResolver).run();
+        }
+    }
+
+    /**
+     * Collects managed dependencies from the original model, filtering out BOM imports
+     * and dependencies inherited from imported BOMs. Uses the effective model to resolve
+     * property-based version expressions.
+     */
+    static void collectManagedDependencies(
+            DependencyManagement originalMgmt,
+            DependencyManagement effectiveMgmt,
+            List<UpdatesTui.DependencyInfo> dependencies) {
+        if (originalMgmt == null) {
+            return;
+        }
+        Map<String, String> effectiveVersions = new HashMap<>();
+        if (effectiveMgmt != null) {
+            for (Dependency d : effectiveMgmt.getDependencies()) {
+                effectiveVersions.put(d.getGroupId() + ":" + d.getArtifactId(), d.getVersion());
+            }
+        }
+        for (Dependency dep : originalMgmt.getDependencies()) {
+            // Skip BOM imports — they are not regular dependencies
+            if ("pom".equals(dep.getType()) && "import".equals(dep.getScope())) {
+                continue;
+            }
+            boolean alreadyListed = dependencies.stream()
+                    .anyMatch(d -> d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
+            if (!alreadyListed) {
+                String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+                String version = effectiveVersions.getOrDefault(ga, dep.getVersion());
+                var info = new UpdatesTui.DependencyInfo(
+                        dep.getGroupId(), dep.getArtifactId(), version, dep.getScope(), dep.getType());
+                info.managed = true;
+                dependencies.add(info);
+            }
         }
     }
 
