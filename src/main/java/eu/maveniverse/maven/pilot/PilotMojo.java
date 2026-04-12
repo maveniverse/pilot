@@ -447,14 +447,29 @@ public class PilotMojo extends AbstractMojo {
                 dependencies.add(new UpdatesTui.DependencyInfo(
                         dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType()));
             }
-            if (proj.getDependencyManagement() != null) {
-                for (Dependency dep : proj.getDependencyManagement().getDependencies()) {
+            // Use the original model to only show deps explicitly declared in this POM,
+            // not the hundreds of entries inherited from imported BOMs
+            if (proj.getOriginalModel().getDependencyManagement() != null) {
+                Map<String, String> effectiveVersions = new HashMap<>();
+                if (proj.getDependencyManagement() != null) {
+                    for (Dependency d : proj.getDependencyManagement().getDependencies()) {
+                        effectiveVersions.put(d.getGroupId() + ":" + d.getArtifactId(), d.getVersion());
+                    }
+                }
+                for (Dependency dep :
+                        proj.getOriginalModel().getDependencyManagement().getDependencies()) {
+                    // Skip BOM imports — they are not regular dependencies
+                    if ("pom".equals(dep.getType()) && "import".equals(dep.getScope())) {
+                        continue;
+                    }
                     boolean alreadyListed = dependencies.stream()
                             .anyMatch(d ->
                                     d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
                     if (!alreadyListed) {
+                        String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+                        String version = effectiveVersions.getOrDefault(ga, dep.getVersion());
                         var info = new UpdatesTui.DependencyInfo(
-                                dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
+                                dep.getGroupId(), dep.getArtifactId(), version, dep.getScope(), dep.getType());
                         info.managed = true;
                         dependencies.add(info);
                     }
