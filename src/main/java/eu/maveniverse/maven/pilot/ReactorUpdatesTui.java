@@ -934,7 +934,14 @@ class ReactorUpdatesTui {
         // Managed vs direct
         boolean anyManaged = dep.usages.stream().anyMatch(u -> u.managed);
         boolean allManaged = dep.usages.stream().allMatch(u -> u.managed);
-        String management = anyManaged ? (allManaged ? "yes" : "mixed") : "no";
+        String management;
+        if (allManaged) {
+            management = "yes";
+        } else if (anyManaged) {
+            management = "mixed";
+        } else {
+            management = "no";
+        }
         rows.add(Row.from(Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(management))))));
 
         // Update info
