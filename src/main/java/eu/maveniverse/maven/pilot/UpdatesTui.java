@@ -351,6 +351,10 @@ class UpdatesTui {
             fetchPomInfoIfNeeded();
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, tableState, displayDeps.size(), lastContentHeight)) {
+            fetchPomInfoIfNeeded();
+            return true;
+        }
 
         if (key.isCharIgnoreCase(' ')) {
             toggleSelection();
@@ -794,6 +798,8 @@ class UpdatesTui {
                         "General",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
                                 new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));

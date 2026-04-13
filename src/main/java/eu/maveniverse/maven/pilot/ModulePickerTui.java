@@ -94,6 +94,7 @@ class ModulePickerTui {
     private final TableState tableState = new TableState();
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private PickResult pickResult;
+    private int lastContentHeight;
 
     PickResult getPickResult() {
         return pickResult;
@@ -158,6 +159,9 @@ class ModulePickerTui {
         }
         if (key.isDown()) {
             tableState.selectNext(visible.size());
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, tableState, visible.size(), lastContentHeight)) {
             return true;
         }
 
@@ -252,6 +256,7 @@ class ModulePickerTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
+        lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
         } else {
@@ -361,6 +366,8 @@ class ModulePickerTui {
     private List<HelpOverlay.Entry> buildKeyEntries() {
         List<HelpOverlay.Entry> entries = new ArrayList<>();
         entries.add(new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"));
+        entries.add(new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"));
+        entries.add(new HelpOverlay.Entry("Home / End", "Jump to first / last row"));
         entries.add(new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"));
         entries.add(new HelpOverlay.Entry("Space", "Expand node or move down"));
         entries.add(new HelpOverlay.Entry("e / w", "Expand all / collapse all"));

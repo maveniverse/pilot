@@ -326,6 +326,9 @@ class ReactorUpdatesTui {
             tableState.selectNext(displayRows.size());
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
+            return true;
+        }
         if (key.isCharIgnoreCase(' ')) {
             toggleSelection();
             return true;
@@ -382,6 +385,9 @@ class ReactorUpdatesTui {
         }
         if (key.isDown()) {
             moduleTableState.selectNext(visible.size());
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, moduleTableState, visible.size(), lastContentHeight)) {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
@@ -956,6 +962,8 @@ class ReactorUpdatesTui {
                         "Dependencies View",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
                                 new HelpOverlay.Entry("a / n", "Select all / deselect all"),
                                 new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
@@ -966,6 +974,8 @@ class ReactorUpdatesTui {
                         List.of(
                                 new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand module tree"))),
                 new HelpOverlay.Section(
                         "General",

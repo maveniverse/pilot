@@ -149,6 +149,7 @@ class AuditTui {
     private boolean dirty;
     private boolean pendingQuit;
     private int lastContentHeight;
+    private int lastTableHeight;
     private List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
@@ -358,6 +359,9 @@ class AuditTui {
             activeTableState().selectNext(activeRowCount());
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, activeTableState(), activeRowCount(), lastTableHeight)) {
+            return true;
+        }
 
         if (key.isKey(KeyCode.TAB)) {
             view = TabBar.next(view, View.values());
@@ -500,8 +504,8 @@ class AuditTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-
         lastContentHeight = zones.get(1).height();
+
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
         } else if (diffOverlay.isActive()) {
@@ -551,6 +555,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" Licenses (" + entries.size() + " dependencies) ")
@@ -712,6 +717,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" By License (" + countLicenseGroups() + " licenses) ")
@@ -837,6 +843,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(8))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
         // -- Vulnerability table --
         Block block = Block.builder()
@@ -1159,6 +1166,8 @@ class AuditTui {
                         "Keys",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand (By License view)"),
                                 new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
                                 new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),

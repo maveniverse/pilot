@@ -80,6 +80,7 @@ class TreeTui {
     private List<DependencyTreeModel.TreeNode> reversePath;
 
     private TuiRunner runner;
+    private int lastContentHeight;
 
     TreeTui(DependencyNode rootNode, String scope, String projectGav) {
         this.rootNode = rootNode;
@@ -169,6 +170,11 @@ class TreeTui {
         }
         if (key.isDown()) {
             tableState.selectNext(displayNodes.size());
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(
+                key, tableState, displayNodes.size(), lastContentHeight, TableNavigation.BORDERED_NO_HEADER)) {
             fetchPomInfoIfNeeded();
             return true;
         }
@@ -429,6 +435,8 @@ class TreeTui {
                         "Navigation",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
                                 new HelpOverlay.Entry("e", "Expand all nodes"),
                                 new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"))),
@@ -479,6 +487,7 @@ class TreeTui {
 
         renderHeader(frame, zones.get(0));
 
+        lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
         } else if (mode == Mode.REVERSE_PATH) {

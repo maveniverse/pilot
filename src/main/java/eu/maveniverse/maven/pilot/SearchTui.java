@@ -146,6 +146,7 @@ class SearchTui {
     // Dependencies
     private final SearchClient client;
     private TuiRunner runner;
+    private int lastContentHeight;
 
     /**
      * Get the currently selected table row index, defaulting to -1 when no row is selected.
@@ -329,16 +330,11 @@ class SearchTui {
             return true;
         }
         if (key.isDown()) {
-            int before = selectedIndex();
-            tableState.selectNext(artifacts.size());
-            int after = selectedIndex();
-            if (before == after && artifacts.size() < totalFound) {
-                // At the very bottom and prefetch hasn't arrived yet — block
-                fetchMoreResultsSync();
-            } else if (after >= artifacts.size() / 2 && artifacts.size() < totalFound) {
-                // Near the bottom — prefetch next page in the background
-                prefetchMoreResults();
-            }
+            handleDownKey();
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, tableState, artifacts.size(), lastContentHeight)) {
+            prefetchIfNearBottom();
             fetchPomInfoIfNeeded();
             return true;
         }
@@ -358,6 +354,25 @@ class SearchTui {
             return true;
         }
         return false;
+    }
+
+    private void handleDownKey() {
+        int before = selectedIndex();
+        tableState.selectNext(artifacts.size());
+        int after = selectedIndex();
+        if (before == after && artifacts.size() < totalFound && !prefetchingMore) {
+            fetchMoreResultsSync();
+        } else {
+            prefetchIfNearBottom();
+        }
+        fetchPomInfoIfNeeded();
+    }
+
+    private void prefetchIfNearBottom() {
+        int sel = selectedIndex();
+        if (sel >= artifacts.size() / 2 && artifacts.size() < totalFound) {
+            prefetchMoreResults();
+        }
     }
 
     private void onQueryChanged() {
@@ -382,6 +397,7 @@ class SearchTui {
                 .split(frame.area());
 
         renderSearchBar(frame, zones.get(0));
+        lastContentHeight = zones.get(1).height();
         renderResultsTable(frame, zones.get(1));
         renderInfoBar(frame, zones.get(2));
     }
@@ -567,6 +583,10 @@ class SearchTui {
         } else {
             spans.add(Span.raw("\u2191\u2193").bold());
             spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("PgUp/PgDn").bold());
+            spans.add(Span.raw(":Page  "));
+            spans.add(Span.raw("Home/End").bold());
+            spans.add(Span.raw(":Top/Bottom  "));
             spans.add(Span.raw("\u2190\u2192").bold());
             spans.add(Span.raw(":Version  "));
             spans.add(Span.raw("Enter").bold());
