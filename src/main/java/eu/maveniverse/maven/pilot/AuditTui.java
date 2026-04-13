@@ -89,6 +89,8 @@ class AuditTui {
         }
     }
 
+    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
+
     private enum View {
         LICENSES,
         BY_LICENSE,
@@ -358,11 +360,7 @@ class AuditTui {
         }
 
         if (key.isKey(KeyCode.TAB)) {
-            view = switch (view) {
-                case LICENSES -> View.BY_LICENSE;
-                case BY_LICENSE -> View.VULNERABILITIES;
-                case VULNERABILITIES -> View.LICENSES;
-            };
+            view = TabBar.next(view, View.values());
             return true;
         }
 
@@ -531,16 +529,15 @@ class AuditTui {
         if (dirty) {
             spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
         }
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.LICENSES ? "\u25B8 " : "  ") + "Licenses]")
-                .fg(view == View.LICENSES ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.BY_LICENSE ? "\u25B8 " : "  ") + "By License]")
-                .fg(view == View.BY_LICENSE ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.VULNERABILITIES ? "\u25B8 " : "  ") + "Vulnerabilities"
-                        + (vulnCount > 0 ? " (" + vulnCount + ")" : "") + "]")
-                .fg(view == View.VULNERABILITIES ? (vulnCount > 0 ? Color.RED : Color.YELLOW) : Color.DARK_GRAY));
+        spans.addAll(TabBar.render(
+                view,
+                View.values(),
+                v -> switch (v) {
+                    case LICENSES -> "Licenses";
+                    case BY_LICENSE -> "By License";
+                    case VULNERABILITIES -> "Vulnerabilities" + (vulnCount > 0 ? " (" + vulnCount + ")" : "");
+                },
+                v -> v == View.VULNERABILITIES && vulnCount > 0 ? Color.RED : Color.YELLOW));
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))
@@ -580,7 +577,7 @@ class AuditTui {
                         Constraint.percentage(40), Constraint.percentage(15),
                         Constraint.percentage(30), Constraint.percentage(15))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -725,7 +722,7 @@ class AuditTui {
         List<Row> rows = new ArrayList<>();
         for (var row : byLicenseRows) {
             if (row.isGroup()) {
-                String arrow = row.expanded ? "\u25BE " : "\u25B8 ";
+                String arrow = row.expanded ? "\u25BE " : HIGHLIGHT_SYMBOL;
                 String label = arrow + row.licenseName + " (" + row.deps.size() + ")";
                 rows.add(Row.from(label, "", "", "")
                         .style(getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
@@ -746,7 +743,7 @@ class AuditTui {
                         Constraint.percentage(55), Constraint.percentage(20),
                         Constraint.percentage(15), Constraint.percentage(10))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -866,7 +863,7 @@ class AuditTui {
                         Constraint.percentage(30), Constraint.percentage(18),
                         Constraint.percentage(10), Constraint.percentage(42))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 

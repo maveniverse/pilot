@@ -359,7 +359,7 @@ class DependenciesTui {
         }
 
         if (key.isKey(KeyCode.TAB)) {
-            view = (view == View.DECLARED) ? View.TRANSITIVE : View.DECLARED;
+            view = TabBar.next(view, View.values());
             tableState.select(0);
             return true;
         }
@@ -729,32 +729,22 @@ class DependenciesTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        spans.add(Span.raw("  "));
-
-        String declaredLabel = "Declared: " + declared.size();
-        if (bytecodeAnalyzed) {
-            long unused = declared.stream()
-                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
-                    .count();
-            if (unused > 0) {
-                declaredLabel += " (" + unused + " unused)";
-            }
-        }
-        spans.add(Span.raw("[" + (view == View.DECLARED ? HIGHLIGHT_SYMBOL : "  ") + declaredLabel + "]")
-                .fg(view == View.DECLARED ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-
-        String transitiveLabel = "Transitive: " + transitive.size();
-        if (bytecodeAnalyzed) {
-            long used = transitive.stream()
-                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
-                    .count();
-            if (used > 0) {
-                transitiveLabel += " (" + used + " used)";
-            }
-        }
-        spans.add(Span.raw("[" + (view == View.TRANSITIVE ? HIGHLIGHT_SYMBOL : "  ") + transitiveLabel + "]")
-                .fg(view == View.TRANSITIVE ? Color.YELLOW : Color.DARK_GRAY));
+        long unused = bytecodeAnalyzed
+                ? declared.stream()
+                        .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
+                        .count()
+                : 0;
+        long used = bytecodeAnalyzed
+                ? transitive.stream()
+                        .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
+                        .count()
+                : 0;
+        String declaredLabel = "Declared: " + declared.size() + (unused > 0 ? " (" + unused + " unused)" : "");
+        String transitiveLabel = "Transitive: " + transitive.size() + (used > 0 ? " (" + used + " used)" : "");
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case DECLARED -> declaredLabel;
+            case TRANSITIVE -> transitiveLabel;
+        }));
 
         if (dirty) {
             spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
