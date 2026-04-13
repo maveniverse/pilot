@@ -58,34 +58,26 @@ class TableNavigation {
      * @return {@code true} if the key was handled, {@code false} otherwise
      */
     static boolean handlePageKeys(KeyEvent key, TableState tableState, int listSize, int contentHeight, int overhead) {
+        if (listSize <= 0) {
+            return key.isKey(KeyCode.PAGE_UP) || key.isKey(KeyCode.PAGE_DOWN) || key.isHome() || key.isEnd();
+        }
+        int current = tableState.selected() != null ? tableState.selected() : 0;
         if (key.isKey(KeyCode.PAGE_UP)) {
-            if (listSize <= 0) {
-                return true;
-            }
             int pageSize = Math.max(1, contentHeight - overhead);
-            Integer sel = tableState.selected();
-            tableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
+            tableState.select(Math.max(0, current - pageSize));
             return true;
         }
         if (key.isKey(KeyCode.PAGE_DOWN)) {
-            if (listSize <= 0) {
-                return true;
-            }
             int pageSize = Math.max(1, contentHeight - overhead);
-            Integer sel = tableState.selected();
-            tableState.select(Math.min(listSize - 1, (sel != null ? sel : 0) + pageSize));
+            tableState.select(Math.min(listSize - 1, current + pageSize));
             return true;
         }
         if (key.isHome()) {
-            if (listSize > 0) {
-                tableState.select(0);
-            }
+            tableState.select(0);
             return true;
         }
         if (key.isEnd()) {
-            if (listSize > 0) {
-                tableState.select(listSize - 1);
-            }
+            tableState.select(listSize - 1);
             return true;
         }
         return false;
