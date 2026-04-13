@@ -947,15 +947,17 @@ class AuditTui {
 
     private static String normalizeSeverity(String severity) {
         if (severity == null) return "UNKNOWN";
-        return severity.toUpperCase();
+        String upper = severity.toUpperCase();
+        if ("MODERATE".equals(upper)) return "MEDIUM";
+        return upper;
     }
 
     private static Style getSeverityStyle(String severity) {
         if (severity == null) return Style.create().fg(Color.DARK_GRAY);
         return switch (severity.toUpperCase()) {
             case "CRITICAL" -> Style.create().fg(Color.RED).bold();
-            case "HIGH" -> Style.create().fg(Color.RED);
-            case "MEDIUM" -> Style.create().fg(Color.YELLOW);
+            case "HIGH" -> Style.create().fg(Color.rgb(255, 135, 0));
+            case "MEDIUM", "MODERATE" -> Style.create().fg(Color.YELLOW);
             case "LOW" -> Style.create();
             default -> {
                 if (severity.toUpperCase().startsWith("CVSS")) {
@@ -1152,7 +1154,7 @@ class AuditTui {
                         "Vulnerability Colors",
                         List.of(
                                 new HelpOverlay.Entry("red bold", "Critical severity"),
-                                new HelpOverlay.Entry("red", "High severity"),
+                                new HelpOverlay.Entry("orange", "High severity"),
                                 new HelpOverlay.Entry("yellow", "Medium severity"),
                                 new HelpOverlay.Entry("default", "Low severity"),
                                 new HelpOverlay.Entry("dim", "Unknown severity"))),
