@@ -19,9 +19,11 @@
 package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 
 import dev.tamboui.terminal.Terminal;
 import dev.tamboui.terminal.TestBackend;
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -74,8 +76,10 @@ class ReactorUpdatesTuiTest {
     }
 
     private void renderFrame(ReactorUpdatesTui tui) {
-        var terminal = new Terminal<>(new TestBackend(120, 30));
-        terminal.draw(tui::render);
+        assertThatNoException().isThrownBy(() -> {
+            var terminal = new Terminal<>(new TestBackend(120, 30));
+            terminal.draw(tui::render);
+        });
     }
 
     @Test
@@ -412,13 +416,9 @@ class ReactorUpdatesTuiTest {
 
         // Select row 1 = dependency under the group → detail pane shows dep info
         assertThat(tui.displayRows).hasSizeGreaterThanOrEqualTo(2);
-        var terminal = new Terminal<>(new TestBackend(120, 30));
-        // Move selection to the dependency row
-        terminal.draw(frame -> {
-            // Manually select the dependency row before rendering
-            tui.displayRows.get(1); // just verify it exists
-            tui.render(frame);
-        });
+        // Move selection down to the dependency row via key handler
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        renderFrame(tui);
     }
 
     @Test

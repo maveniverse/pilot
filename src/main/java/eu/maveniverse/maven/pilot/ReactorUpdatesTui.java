@@ -191,28 +191,31 @@ class ReactorUpdatesTui {
     }
 
     void updateStatusIfDone() {
-        if (loadedCount >= reactorResult.allDependencies.size()) {
-            loading = false;
-            for (var group : reactorResult.propertyGroups) {
-                for (var dep : group.dependencies) {
-                    if (dep.hasUpdate()) {
-                        if (group.newestVersion == null
-                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion)) {
-                            // Pick the most conservative (smallest) version available for all deps
-                            group.newestVersion = dep.newestVersion;
-                            group.updateType = dep.updateType;
-                        }
-                    }
+        if (loadedCount < reactorResult.allDependencies.size()) {
+            return;
+        }
+        loading = false;
+        computePropertyGroupVersions();
+        updateReactorCounts();
+        buildDisplayRows();
+        long updates = reactorResult.allDependencies.stream()
+                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
+                .count();
+        status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
+        if (failedCount > 0) {
+            status += "; " + failedCount + " lookup(s) failed";
+        }
+    }
+
+    private void computePropertyGroupVersions() {
+        for (var group : reactorResult.propertyGroups) {
+            for (var dep : group.dependencies) {
+                if (dep.hasUpdate()
+                        && (group.newestVersion == null
+                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion))) {
+                    group.newestVersion = dep.newestVersion;
+                    group.updateType = dep.updateType;
                 }
-            }
-            updateReactorCounts();
-            buildDisplayRows();
-            long updates = reactorResult.allDependencies.stream()
-                    .filter(ReactorCollector.AggregatedDependency::hasUpdate)
-                    .count();
-            status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
-            if (failedCount > 0) {
-                status += "; " + failedCount + " lookup(s) failed";
             }
         }
     }
@@ -920,22 +923,19 @@ class ReactorUpdatesTui {
         rows.add(Row.from(Cell.from(Line.from(List.of(
                 Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
 
-        // Scope(s) in use
+        // Scope(s) in use (default to "compile" when omitted)
         Set<String> scopes = new LinkedHashSet<>();
         for (var u : dep.usages) {
-            if (u.scope != null && !u.scope.isEmpty()) {
-                scopes.add(u.scope);
-            }
+            scopes.add(u.scope != null && !u.scope.isEmpty() ? u.scope : "compile");
         }
-        if (!scopes.isEmpty()) {
-            rows.add(Row.from(Cell.from(
-                    Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
-        }
+        rows.add(Row.from(
+                Cell.from(Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
 
         // Managed vs direct
-        boolean managed = dep.usages.stream().anyMatch(u -> u.managed);
-        rows.add(Row.from(
-                Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(managed ? "yes" : "no"))))));
+        boolean anyManaged = dep.usages.stream().anyMatch(u -> u.managed);
+        boolean allManaged = dep.usages.stream().allMatch(u -> u.managed);
+        String management = anyManaged ? (allManaged ? "yes" : "mixed") : "no";
+        rows.add(Row.from(Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(management))))));
 
         // Update info
         if (dep.hasUpdate()) {
