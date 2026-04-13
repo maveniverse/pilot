@@ -43,8 +43,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -111,6 +111,7 @@ class ReactorUpdatesTui {
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final HelpOverlay helpOverlay = new HelpOverlay();
+    private final TableState detailTableState = new TableState();
     boolean showDetails = true;
     private int lastContentHeight;
     String status = "Loading updates\u2026";
@@ -241,7 +242,7 @@ class ReactorUpdatesTui {
         for (var group : reactorResult.propertyGroups) {
             propertyCounts.merge(group.propertyName, 1, Integer::sum);
         }
-        duplicatePropertyNames = new HashSet<>();
+        duplicatePropertyNames = new LinkedHashSet<>();
         for (var entry : propertyCounts.entrySet()) {
             if (entry.getValue() > 1) {
                 duplicatePropertyNames.add(entry.getKey());
@@ -889,7 +890,7 @@ class ReactorUpdatesTui {
                     Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
 
             // Scope(s) in use
-            Set<String> scopes = new HashSet<>();
+            Set<String> scopes = new LinkedHashSet<>();
             for (var u : dep.usages) {
                 if (u.scope != null && !u.scope.isEmpty()) {
                     scopes.add(u.scope);
@@ -947,8 +948,7 @@ class ReactorUpdatesTui {
                 .block(block)
                 .build();
 
-        TableState detailState = new TableState();
-        frame.renderStatefulWidget(table, area, detailState);
+        frame.renderStatefulWidget(table, area, detailTableState);
     }
 
     private void renderModulesTable(Frame frame, Rect area) {
