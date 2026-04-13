@@ -20,6 +20,14 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.layout.Size;
+import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.pilot.TuiTestRunner;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +36,7 @@ import org.eclipse.aether.graph.DefaultDependencyNode;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AuditTuiTest {
 
@@ -284,5 +293,87 @@ class AuditTuiTest {
         LinkedHashMap<String, DependencyNode> moduleRoots = new LinkedHashMap<>();
         List<AuditTui.AuditEntry> entries = AuditTui.collectReactorEntries(moduleRoots);
         assertThat(entries).isEmpty();
+    }
+
+    @Test
+    void getScopeStyleReturnsDefaultForNull() {
+        Style style = AuditTui.getScopeStyle(null);
+        assertThat(style).isEqualTo(Style.create());
+    }
+
+    @Test
+    void getScopeStyleReturnsDefaultForCompile() {
+        assertThat(AuditTui.getScopeStyle("compile")).isEqualTo(Style.create());
+    }
+
+    @Test
+    void getScopeStyleReturnsDimForTest() {
+        assertThat(AuditTui.getScopeStyle("test")).isEqualTo(Style.create().fg(Color.DARK_GRAY));
+    }
+
+    @Test
+    void getScopeStyleReturnsDimForProvided() {
+        assertThat(AuditTui.getScopeStyle("provided")).isEqualTo(Style.create().fg(Color.DARK_GRAY));
+    }
+
+    @Test
+    void getScopeStyleReturnsYellowForRuntime() {
+        assertThat(AuditTui.getScopeStyle("runtime")).isEqualTo(Style.create().fg(Color.YELLOW));
+    }
+
+    @Test
+    void getScopeStyleNormalizesCase() {
+        assertThat(AuditTui.getScopeStyle("TEST")).isEqualTo(Style.create().fg(Color.DARK_GRAY));
+        assertThat(AuditTui.getScopeStyle("Runtime")).isEqualTo(Style.create().fg(Color.YELLOW));
+        assertThat(AuditTui.getScopeStyle("Provided")).isEqualTo(Style.create().fg(Color.DARK_GRAY));
+    }
+
+    @Test
+    void getScopeStyleTrimsWhitespace() {
+        assertThat(AuditTui.getScopeStyle("  test  ")).isEqualTo(Style.create().fg(Color.DARK_GRAY));
+        assertThat(AuditTui.getScopeStyle(" runtime ")).isEqualTo(Style.create().fg(Color.YELLOW));
+    }
+
+    @Test
+    void getScopeStyleReturnsDefaultForUnknown() {
+        assertThat(AuditTui.getScopeStyle("system")).isEqualTo(Style.create());
+        assertThat(AuditTui.getScopeStyle("import")).isEqualTo(Style.create());
+    }
+
+    @Test
+    void vulnerabilitiesViewShowsScopeColumn(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = new ArrayList<>();
+        var e1 = new AuditTui.AuditEntry("org.example", "vuln-lib", "1.0.0", "test");
+        e1.licenseLoaded = true;
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities =
+                List.of(new OsvClient.Vulnerability("CVE-2024-0001", "Test vuln", "HIGH", "2024-01-01", List.of()));
+        entries.add(e1);
+
+        var e2 = new AuditTui.AuditEntry("org.example", "prod-lib", "2.0.0", "compile");
+        e2.licenseLoaded = true;
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities =
+                List.of(new OsvClient.Vulnerability("CVE-2024-0002", "Prod vuln", "CRITICAL", "2024-02-01", List.of()));
+        entries.add(e2);
+
+        AuditTui tui = new AuditTui(entries, "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(120, 30))) {
+            var pilot = testRunner.pilot();
+
+            // Navigate to Vulnerabilities tab (Tab -> By License, Tab -> Vulnerabilities)
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.pause();
+
+            // Navigate down to exercise detail pane rendering with different scopes
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
     }
 }

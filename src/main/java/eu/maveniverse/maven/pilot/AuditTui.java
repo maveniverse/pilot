@@ -294,7 +294,7 @@ class AuditTui {
         }
     }
 
-    private void rebuildVulnRows() {
+    void rebuildVulnRows() {
         vulnRows = new ArrayList<>();
         for (var entry : entries) {
             if (entry.hasVulnerabilities()) {
@@ -1042,7 +1042,7 @@ class AuditTui {
         };
     }
 
-    private static Style getScopeStyle(String scope) {
+    static Style getScopeStyle(String scope) {
         if (scope == null) return Style.create();
         return switch (scope.trim().toLowerCase(Locale.ROOT)) {
             case "test" -> Style.create().fg(Color.DARK_GRAY);
