@@ -19,8 +19,12 @@
 package eu.maveniverse.maven.pilot;
 
 import static eu.maveniverse.maven.pilot.TestProjects.createProject;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.export.ExportRequest;
 import dev.tamboui.layout.Size;
+import dev.tamboui.terminal.Terminal;
+import dev.tamboui.terminal.TestBackend;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
@@ -30,6 +34,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ReactorUpdatesDemoTest {
+
+    private static final int WIDTH = 100;
+    private static final int HEIGHT = 24;
+
+    private String renderToText(dev.tamboui.tui.Renderer renderer) {
+        var terminal = new Terminal<>(new TestBackend(WIDTH, HEIGHT));
+        var frame = terminal.draw(renderer::render);
+        return ExportRequest.export(frame.buffer()).text().toString();
+    }
 
     @Test
     void browseAndSwitchViews(@TempDir java.nio.file.Path tempDir) throws Exception {
@@ -42,17 +55,27 @@ class ReactorUpdatesDemoTest {
         tui.loading = false;
         tui.status = "No updates";
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
+
+            // Initial view should show Dependencies tab active
+            String rendered = renderToText(tui::render);
+            assertThat(rendered).contains("Dependencies");
 
             // Switch to Modules view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
+            rendered = renderToText(tui::render);
+            assertThat(rendered).contains("Modules");
+
             // Switch back to Dependencies view
             pilot.press(KeyCode.TAB);
             pilot.pause();
+
+            rendered = renderToText(tui::render);
+            assertThat(rendered).contains("Dependencies");
 
             pilot.press('q');
         }
