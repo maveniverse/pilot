@@ -911,19 +911,22 @@ class AuditTui {
         for (var vr : vulnRows) {
             String severity = normalizeSeverity(vr.vuln.severity);
             String summary = vr.vuln.summary.length() > 60 ? vr.vuln.summary.substring(0, 57) + "..." : vr.vuln.summary;
-            rows.add(Row.from(vr.entry.ga() + ":" + vr.entry.version, vr.vuln.id, severity, summary)
+            rows.add(Row.from(vr.entry.ga() + ":" + vr.entry.version, vr.vuln.id, severity, vr.entry.scope, summary)
                     .style(getSeverityStyle(severity)));
         }
 
-        Row header = Row.from("artifact", "CVE/ID", "severity", "summary")
+        Row header = Row.from("artifact", "CVE/ID", "severity", "scope", "summary")
                 .style(Style.create().bold().yellow());
 
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
                 .widths(
-                        Constraint.percentage(30), Constraint.percentage(18),
-                        Constraint.percentage(10), Constraint.percentage(42))
+                        Constraint.percentage(28),
+                        Constraint.percentage(17),
+                        Constraint.percentage(10),
+                        Constraint.percentage(8),
+                        Constraint.percentage(37))
                 .highlightStyle(Style.create().reversed().bold())
                 .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
@@ -958,6 +961,8 @@ class AuditTui {
                 Span.raw(vuln.id).bold().cyan().hyperlink(url),
                 Span.raw("  "),
                 Span.raw(severity).style(getSeverityStyle(severity).bold()),
+                Span.raw("  scope: ").fg(Color.DARK_GRAY),
+                Span.raw(vr.entry.scope).style(getScopeStyle(vr.entry.scope)),
                 Span.raw("  "),
                 Span.raw(vr.entry.ga() + ":" + vr.entry.version)
                         .fg(Color.DARK_GRAY)
@@ -1024,6 +1029,16 @@ class AuditTui {
                 }
                 yield Style.create().fg(Color.DARK_GRAY);
             }
+        };
+    }
+
+    private static Style getScopeStyle(String scope) {
+        if (scope == null) return Style.create();
+        return switch (scope) {
+            case "test" -> Style.create().fg(Color.DARK_GRAY);
+            case "provided" -> Style.create().fg(Color.DARK_GRAY);
+            case "runtime" -> Style.create().fg(Color.YELLOW);
+            default -> Style.create();
         };
     }
 
