@@ -75,7 +75,7 @@ class ReactorUpdatesTui {
         MAJOR
     }
 
-    private static class ReactorRow {
+    static class ReactorRow {
         final ReactorCollector.PropertyGroup propertyGroup;
         final ReactorCollector.AggregatedDependency dependency;
 
@@ -106,12 +106,12 @@ class ReactorUpdatesTui {
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
 
     private View view = View.DEPENDENCIES;
-    private List<ReactorRow> displayRows = new ArrayList<>();
-    private Set<String> duplicatePropertyNames = Set.of();
+    List<ReactorRow> displayRows = new ArrayList<>();
+    Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final HelpOverlay helpOverlay = new HelpOverlay();
-    private boolean showDetails = true;
+    boolean showDetails = true;
     private int lastContentHeight;
     String status = "Loading updates\u2026";
     boolean loading = true;
@@ -233,7 +233,7 @@ class ReactorUpdatesTui {
         reactorModel.recomputeCounts();
     }
 
-    private void buildDisplayRows() {
+    void buildDisplayRows() {
         displayRows = new ArrayList<>();
 
         // Identify property names that appear in multiple groups (from different POMs)
