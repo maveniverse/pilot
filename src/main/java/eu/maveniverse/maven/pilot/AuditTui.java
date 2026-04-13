@@ -308,7 +308,9 @@ class AuditTui {
                 }
             }
         }
-        if (!vulnRows.isEmpty() && vulnTableState.selected() == null) {
+        if (vulnRows.isEmpty()) {
+            vulnTableState.clearSelection();
+        } else if (vulnTableState.selected() == null || vulnTableState.selected() >= vulnRows.size()) {
             vulnTableState.select(0);
         }
     }
@@ -381,7 +383,9 @@ class AuditTui {
             }
         }
 
-        if (!byLicenseRows.isEmpty() && byLicenseTableState.selected() == null) {
+        if (byLicenseRows.isEmpty()) {
+            byLicenseTableState.clearSelection();
+        } else if (byLicenseTableState.selected() == null || byLicenseTableState.selected() >= byLicenseRows.size()) {
             byLicenseTableState.select(0);
         }
     }
@@ -927,14 +931,20 @@ class AuditTui {
 
     private void renderVulnerabilities(Frame frame, Rect area) {
         if (vulnRows.isEmpty()) {
+            String filterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
             Block block = Block.builder()
-                    .title(" Vulnerabilities ")
+                    .title(" Vulnerabilities" + filterLabel + " ")
                     .borderType(BorderType.ROUNDED)
                     .borderStyle(Style.create().fg(Color.DARK_GRAY))
                     .build();
-            String msg = (vulnsLoaded >= entries.size())
-                    ? "No known vulnerabilities found \u2713"
-                    : "Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size();
+            String msg;
+            if (vulnsLoaded < entries.size()) {
+                msg = "Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size();
+            } else if (scopeFilter != null) {
+                msg = "No known vulnerabilities in " + scopeFilter + " scope";
+            } else {
+                msg = "No known vulnerabilities found \u2713";
+            }
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
