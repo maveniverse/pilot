@@ -55,9 +55,9 @@ under the License.
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
-    <mavenVersion>3.9.9</mavenVersion>
+    <mavenVersion>3.9.14</mavenVersion>
     <tamboui.version>0.1.0</tamboui.version>
-    <domtrip.version>1.2.0</domtrip.version>
+    <domtrip.version>1.3.0</domtrip.version>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
@@ -126,7 +126,7 @@ under the License.
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm</artifactId>
-      <version>9.7.1</version>
+      <version>9.9.1</version>
     </dependency>
 
     <!-- JSON -->
@@ -140,13 +140,13 @@ under the License.
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>5.11.4</version>
+      <version>5.14.3</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
-      <version>3.27.3</version>
+      <version>3.27.7</version>
       <scope>test</scope>
     </dependency>
     <dependency>
