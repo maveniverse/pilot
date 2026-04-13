@@ -356,24 +356,7 @@ class AuditTui {
             activeTableState().selectNext(activeRowCount());
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = activeTableState().selected();
-            activeTableState().select(Math.max(0, (sel != null ? sel : 0) - pageSize));
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = activeTableState().selected();
-            activeTableState().select(Math.min(activeRowCount() - 1, (sel != null ? sel : 0) + pageSize));
-            return true;
-        }
-        if (key.isHome()) {
-            activeTableState().select(0);
-            return true;
-        }
-        if (key.isEnd()) {
-            activeTableState().select(activeRowCount() - 1);
+        if (TableNavigation.handlePageKeys(key, activeTableState(), activeRowCount(), lastContentHeight)) {
             return true;
         }
 

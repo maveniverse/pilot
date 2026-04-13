@@ -243,22 +243,7 @@ class PomTui {
             tableState.selectNext(visible.size());
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            tableState.select(Math.max(0, selectedIndex() - pageSize));
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            tableState.select(Math.min(visible.size() - 1, selectedIndex() + pageSize));
-            return true;
-        }
-        if (key.isHome()) {
-            tableState.select(0);
-            return true;
-        }
-        if (key.isEnd()) {
-            tableState.select(visible.size() - 1);
+        if (TableNavigation.handlePageKeys(key, tableState, visible.size(), lastContentHeight)) {
             return true;
         }
 

@@ -351,25 +351,7 @@ class UpdatesTui {
             fetchPomInfoIfNeeded();
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            tableState.select(Math.max(0, selectedIndex() - pageSize));
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            tableState.select(Math.min(displayDeps.size() - 1, selectedIndex() + pageSize));
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isHome()) {
-            tableState.select(0);
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isEnd()) {
-            tableState.select(displayDeps.size() - 1);
+        if (TableNavigation.handlePageKeys(key, tableState, displayDeps.size(), lastContentHeight)) {
             fetchPomInfoIfNeeded();
             return true;
         }

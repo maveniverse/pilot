@@ -326,24 +326,7 @@ class ReactorUpdatesTui {
             tableState.selectNext(displayRows.size());
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = tableState.selected();
-            tableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = tableState.selected();
-            tableState.select(Math.min(displayRows.size() - 1, (sel != null ? sel : 0) + pageSize));
-            return true;
-        }
-        if (key.isHome()) {
-            tableState.select(0);
-            return true;
-        }
-        if (key.isEnd()) {
-            tableState.select(displayRows.size() - 1);
+        if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
             return true;
         }
         if (key.isCharIgnoreCase(' ')) {
@@ -404,24 +387,7 @@ class ReactorUpdatesTui {
             moduleTableState.selectNext(visible.size());
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = moduleTableState.selected();
-            moduleTableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            Integer sel = moduleTableState.selected();
-            moduleTableState.select(Math.min(visible.size() - 1, (sel != null ? sel : 0) + pageSize));
-            return true;
-        }
-        if (key.isHome()) {
-            moduleTableState.select(0);
-            return true;
-        }
-        if (key.isEnd()) {
-            moduleTableState.select(visible.size() - 1);
+        if (TableNavigation.handlePageKeys(key, moduleTableState, visible.size(), lastContentHeight)) {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {

@@ -343,37 +343,12 @@ class SearchTui {
             fetchPomInfoIfNeeded();
             return true;
         }
-        if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            tableState.select(Math.max(0, selectedIndex() - pageSize));
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, lastContentHeight - 3);
-            int target = Math.min(artifacts.size() - 1, selectedIndex() + pageSize);
-            if (target >= 0) {
-                tableState.select(target);
-                if (target >= artifacts.size() / 2 && artifacts.size() < totalFound) {
-                    prefetchMoreResults();
-                }
+        if (TableNavigation.handlePageKeys(key, tableState, artifacts.size(), lastContentHeight)) {
+            int sel = selectedIndex();
+            if (sel >= artifacts.size() / 2 && artifacts.size() < totalFound) {
+                prefetchMoreResults();
             }
             fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isHome()) {
-            tableState.select(0);
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isEnd()) {
-            if (!artifacts.isEmpty()) {
-                tableState.select(artifacts.size() - 1);
-                if (artifacts.size() < totalFound) {
-                    prefetchMoreResults();
-                }
-                fetchPomInfoIfNeeded();
-            }
             return true;
         }
         if (key.isLeft()) {
