@@ -32,6 +32,21 @@ class TableNavigation {
 
     private TableNavigation() {}
 
+    /** Overhead for a bordered table with a header row (top border + header + bottom border). */
+    static final int BORDERED_WITH_HEADER = 3;
+
+    /** Overhead for a bordered table without a header row (top border + bottom border). */
+    static final int BORDERED_NO_HEADER = 2;
+
+    /**
+     * Handle page-navigation keys for a bordered table with a header row.
+     *
+     * @see #handlePageKeys(KeyEvent, TableState, int, int, int)
+     */
+    static boolean handlePageKeys(KeyEvent key, TableState tableState, int listSize, int contentHeight) {
+        return handlePageKeys(key, tableState, listSize, contentHeight, BORDERED_WITH_HEADER);
+    }
+
     /**
      * Handle page-navigation keys (Page Up/Down, Home/End) for a table.
      *
@@ -39,23 +54,32 @@ class TableNavigation {
      * @param tableState    the table state to update
      * @param listSize      total number of rows in the table
      * @param contentHeight the visible content area height (from the layout zone)
+     * @param overhead      rows consumed by borders and header (subtracted from contentHeight to get page size)
      * @return {@code true} if the key was handled, {@code false} otherwise
      */
-    static boolean handlePageKeys(KeyEvent key, TableState tableState, int listSize, int contentHeight) {
+    static boolean handlePageKeys(KeyEvent key, TableState tableState, int listSize, int contentHeight, int overhead) {
         if (key.isKey(KeyCode.PAGE_UP)) {
-            int pageSize = Math.max(1, contentHeight - 3);
+            if (listSize <= 0) {
+                return true;
+            }
+            int pageSize = Math.max(1, contentHeight - overhead);
             Integer sel = tableState.selected();
             tableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
             return true;
         }
         if (key.isKey(KeyCode.PAGE_DOWN)) {
-            int pageSize = Math.max(1, contentHeight - 3);
+            if (listSize <= 0) {
+                return true;
+            }
+            int pageSize = Math.max(1, contentHeight - overhead);
             Integer sel = tableState.selected();
-            tableState.select(Math.min(Math.max(0, listSize - 1), (sel != null ? sel : 0) + pageSize));
+            tableState.select(Math.min(listSize - 1, (sel != null ? sel : 0) + pageSize));
             return true;
         }
         if (key.isHome()) {
-            tableState.select(0);
+            if (listSize > 0) {
+                tableState.select(0);
+            }
             return true;
         }
         if (key.isEnd()) {

@@ -147,4 +147,39 @@ class TableNavigationTest {
         assertThat(handled).isTrue();
         assertThat(ts.selected()).isEqualTo(6);
     }
+
+    @Test
+    void homeWithEmptyList() {
+        TableState ts = new TableState();
+        boolean handled = TableNavigation.handlePageKeys(homeEvent(), ts, 0, 24);
+        assertThat(handled).isTrue();
+        assertThat(ts.selected()).isNull();
+    }
+
+    @Test
+    void pageDownWithEmptyList() {
+        TableState ts = new TableState();
+        boolean handled = TableNavigation.handlePageKeys(keyEvent(KeyCode.PAGE_DOWN), ts, 0, 24);
+        assertThat(handled).isTrue();
+        assertThat(ts.selected()).isNull();
+    }
+
+    @Test
+    void pageUpWithEmptyList() {
+        TableState ts = new TableState();
+        boolean handled = TableNavigation.handlePageKeys(keyEvent(KeyCode.PAGE_UP), ts, 0, 24);
+        assertThat(handled).isTrue();
+        assertThat(ts.selected()).isNull();
+    }
+
+    @Test
+    void noHeaderOverheadUsesLargerPageSize() {
+        TableState ts = new TableState();
+        ts.select(0);
+        // contentHeight=24, overhead=2 -> pageSize = max(1, 24-2) = 22
+        boolean handled = TableNavigation.handlePageKeys(
+                keyEvent(KeyCode.PAGE_DOWN), ts, 50, 24, TableNavigation.BORDERED_NO_HEADER);
+        assertThat(handled).isTrue();
+        assertThat(ts.selected()).isEqualTo(22);
+    }
 }

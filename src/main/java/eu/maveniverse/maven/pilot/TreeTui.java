@@ -173,7 +173,8 @@ class TreeTui {
             fetchPomInfoIfNeeded();
             return true;
         }
-        if (TableNavigation.handlePageKeys(key, tableState, displayNodes.size(), lastContentHeight)) {
+        if (TableNavigation.handlePageKeys(
+                key, tableState, displayNodes.size(), lastContentHeight, TableNavigation.BORDERED_NO_HEADER)) {
             fetchPomInfoIfNeeded();
             return true;
         }

@@ -506,7 +506,6 @@ class AuditTui {
 
         renderHeader(frame, zones.get(0));
 
-        lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
         } else if (diffOverlay.isActive()) {
@@ -557,6 +556,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastContentHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" Licenses (" + entries.size() + " dependencies) ")
@@ -718,6 +718,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastContentHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" By License (" + countLicenseGroups() + " licenses) ")
@@ -843,6 +844,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(8))
                 .split(area);
+        lastContentHeight = zones.get(0).height();
 
         // -- Vulnerability table --
         Block block = Block.builder()

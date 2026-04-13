@@ -243,7 +243,8 @@ class PomTui {
             tableState.selectNext(visible.size());
             return true;
         }
-        if (TableNavigation.handlePageKeys(key, tableState, visible.size(), lastContentHeight)) {
+        if (TableNavigation.handlePageKeys(
+                key, tableState, visible.size(), lastContentHeight, TableNavigation.BORDERED_NO_HEADER)) {
             return true;
         }
 

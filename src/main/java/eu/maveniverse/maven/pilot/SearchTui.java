@@ -360,7 +360,7 @@ class SearchTui {
         int before = selectedIndex();
         tableState.selectNext(artifacts.size());
         int after = selectedIndex();
-        if (before == after && artifacts.size() < totalFound) {
+        if (before == after && artifacts.size() < totalFound && !prefetchingMore) {
             fetchMoreResultsSync();
         } else {
             prefetchIfNearBottom();
