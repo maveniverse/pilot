@@ -302,7 +302,7 @@ class AuditTui {
         vulnRows = new ArrayList<>();
         for (var entry : entries) {
             if (entry.hasVulnerabilities()) {
-                if (scopeFilter != null && !scopeFilter.equals(entry.scope)) continue;
+                if (scopeFilter != null && !scopeFilter.equalsIgnoreCase(entry.scope)) continue;
                 for (var vuln : entry.vulnerabilities) {
                     vulnRows.add(new VulnRow(entry, vuln));
                 }
@@ -319,7 +319,7 @@ class AuditTui {
         } else {
             filteredEntries = new ArrayList<>();
             for (var entry : entries) {
-                if (scopeFilter.equals(entry.scope)) {
+                if (scopeFilter.equalsIgnoreCase(entry.scope)) {
                     filteredEntries.add(entry);
                 }
             }
@@ -355,7 +355,7 @@ class AuditTui {
         var urls = new HashMap<String, String>();
         for (var entry : entries) {
             if (!entry.licenseLoaded) continue;
-            if (scopeFilter != null && !scopeFilter.equals(entry.scope)) continue;
+            if (scopeFilter != null && !scopeFilter.equalsIgnoreCase(entry.scope)) continue;
             String key = entry.license != null ? normalizeLicense(entry.license, entry.licenseUrl) : "(not specified)";
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(entry);
             if (entry.licenseUrl != null && !urls.containsKey(key)) {

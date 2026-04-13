@@ -362,6 +362,13 @@ class AuditTuiTest {
         e3.vulnerabilities = List.of();
         entries.add(e3);
 
+        var e4 = new AuditTui.AuditEntry("org.example", "provided-lib", "4.0.0", "provided");
+        e4.licenseLoaded = true;
+        e4.vulnsLoaded = true;
+        e4.vulnerabilities =
+                List.of(new OsvClient.Vulnerability("CVE-2024-0003", "Provided vuln", "LOW", "2024-03-01", List.of()));
+        entries.add(e4);
+
         return entries;
     }
 
@@ -400,7 +407,7 @@ class AuditTuiTest {
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(120, 30))) {
             var pilot = testRunner.pilot();
 
-            // Initially shows all entries (3)
+            // Initially shows all entries (4)
             pilot.pause();
 
             // Press 's' to filter to compile scope
@@ -433,6 +440,9 @@ class AuditTuiTest {
             pilot.pause();
 
             pilot.press('s'); // test — only CVE-2024-0001 visible
+            pilot.pause();
+
+            pilot.press('s'); // provided — only CVE-2024-0003 visible
             pilot.pause();
         }
     }
