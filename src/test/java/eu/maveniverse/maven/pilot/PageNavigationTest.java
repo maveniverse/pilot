@@ -238,6 +238,11 @@ class PageNavigationTest {
             // Switch to table focus
             pilot.press(KeyCode.TAB);
             pilot.pause();
+            // Down key (exercises handleDownKey + prefetchIfNearBottom)
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
             pilot.press(KeyCode.PAGE_DOWN);
             pilot.pause();
             pilot.press(KeyCode.PAGE_UP);

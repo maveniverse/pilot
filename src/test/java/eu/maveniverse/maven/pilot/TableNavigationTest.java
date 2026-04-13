@@ -74,7 +74,7 @@ class TableNavigationTest {
         ts.select(3);
         boolean handled = TableNavigation.handlePageKeys(keyEvent(KeyCode.PAGE_UP), ts, 50, 24);
         assertThat(handled).isTrue();
-        assertThat(ts.selected()).isEqualTo(0);
+        assertThat(ts.selected()).isZero();
     }
 
     @Test
