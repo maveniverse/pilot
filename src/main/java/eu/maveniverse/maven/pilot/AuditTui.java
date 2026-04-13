@@ -89,6 +89,8 @@ class AuditTui {
         }
     }
 
+    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
+
     private enum View {
         LICENSES,
         BY_LICENSE,
@@ -575,7 +577,7 @@ class AuditTui {
                         Constraint.percentage(40), Constraint.percentage(15),
                         Constraint.percentage(30), Constraint.percentage(15))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -720,7 +722,7 @@ class AuditTui {
         List<Row> rows = new ArrayList<>();
         for (var row : byLicenseRows) {
             if (row.isGroup()) {
-                String arrow = row.expanded ? "\u25BE " : "\u25B8 ";
+                String arrow = row.expanded ? "\u25BE " : HIGHLIGHT_SYMBOL;
                 String label = arrow + row.licenseName + " (" + row.deps.size() + ")";
                 rows.add(Row.from(label, "", "", "")
                         .style(getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
@@ -741,7 +743,7 @@ class AuditTui {
                         Constraint.percentage(55), Constraint.percentage(20),
                         Constraint.percentage(15), Constraint.percentage(10))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -861,7 +863,7 @@ class AuditTui {
                         Constraint.percentage(30), Constraint.percentage(18),
                         Constraint.percentage(10), Constraint.percentage(42))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 

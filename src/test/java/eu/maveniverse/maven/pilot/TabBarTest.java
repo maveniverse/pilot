@@ -40,14 +40,14 @@ class TabBarTest {
 
     @Test
     void renderProducesCorrectSpanCount() {
-        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), v -> v.name());
+        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), Enum::name);
         // 2 tabs * 2 spans each (separator + tab label) = 4
         assertThat(spans).hasSize(4);
     }
 
     @Test
     void renderThreeTabsProducesCorrectSpanCount() {
-        List<Span> spans = TabBar.render(ThreeTabs.A, ThreeTabs.values(), v -> v.name());
+        List<Span> spans = TabBar.render(ThreeTabs.A, ThreeTabs.values(), Enum::name);
         // 3 tabs * 2 spans each = 6
         assertThat(spans).hasSize(6);
     }
@@ -76,7 +76,7 @@ class TabBarTest {
 
     @Test
     void renderWithCustomActiveColor() {
-        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), v -> v.name(), v -> Color.RED);
+        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), Enum::name, v -> Color.RED);
         // Active tab should use the custom color
         assertThat(spans.get(1).style().fg()).contains(Color.RED);
         // Inactive tab should use DARK_GRAY
@@ -85,7 +85,7 @@ class TabBarTest {
 
     @Test
     void renderDefaultActiveColorIsYellow() {
-        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), v -> v.name());
+        List<Span> spans = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), Enum::name);
         assertThat(spans.get(1).style().fg()).contains(Color.YELLOW);
     }
 
@@ -104,8 +104,8 @@ class TabBarTest {
 
     @Test
     void renderSwitchingActiveTab() {
-        List<Span> spansFirst = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), v -> v.name());
-        List<Span> spansSecond = TabBar.render(TwoTabs.SECOND, TwoTabs.values(), v -> v.name());
+        List<Span> spansFirst = TabBar.render(TwoTabs.FIRST, TwoTabs.values(), Enum::name);
+        List<Span> spansSecond = TabBar.render(TwoTabs.SECOND, TwoTabs.values(), Enum::name);
 
         // First tab active in spansFirst, inactive in spansSecond
         assertThat(spansFirst.get(1).style().fg()).contains(Color.YELLOW);
