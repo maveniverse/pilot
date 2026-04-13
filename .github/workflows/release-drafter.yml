@@ -18,6 +18,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run release drafter
+        id: drafter
         uses: release-drafter/release-drafter@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        if: github.event_name == 'push'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Sync draft release version with build
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(./mvnw help:evaluate -Dexpression=project.version -DforceStdout -B -q -N)
+          RELEASE_VERSION=${VERSION%-SNAPSHOT}
+          echo "Build version: $VERSION -> Release version: $RELEASE_VERSION"
+          gh api repos/${{ github.repository }}/releases/${{ steps.drafter.outputs.id }} \
+            -X PATCH \
+            -f name="$RELEASE_VERSION" \
+            -f tag_name="$RELEASE_VERSION"
