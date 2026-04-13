@@ -33,6 +33,7 @@ import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -43,8 +44,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -72,7 +75,7 @@ class ReactorUpdatesTui {
         MAJOR
     }
 
-    private static class ReactorRow {
+    static class ReactorRow {
         final ReactorCollector.PropertyGroup propertyGroup;
         final ReactorCollector.AggregatedDependency dependency;
 
@@ -103,10 +106,13 @@ class ReactorUpdatesTui {
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
 
     private View view = View.DEPENDENCIES;
-    private List<ReactorRow> displayRows = new ArrayList<>();
+    List<ReactorRow> displayRows = new ArrayList<>();
+    Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final HelpOverlay helpOverlay = new HelpOverlay();
+    private final TableState detailTableState = new TableState();
+    boolean showDetails = true;
     private int lastContentHeight;
     String status = "Loading updates\u2026";
     boolean loading = true;
@@ -184,29 +190,32 @@ class ReactorUpdatesTui {
         }
     }
 
-    private void updateStatusIfDone() {
-        if (loadedCount >= reactorResult.allDependencies.size()) {
-            loading = false;
-            for (var group : reactorResult.propertyGroups) {
-                for (var dep : group.dependencies) {
-                    if (dep.hasUpdate()) {
-                        if (group.newestVersion == null
-                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion)) {
-                            // Pick the most conservative (smallest) version available for all deps
-                            group.newestVersion = dep.newestVersion;
-                            group.updateType = dep.updateType;
-                        }
-                    }
+    void updateStatusIfDone() {
+        if (loadedCount < reactorResult.allDependencies.size()) {
+            return;
+        }
+        loading = false;
+        computePropertyGroupVersions();
+        updateReactorCounts();
+        buildDisplayRows();
+        long updates = reactorResult.allDependencies.stream()
+                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
+                .count();
+        status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
+        if (failedCount > 0) {
+            status += "; " + failedCount + " lookup(s) failed";
+        }
+    }
+
+    private void computePropertyGroupVersions() {
+        for (var group : reactorResult.propertyGroups) {
+            for (var dep : group.dependencies) {
+                if (dep.hasUpdate()
+                        && (group.newestVersion == null
+                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion))) {
+                    group.newestVersion = dep.newestVersion;
+                    group.updateType = dep.updateType;
                 }
-            }
-            updateReactorCounts();
-            buildDisplayRows();
-            long updates = reactorResult.allDependencies.stream()
-                    .filter(ReactorCollector.AggregatedDependency::hasUpdate)
-                    .count();
-            status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
-            if (failedCount > 0) {
-                status += "; " + failedCount + " lookup(s) failed";
             }
         }
     }
@@ -228,8 +237,24 @@ class ReactorUpdatesTui {
         reactorModel.recomputeCounts();
     }
 
-    private void buildDisplayRows() {
+    private static Set<String> computeDuplicatePropertyNames(List<ReactorCollector.PropertyGroup> propertyGroups) {
+        Map<String, Integer> propertyCounts = new LinkedHashMap<>();
+        for (var group : propertyGroups) {
+            propertyCounts.merge(group.propertyName, 1, Integer::sum);
+        }
+        Set<String> duplicates = new LinkedHashSet<>();
+        for (var entry : propertyCounts.entrySet()) {
+            if (entry.getValue() > 1) {
+                duplicates.add(entry.getKey());
+            }
+        }
+        return duplicates;
+    }
+
+    void buildDisplayRows() {
         displayRows = new ArrayList<>();
+        duplicatePropertyNames = computeDuplicatePropertyNames(reactorResult.propertyGroups);
+
         for (var group : reactorResult.propertyGroups) {
             boolean groupHasUpdate = group.hasUpdate()
                     || group.dependencies.stream().anyMatch(ReactorCollector.AggregatedDependency::hasUpdate);
@@ -371,6 +396,10 @@ class ReactorUpdatesTui {
         }
         if (key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelp());
+            return true;
+        }
+        if (key.isCharIgnoreCase('i')) {
+            showDetails = !showDetails;
             return true;
         }
         return false;
@@ -670,8 +699,14 @@ class ReactorUpdatesTui {
     // -- Rendering --
 
     void render(Frame frame) {
+        boolean detailsVisible =
+                showDetails && view == View.DEPENDENCIES && !diffOverlay.isActive() && !helpOverlay.isActive();
         var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
+                .constraints(
+                        Constraint.length(3),
+                        Constraint.fill(),
+                        detailsVisible ? Constraint.percentage(30) : Constraint.length(0),
+                        Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
@@ -682,10 +717,13 @@ class ReactorUpdatesTui {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else if (view == View.DEPENDENCIES) {
             renderDepsTable(frame, zones.get(1));
+            if (detailsVisible) {
+                renderDetailPane(frame, zones.get(2));
+            }
         } else {
             renderModulesTable(frame, zones.get(1));
         }
-        renderInfoBar(frame, zones.get(2));
+        renderInfoBar(frame, zones.get(3));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -766,6 +804,9 @@ class ReactorUpdatesTui {
             var group = row.propertyGroup;
             String check = group.selected ? "[\u2713]" : "[ ]";
             String name = "${" + group.propertyName + "}";
+            if (duplicatePropertyNames.contains(group.propertyName)) {
+                name += " (" + group.origin.getArtifactId() + ")";
+            }
             String current = group.resolvedVersion != null ? group.resolvedVersion : "";
             String arrow = group.hasUpdate() ? "\u2192" : "";
             String available = group.hasUpdate() ? group.newestVersion : "";
@@ -798,6 +839,139 @@ class ReactorUpdatesTui {
 
             return Row.from(check, ga, current, arrow, available, info).style(style);
         }
+    }
+
+    private void renderDetailPane(Frame frame, Rect area) {
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= displayRows.size()) return;
+
+        var row = displayRows.get(sel);
+        String title;
+        List<Row> rows;
+
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            title = " " + group.rawExpression + " \u2014 Details ";
+            rows = buildGroupDetailRows(group);
+        } else if (row.dependency != null) {
+            var dep = row.dependency;
+            title = " " + dep.ga() + " \u2014 Details ";
+            rows = buildDependencyDetailRows(dep);
+        } else {
+            return;
+        }
+
+        Block block = Block.builder()
+                .title(title)
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().cyan())
+                .build();
+
+        Table table = Table.builder()
+                .rows(rows)
+                .widths(Constraint.fill())
+                .block(block)
+                .build();
+
+        frame.renderStatefulWidget(table, area, detailTableState);
+    }
+
+    private List<Row> buildGroupDetailRows(ReactorCollector.PropertyGroup group) {
+        List<Row> rows = new ArrayList<>();
+
+        // Origin POM path (relative to reactor root)
+        Path originPath = group.origin.getFile().toPath();
+        Path rootPath = reactorModel.root.project.getBasedir().toPath();
+        String relativePom = rootPath.relativize(originPath).toString();
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Origin:    ").bold(), Span.raw(relativePom).fg(Color.DARK_GRAY))))));
+
+        // Current → available version
+        String value = group.resolvedVersion != null ? group.resolvedVersion : "?";
+        if (group.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Version:   ").bold(),
+                    Span.raw(value),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(group.newestVersion).fg(Color.GREEN))))));
+        } else {
+            rows.add(
+                    Row.from(Cell.from(Line.from(List.of(Span.raw("Version:   ").bold(), Span.raw(value))))));
+        }
+
+        // Managed artifacts
+        List<Span> artSpans = new ArrayList<>();
+        artSpans.add(Span.raw("Artifacts: ").bold());
+        for (int i = 0; i < group.dependencies.size(); i++) {
+            if (i > 0) artSpans.add(Span.raw(", ").dim());
+            artSpans.add(Span.raw(group.dependencies.get(i).artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(artSpans))));
+
+        // Module count
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
+
+        return rows;
+    }
+
+    private List<Row> buildDependencyDetailRows(ReactorCollector.AggregatedDependency dep) {
+        List<Row> rows = new ArrayList<>();
+
+        // Full GAV
+        String version = dep.primaryVersion != null ? dep.primaryVersion : "?";
+        rows.add(Row.from(Cell.from(Line.from(List.of(
+                Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
+
+        // Scope(s) in use (default to "compile" when omitted)
+        Set<String> scopes = new LinkedHashSet<>();
+        for (var u : dep.usages) {
+            scopes.add(u.scope != null && !u.scope.isEmpty() ? u.scope : "compile");
+        }
+        rows.add(Row.from(
+                Cell.from(Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
+
+        // Managed vs direct
+        boolean anyManaged = dep.usages.stream().anyMatch(u -> u.managed);
+        boolean allManaged = dep.usages.stream().allMatch(u -> u.managed);
+        String management;
+        if (allManaged) {
+            management = "yes";
+        } else if (anyManaged) {
+            management = "mixed";
+        } else {
+            management = "no";
+        }
+        rows.add(Row.from(Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(management))))));
+
+        // Update info
+        if (dep.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Update:    ").bold(),
+                    Span.raw(dep.primaryVersion),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(dep.newestVersion).fg(Color.GREEN))))));
+        }
+
+        // Which modules use this dependency
+        List<Span> modSpans = new ArrayList<>();
+        modSpans.add(Span.raw("Modules:   ").bold());
+        for (int i = 0; i < dep.usages.size(); i++) {
+            if (i > 0) modSpans.add(Span.raw(", ").dim());
+            modSpans.add(Span.raw(dep.usages.get(i).project.getArtifactId()));
+        }
+        rows.add(Row.from(Cell.from(Line.from(modSpans))));
+
+        // Property origin (if property-managed)
+        if (dep.isPropertyManaged()) {
+            String propOrigin = dep.propertyOrigin != null ? dep.propertyOrigin.getArtifactId() : "?";
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Property:  ").bold(),
+                    Span.raw(dep.rawVersionExpr).fg(Color.CYAN),
+                    Span.raw(" (" + propOrigin + ")").dim())))));
+        }
+
+        return rows;
     }
 
     private void renderModulesTable(Frame frame, Rect area) {
@@ -917,6 +1091,8 @@ class ReactorUpdatesTui {
                 spans.add(Span.raw(":Apply  "));
                 spans.add(Span.raw("1-4").bold());
                 spans.add(Span.raw(":Filter  "));
+                spans.add(Span.raw("i").bold());
+                spans.add(Span.raw(":Details  "));
                 spans.add(Span.raw("h").bold());
                 spans.add(Span.raw(":Help  "));
             } else {
@@ -968,7 +1144,8 @@ class ReactorUpdatesTui {
                                 new HelpOverlay.Entry("a / n", "Select all / deselect all"),
                                 new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
                                 new HelpOverlay.Entry("1-4", "Filter: all / patch / minor / major"),
-                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"))),
+                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"),
+                                new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))),
                 new HelpOverlay.Section(
                         "Modules View",
                         List.of(
