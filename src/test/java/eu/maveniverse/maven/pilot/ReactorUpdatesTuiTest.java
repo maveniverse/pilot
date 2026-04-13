@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.tamboui.terminal.Terminal;
 import dev.tamboui.terminal.TestBackend;
+import dev.tamboui.tui.event.KeyEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -214,16 +215,16 @@ class ReactorUpdatesTuiTest {
     }
 
     @Test
-    void showDetailsCanBeToggled() {
+    void showDetailsCanBeToggledViaKeyHandler() {
         MavenProject project = createProject("com.example", "app", "1.0", tempDir);
         ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
 
         var tui = createTui(result, List.of(project));
 
         assertThat(tui.showDetails).isTrue();
-        tui.showDetails = !tui.showDetails;
+        tui.handleEvent(KeyEvent.ofChar('i'), null);
         assertThat(tui.showDetails).isFalse();
-        tui.showDetails = !tui.showDetails;
+        tui.handleEvent(KeyEvent.ofChar('i'), null);
         assertThat(tui.showDetails).isTrue();
     }
 
@@ -247,12 +248,19 @@ class ReactorUpdatesTuiTest {
         dep.newestVersion = "2.18.0";
         dep.updateType = VersionComparator.UpdateType.MINOR;
 
-        tui.loadedCount = result.allDependencies.size();
+        // Simulate all dependencies loaded
+        tui.loadedCount = result.allDependencies.size() - 1;
         tui.loading = true;
 
-        // The status message should reflect updates
-        assertThat(dep.hasUpdate()).isTrue();
-        assertThat(result.propertyGroups.get(0).dependencies).contains(dep);
+        // Trigger updateStatusIfDone by incrementing loadedCount to match total
+        tui.loadedCount = result.allDependencies.size();
+        tui.updateStatusIfDone();
+
+        // After completion, loading should be false and group should have computed update
+        assertThat(tui.loading).isFalse();
+        assertThat(result.propertyGroups.get(0).newestVersion).isEqualTo("2.18.0");
+        assertThat(result.propertyGroups.get(0).updateType).isEqualTo(VersionComparator.UpdateType.MINOR);
+        assertThat(tui.status).contains("update");
     }
 
     @Test
@@ -281,6 +289,20 @@ class ReactorUpdatesTuiTest {
 
         // Default filter: ALL - should show both
         tui.buildDisplayRows();
+        assertThat(tui.displayRows).hasSize(2);
+
+        // Filter PATCH (key '2') - only lib-a
+        tui.handleEvent(KeyEvent.ofChar('2'), null);
+        assertThat(tui.displayRows).hasSize(1);
+        assertThat(tui.displayRows.get(0).dependency.artifactId).isEqualTo("lib-a");
+
+        // Filter MAJOR (key '4') - only lib-b
+        tui.handleEvent(KeyEvent.ofChar('4'), null);
+        assertThat(tui.displayRows).hasSize(1);
+        assertThat(tui.displayRows.get(0).dependency.artifactId).isEqualTo("lib-b");
+
+        // Filter ALL (key '1') - both again
+        tui.handleEvent(KeyEvent.ofChar('1'), null);
         assertThat(tui.displayRows).hasSize(2);
     }
 

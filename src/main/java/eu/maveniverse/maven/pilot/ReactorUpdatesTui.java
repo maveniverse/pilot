@@ -190,7 +190,7 @@ class ReactorUpdatesTui {
         }
     }
 
-    private void updateStatusIfDone() {
+    void updateStatusIfDone() {
         if (loadedCount >= reactorResult.allDependencies.size()) {
             loading = false;
             for (var group : reactorResult.propertyGroups) {
@@ -234,20 +234,23 @@ class ReactorUpdatesTui {
         reactorModel.recomputeCounts();
     }
 
-    void buildDisplayRows() {
-        displayRows = new ArrayList<>();
-
-        // Identify property names that appear in multiple groups (from different POMs)
+    private static Set<String> computeDuplicatePropertyNames(List<ReactorCollector.PropertyGroup> propertyGroups) {
         Map<String, Integer> propertyCounts = new LinkedHashMap<>();
-        for (var group : reactorResult.propertyGroups) {
+        for (var group : propertyGroups) {
             propertyCounts.merge(group.propertyName, 1, Integer::sum);
         }
-        duplicatePropertyNames = new LinkedHashSet<>();
+        Set<String> duplicates = new LinkedHashSet<>();
         for (var entry : propertyCounts.entrySet()) {
             if (entry.getValue() > 1) {
-                duplicatePropertyNames.add(entry.getKey());
+                duplicates.add(entry.getKey());
             }
         }
+        return duplicates;
+    }
+
+    void buildDisplayRows() {
+        displayRows = new ArrayList<>();
+        duplicatePropertyNames = computeDuplicatePropertyNames(reactorResult.propertyGroups);
 
         for (var group : reactorResult.propertyGroups) {
             boolean groupHasUpdate = group.hasUpdate()
@@ -841,97 +844,16 @@ class ReactorUpdatesTui {
 
         var row = displayRows.get(sel);
         String title;
-        List<Row> rows = new ArrayList<>();
+        List<Row> rows;
 
         if (row.isGroupHeader()) {
             var group = row.propertyGroup;
             title = " " + group.rawExpression + " \u2014 Details ";
-
-            // Origin POM path (relative to reactor root)
-            Path originPath = group.origin.getFile().toPath();
-            Path rootPath = reactorModel.root.project.getBasedir().toPath();
-            String relativePom = rootPath.relativize(originPath).toString();
-            rows.add(Row.from(Cell.from(Line.from(List.of(
-                    Span.raw("Origin:    ").bold(), Span.raw(relativePom).fg(Color.DARK_GRAY))))));
-
-            // Current → available version
-            String value = group.resolvedVersion != null ? group.resolvedVersion : "?";
-            if (group.hasUpdate()) {
-                rows.add(Row.from(Cell.from(Line.from(List.of(
-                        Span.raw("Version:   ").bold(),
-                        Span.raw(value),
-                        Span.raw(" \u2192 ").dim(),
-                        Span.raw(group.newestVersion).fg(Color.GREEN))))));
-            } else {
-                rows.add(Row.from(
-                        Cell.from(Line.from(List.of(Span.raw("Version:   ").bold(), Span.raw(value))))));
-            }
-
-            // Managed artifacts
-            List<Span> artSpans = new ArrayList<>();
-            artSpans.add(Span.raw("Artifacts: ").bold());
-            for (int i = 0; i < group.dependencies.size(); i++) {
-                if (i > 0) artSpans.add(Span.raw(", ").dim());
-                artSpans.add(Span.raw(group.dependencies.get(i).artifactId));
-            }
-            rows.add(Row.from(Cell.from(Line.from(artSpans))));
-
-            // Module count
-            rows.add(Row.from(Cell.from(Line.from(
-                    List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
-
+            rows = buildGroupDetailRows(group);
         } else if (row.dependency != null) {
             var dep = row.dependency;
             title = " " + dep.ga() + " \u2014 Details ";
-
-            // Full GAV
-            String version = dep.primaryVersion != null ? dep.primaryVersion : "?";
-            rows.add(Row.from(Cell.from(Line.from(List.of(
-                    Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
-
-            // Scope(s) in use
-            Set<String> scopes = new LinkedHashSet<>();
-            for (var u : dep.usages) {
-                if (u.scope != null && !u.scope.isEmpty()) {
-                    scopes.add(u.scope);
-                }
-            }
-            if (!scopes.isEmpty()) {
-                rows.add(Row.from(Cell.from(
-                        Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
-            }
-
-            // Managed vs direct
-            boolean managed = dep.usages.stream().anyMatch(u -> u.managed);
-            rows.add(Row.from(
-                    Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(managed ? "yes" : "no"))))));
-
-            // Update info
-            if (dep.hasUpdate()) {
-                rows.add(Row.from(Cell.from(Line.from(List.of(
-                        Span.raw("Update:    ").bold(),
-                        Span.raw(dep.primaryVersion),
-                        Span.raw(" \u2192 ").dim(),
-                        Span.raw(dep.newestVersion).fg(Color.GREEN))))));
-            }
-
-            // Which modules use this dependency
-            List<Span> modSpans = new ArrayList<>();
-            modSpans.add(Span.raw("Modules:   ").bold());
-            for (int i = 0; i < dep.usages.size(); i++) {
-                if (i > 0) modSpans.add(Span.raw(", ").dim());
-                modSpans.add(Span.raw(dep.usages.get(i).project.getArtifactId()));
-            }
-            rows.add(Row.from(Cell.from(Line.from(modSpans))));
-
-            // Property origin (if property-managed)
-            if (dep.isPropertyManaged()) {
-                String propOrigin = dep.propertyOrigin != null ? dep.propertyOrigin.getArtifactId() : "?";
-                rows.add(Row.from(Cell.from(Line.from(List.of(
-                        Span.raw("Property:  ").bold(),
-                        Span.raw(dep.rawVersionExpr).fg(Color.CYAN),
-                        Span.raw(" (" + propOrigin + ")").dim())))));
-            }
+            rows = buildDependencyDetailRows(dep);
         } else {
             return;
         }
@@ -949,6 +871,100 @@ class ReactorUpdatesTui {
                 .build();
 
         frame.renderStatefulWidget(table, area, detailTableState);
+    }
+
+    private List<Row> buildGroupDetailRows(ReactorCollector.PropertyGroup group) {
+        List<Row> rows = new ArrayList<>();
+
+        // Origin POM path (relative to reactor root)
+        Path originPath = group.origin.getFile().toPath();
+        Path rootPath = reactorModel.root.project.getBasedir().toPath();
+        String relativePom = rootPath.relativize(originPath).toString();
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Origin:    ").bold(), Span.raw(relativePom).fg(Color.DARK_GRAY))))));
+
+        // Current → available version
+        String value = group.resolvedVersion != null ? group.resolvedVersion : "?";
+        if (group.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Version:   ").bold(),
+                    Span.raw(value),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(group.newestVersion).fg(Color.GREEN))))));
+        } else {
+            rows.add(
+                    Row.from(Cell.from(Line.from(List.of(Span.raw("Version:   ").bold(), Span.raw(value))))));
+        }
+
+        // Managed artifacts
+        List<Span> artSpans = new ArrayList<>();
+        artSpans.add(Span.raw("Artifacts: ").bold());
+        for (int i = 0; i < group.dependencies.size(); i++) {
+            if (i > 0) artSpans.add(Span.raw(", ").dim());
+            artSpans.add(Span.raw(group.dependencies.get(i).artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(artSpans))));
+
+        // Module count
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
+
+        return rows;
+    }
+
+    private List<Row> buildDependencyDetailRows(ReactorCollector.AggregatedDependency dep) {
+        List<Row> rows = new ArrayList<>();
+
+        // Full GAV
+        String version = dep.primaryVersion != null ? dep.primaryVersion : "?";
+        rows.add(Row.from(Cell.from(Line.from(List.of(
+                Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
+
+        // Scope(s) in use
+        Set<String> scopes = new LinkedHashSet<>();
+        for (var u : dep.usages) {
+            if (u.scope != null && !u.scope.isEmpty()) {
+                scopes.add(u.scope);
+            }
+        }
+        if (!scopes.isEmpty()) {
+            rows.add(Row.from(Cell.from(
+                    Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
+        }
+
+        // Managed vs direct
+        boolean managed = dep.usages.stream().anyMatch(u -> u.managed);
+        rows.add(Row.from(
+                Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(managed ? "yes" : "no"))))));
+
+        // Update info
+        if (dep.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Update:    ").bold(),
+                    Span.raw(dep.primaryVersion),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(dep.newestVersion).fg(Color.GREEN))))));
+        }
+
+        // Which modules use this dependency
+        List<Span> modSpans = new ArrayList<>();
+        modSpans.add(Span.raw("Modules:   ").bold());
+        for (int i = 0; i < dep.usages.size(); i++) {
+            if (i > 0) modSpans.add(Span.raw(", ").dim());
+            modSpans.add(Span.raw(dep.usages.get(i).project.getArtifactId()));
+        }
+        rows.add(Row.from(Cell.from(Line.from(modSpans))));
+
+        // Property origin (if property-managed)
+        if (dep.isPropertyManaged()) {
+            String propOrigin = dep.propertyOrigin != null ? dep.propertyOrigin.getArtifactId() : "?";
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Property:  ").bold(),
+                    Span.raw(dep.rawVersionExpr).fg(Color.CYAN),
+                    Span.raw(" (" + propOrigin + ")").dim())))));
+        }
+
+        return rows;
     }
 
     private void renderModulesTable(Frame frame, Rect area) {
