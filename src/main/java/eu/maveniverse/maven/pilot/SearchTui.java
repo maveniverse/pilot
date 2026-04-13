@@ -330,24 +330,11 @@ class SearchTui {
             return true;
         }
         if (key.isDown()) {
-            int before = selectedIndex();
-            tableState.selectNext(artifacts.size());
-            int after = selectedIndex();
-            if (before == after && artifacts.size() < totalFound) {
-                // At the very bottom and prefetch hasn't arrived yet — block
-                fetchMoreResultsSync();
-            } else if (after >= artifacts.size() / 2 && artifacts.size() < totalFound) {
-                // Near the bottom — prefetch next page in the background
-                prefetchMoreResults();
-            }
-            fetchPomInfoIfNeeded();
+            handleDownKey();
             return true;
         }
         if (TableNavigation.handlePageKeys(key, tableState, artifacts.size(), lastContentHeight)) {
-            int sel = selectedIndex();
-            if (sel >= artifacts.size() / 2 && artifacts.size() < totalFound) {
-                prefetchMoreResults();
-            }
+            prefetchIfNearBottom();
             fetchPomInfoIfNeeded();
             return true;
         }
@@ -367,6 +354,25 @@ class SearchTui {
             return true;
         }
         return false;
+    }
+
+    private void handleDownKey() {
+        int before = selectedIndex();
+        tableState.selectNext(artifacts.size());
+        int after = selectedIndex();
+        if (before == after && artifacts.size() < totalFound) {
+            fetchMoreResultsSync();
+        } else {
+            prefetchIfNearBottom();
+        }
+        fetchPomInfoIfNeeded();
+    }
+
+    private void prefetchIfNearBottom() {
+        int sel = selectedIndex();
+        if (sel >= artifacts.size() / 2 && artifacts.size() < totalFound) {
+            prefetchMoreResults();
+        }
     }
 
     private void onQueryChanged() {

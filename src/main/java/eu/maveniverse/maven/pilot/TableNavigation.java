@@ -30,6 +30,8 @@ import dev.tamboui.widgets.table.TableState;
  */
 class TableNavigation {
 
+    private TableNavigation() {}
+
     /**
      * Handle page-navigation keys (Page Up/Down, Home/End) for a table.
      *

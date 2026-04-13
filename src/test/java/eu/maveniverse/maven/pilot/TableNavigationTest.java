@@ -83,7 +83,7 @@ class TableNavigationTest {
         ts.select(25);
         boolean handled = TableNavigation.handlePageKeys(homeEvent(), ts, 50, 24);
         assertThat(handled).isTrue();
-        assertThat(ts.selected()).isEqualTo(0);
+        assertThat(ts.selected()).isZero();
     }
 
     @Test
@@ -109,7 +109,7 @@ class TableNavigationTest {
         ts.select(0);
         boolean handled = TableNavigation.handlePageKeys(keyEvent(KeyCode.TAB), ts, 50, 24);
         assertThat(handled).isFalse();
-        assertThat(ts.selected()).isEqualTo(0);
+        assertThat(ts.selected()).isZero();
     }
 
     @Test
@@ -125,7 +125,7 @@ class TableNavigationTest {
         TableState ts = new TableState();
         boolean handled = TableNavigation.handlePageKeys(keyEvent(KeyCode.PAGE_UP), ts, 50, 24);
         assertThat(handled).isTrue();
-        assertThat(ts.selected()).isEqualTo(0);
+        assertThat(ts.selected()).isZero();
     }
 
     @Test
