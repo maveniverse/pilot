@@ -93,55 +93,65 @@ class OsvClient {
                 return List.of();
             }
 
-            List<Vulnerability> vulns = new ArrayList<>();
             try (InputStream is = conn.getInputStream();
                     JsonReader reader = Json.createReader(is)) {
-                JsonObject response = reader.readObject();
-                JsonArray vulnArray = response.getJsonArray("vulns");
-                if (vulnArray != null) {
-                    for (int i = 0; i < vulnArray.size(); i++) {
-                        JsonObject vuln = vulnArray.getJsonObject(i);
-
-                        String id = vuln.getString("id", "");
-                        String summary = vuln.getString("summary", "");
-                        String published = vuln.getString("published", "");
-
-                        // Extract severity: prefer database_specific.severity (human-readable),
-                        // fall back to CVSS vector from severity array
-                        String severity = "UNKNOWN";
-                        if (vuln.containsKey("database_specific")) {
-                            JsonObject dbSpecific = vuln.getJsonObject("database_specific");
-                            if (dbSpecific.containsKey("severity")) {
-                                severity = dbSpecific.getString("severity");
-                            }
-                        }
-                        if ("UNKNOWN".equals(severity) && vuln.containsKey("severity")) {
-                            JsonArray sevArray = vuln.getJsonArray("severity");
-                            if (sevArray != null && !sevArray.isEmpty()) {
-                                String score = sevArray.getJsonObject(0).getString("score", null);
-                                if (score != null) {
-                                    severity = cvssToSeverity(score);
-                                }
-                            }
-                        }
-
-                        List<String> aliases = new ArrayList<>();
-                        if (vuln.containsKey("aliases")) {
-                            JsonArray aliasArray = vuln.getJsonArray("aliases");
-                            for (int j = 0; j < aliasArray.size(); j++) {
-                                aliases.add(aliasArray.getString(j));
-                            }
-                        }
-
-                        vulns.add(new Vulnerability(id, summary, severity, published, aliases));
-                    }
-                }
+                return parseResponse(reader.readObject());
             }
-
-            return vulns;
         } finally {
             conn.disconnect();
         }
+    }
+
+    static List<Vulnerability> parseResponse(JsonObject response) {
+        List<Vulnerability> vulns = new ArrayList<>();
+        JsonArray vulnArray = response.getJsonArray("vulns");
+        if (vulnArray != null) {
+            for (int i = 0; i < vulnArray.size(); i++) {
+                JsonObject vuln = vulnArray.getJsonObject(i);
+                vulns.add(new Vulnerability(
+                        vuln.getString("id", ""),
+                        vuln.getString("summary", "").trim(),
+                        extractSeverity(vuln),
+                        vuln.getString("published", ""),
+                        extractAliases(vuln)));
+            }
+        }
+        return vulns;
+    }
+
+    static String extractSeverity(JsonObject vuln) {
+        // Prefer database_specific.severity (human-readable),
+        // fall back to CVSS vector from severity array
+        if (vuln.containsKey("database_specific")) {
+            JsonObject dbSpecific = vuln.getJsonObject("database_specific");
+            if (dbSpecific.containsKey("severity")) {
+                String dbSeverity = dbSpecific.getString("severity", "").trim();
+                if (!dbSeverity.isEmpty()) {
+                    return dbSeverity;
+                }
+            }
+        }
+        if (vuln.containsKey("severity")) {
+            JsonArray sevArray = vuln.getJsonArray("severity");
+            if (sevArray != null && !sevArray.isEmpty()) {
+                String score = sevArray.getJsonObject(0).getString("score", null);
+                if (score != null) {
+                    return cvssToSeverity(score);
+                }
+            }
+        }
+        return "UNKNOWN";
+    }
+
+    static List<String> extractAliases(JsonObject vuln) {
+        List<String> aliases = new ArrayList<>();
+        if (vuln.containsKey("aliases")) {
+            JsonArray aliasArray = vuln.getJsonArray("aliases");
+            for (int j = 0; j < aliasArray.size(); j++) {
+                aliases.add(aliasArray.getString(j));
+            }
+        }
+        return aliases;
     }
 
     /**

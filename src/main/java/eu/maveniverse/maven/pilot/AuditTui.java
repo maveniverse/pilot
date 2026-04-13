@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI for license and security audit.
@@ -86,6 +87,60 @@ class AuditTui {
 
         boolean hasVulnerabilities() {
             return vulnerabilities != null && !vulnerabilities.isEmpty();
+        }
+    }
+
+    /**
+     * Collects unique dependency entries from a single dependency tree.
+     *
+     * @param root the root dependency node
+     * @return list of unique audit entries in tree-walk order
+     */
+    static List<AuditEntry> collectEntries(DependencyNode root) {
+        Map<String, AuditEntry> entryMap = new LinkedHashMap<>();
+        collectEntries(root, entryMap, null, true);
+        return new ArrayList<>(entryMap.values());
+    }
+
+    /**
+     * Collects unique dependency entries from multiple module dependency trees (reactor build).
+     *
+     * @param moduleRoots ordered map of module artifact ID to its dependency tree root
+     * @return list of unique audit entries in tree-walk order, with module tracking
+     */
+    static List<AuditEntry> collectReactorEntries(LinkedHashMap<String, DependencyNode> moduleRoots) {
+        Map<String, AuditEntry> entryMap = new LinkedHashMap<>();
+        for (Map.Entry<String, DependencyNode> e : moduleRoots.entrySet()) {
+            collectEntries(e.getValue(), entryMap, e.getKey(), true);
+        }
+        return new ArrayList<>(entryMap.values());
+    }
+
+    /**
+     * Recursively walks the Maven dependency tree and populates the entry map with unique artifacts.
+     * When {@code moduleName} is non-null (reactor build), each entry tracks which modules use it.
+     *
+     * @param node the current dependency tree node to process
+     * @param entryMap map of {@code "groupId:artifactId"} to audit entries, used for deduplication and module tracking
+     * @param moduleName the artifact ID of the module being processed, or {@code null} for single-project builds
+     * @param isRoot true when the current node is the root project node (the root node itself is not recorded)
+     */
+    static void collectEntries(
+            DependencyNode node, Map<String, AuditEntry> entryMap, String moduleName, boolean isRoot) {
+        if (!isRoot && node.getDependency() != null) {
+            var art = node.getDependency().getArtifact();
+            String ga = art.getGroupId() + ":" + art.getArtifactId();
+            AuditEntry entry = entryMap.computeIfAbsent(
+                    ga,
+                    k -> new AuditEntry(
+                            art.getGroupId(), art.getArtifactId(),
+                            art.getVersion(), node.getDependency().getScope()));
+            if (moduleName != null && !entry.modules.contains(moduleName)) {
+                entry.modules.add(moduleName);
+            }
+        }
+        for (DependencyNode child : node.getChildren()) {
+            collectEntries(child, entryMap, moduleName, false);
         }
     }
 
