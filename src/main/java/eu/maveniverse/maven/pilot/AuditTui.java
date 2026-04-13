@@ -33,6 +33,7 @@ import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -47,6 +48,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -190,6 +192,9 @@ class AuditTui {
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final OsvClient osvClient = new OsvClient();
+
+    private static final String COL_SCOPE = "scope";
+    private static final String LABEL_SCOPE = "  scope: ";
 
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private final DiffOverlay diffOverlay = new DiffOverlay();
@@ -618,7 +623,7 @@ class AuditTui {
                 .borderStyle(Style.create().fg(Color.DARK_GRAY))
                 .build();
 
-        Row header = Row.from("groupId:artifactId", "version", "license", "scope")
+        Row header = Row.from("groupId:artifactId", "version", "license", COL_SCOPE)
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
@@ -664,7 +669,7 @@ class AuditTui {
         List<Span> spans = new ArrayList<>();
         String centralUrl = centralUrl(entry.groupId, entry.artifactId);
         spans.add(Span.raw(entry.gav()).bold().cyan().hyperlink(centralUrl));
-        spans.add(Span.raw("  scope: ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY));
         spans.add(Span.raw(entry.scope));
         spans.add(Span.raw("  \u2197 ").fg(Color.DARK_GRAY));
         spans.add(Span.raw(centralUrl).fg(Color.BLUE).hyperlink(centralUrl));
@@ -794,7 +799,7 @@ class AuditTui {
             }
         }
 
-        Row header = Row.from("license / artifact", "version", "scope", "")
+        Row header = Row.from("license / artifact", "version", COL_SCOPE, "")
                 .style(Style.create().bold().yellow());
 
         Table table = Table.builder()
@@ -849,7 +854,7 @@ class AuditTui {
             String centralUrl = centralUrl(row.entry.groupId, row.entry.artifactId);
             lines.add(Line.from(
                     Span.raw(row.entry.gav()).bold().cyan().hyperlink(centralUrl),
-                    Span.raw("  scope: ").fg(Color.DARK_GRAY),
+                    Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY),
                     Span.raw(row.entry.scope),
                     Span.raw("  \u2197 ").fg(Color.DARK_GRAY),
                     Span.raw(centralUrl).fg(Color.BLUE).hyperlink(centralUrl)));
@@ -911,11 +916,16 @@ class AuditTui {
         for (var vr : vulnRows) {
             String severity = normalizeSeverity(vr.vuln.severity);
             String summary = vr.vuln.summary.length() > 60 ? vr.vuln.summary.substring(0, 57) + "..." : vr.vuln.summary;
-            rows.add(Row.from(vr.entry.ga() + ":" + vr.entry.version, vr.vuln.id, severity, vr.entry.scope, summary)
-                    .style(getSeverityStyle(severity)));
+            Style sevStyle = getSeverityStyle(severity);
+            rows.add(Row.from(
+                    Cell.from(vr.entry.ga() + ":" + vr.entry.version).style(sevStyle),
+                    Cell.from(vr.vuln.id).style(sevStyle),
+                    Cell.from(severity).style(sevStyle),
+                    Cell.from(vr.entry.scope).style(getScopeStyle(vr.entry.scope)),
+                    Cell.from(summary).style(sevStyle)));
         }
 
-        Row header = Row.from("artifact", "CVE/ID", "severity", "scope", "summary")
+        Row header = Row.from("artifact", "CVE/ID", "severity", COL_SCOPE, "summary")
                 .style(Style.create().bold().yellow());
 
         Table table = Table.builder()
@@ -961,7 +971,7 @@ class AuditTui {
                 Span.raw(vuln.id).bold().cyan().hyperlink(url),
                 Span.raw("  "),
                 Span.raw(severity).style(getSeverityStyle(severity).bold()),
-                Span.raw("  scope: ").fg(Color.DARK_GRAY),
+                Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY),
                 Span.raw(vr.entry.scope).style(getScopeStyle(vr.entry.scope)),
                 Span.raw("  "),
                 Span.raw(vr.entry.ga() + ":" + vr.entry.version)
@@ -1034,7 +1044,7 @@ class AuditTui {
 
     private static Style getScopeStyle(String scope) {
         if (scope == null) return Style.create();
-        return switch (scope) {
+        return switch (scope.trim().toLowerCase(Locale.ROOT)) {
             case "test" -> Style.create().fg(Color.DARK_GRAY);
             case "provided" -> Style.create().fg(Color.DARK_GRAY);
             case "runtime" -> Style.create().fg(Color.YELLOW);
