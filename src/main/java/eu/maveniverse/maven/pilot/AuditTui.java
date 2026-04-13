@@ -147,6 +147,7 @@ class AuditTui {
     private boolean dirty;
     private boolean pendingQuit;
     private int lastContentHeight;
+    private int lastTableHeight;
     private List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
@@ -356,7 +357,7 @@ class AuditTui {
             activeTableState().selectNext(activeRowCount());
             return true;
         }
-        if (TableNavigation.handlePageKeys(key, activeTableState(), activeRowCount(), lastContentHeight)) {
+        if (TableNavigation.handlePageKeys(key, activeTableState(), activeRowCount(), lastTableHeight)) {
             return true;
         }
 
@@ -505,6 +506,7 @@ class AuditTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
+        lastContentHeight = zones.get(1).height();
 
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
@@ -556,7 +558,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
-        lastContentHeight = zones.get(0).height();
+        lastTableHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" Licenses (" + entries.size() + " dependencies) ")
@@ -718,7 +720,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
-        lastContentHeight = zones.get(0).height();
+        lastTableHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .title(" By License (" + countLicenseGroups() + " licenses) ")
@@ -844,7 +846,7 @@ class AuditTui {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(8))
                 .split(area);
-        lastContentHeight = zones.get(0).height();
+        lastTableHeight = zones.get(0).height();
 
         // -- Vulnerability table --
         Block block = Block.builder()

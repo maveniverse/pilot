@@ -583,6 +583,10 @@ class SearchTui {
         } else {
             spans.add(Span.raw("\u2191\u2193").bold());
             spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("PgUp/PgDn").bold());
+            spans.add(Span.raw(":Page  "));
+            spans.add(Span.raw("Home/End").bold());
+            spans.add(Span.raw(":Top/Bottom  "));
             spans.add(Span.raw("\u2190\u2192").bold());
             spans.add(Span.raw(":Version  "));
             spans.add(Span.raw("Enter").bold());
