@@ -954,7 +954,7 @@ class AuditTui {
         if (severity == null) return Style.create().fg(Color.DARK_GRAY);
         return switch (severity.toUpperCase()) {
             case "CRITICAL" -> Style.create().fg(Color.RED).bold();
-            case "HIGH" -> Style.create().fg(Color.RED);
+            case "HIGH" -> Style.create().fg(Color.LIGHT_RED);
             case "MEDIUM" -> Style.create().fg(Color.YELLOW);
             case "LOW" -> Style.create();
             default -> {
