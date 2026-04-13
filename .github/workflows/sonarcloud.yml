@@ -25,7 +25,7 @@ jobs:
           cache: maven
 
       - name: Build and analyze
-        run: mvn -B verify sonar:sonar
+        run: ./mvnw -B verify sonar:sonar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
