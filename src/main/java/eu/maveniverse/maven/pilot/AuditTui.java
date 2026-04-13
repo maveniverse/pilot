@@ -358,11 +358,7 @@ class AuditTui {
         }
 
         if (key.isKey(KeyCode.TAB)) {
-            view = switch (view) {
-                case LICENSES -> View.BY_LICENSE;
-                case BY_LICENSE -> View.VULNERABILITIES;
-                case VULNERABILITIES -> View.LICENSES;
-            };
+            view = TabBar.next(view, View.values());
             return true;
         }
 
@@ -531,16 +527,15 @@ class AuditTui {
         if (dirty) {
             spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
         }
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.LICENSES ? "\u25B8 " : "  ") + "Licenses]")
-                .fg(view == View.LICENSES ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.BY_LICENSE ? "\u25B8 " : "  ") + "By License]")
-                .fg(view == View.BY_LICENSE ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.VULNERABILITIES ? "\u25B8 " : "  ") + "Vulnerabilities"
-                        + (vulnCount > 0 ? " (" + vulnCount + ")" : "") + "]")
-                .fg(view == View.VULNERABILITIES ? (vulnCount > 0 ? Color.RED : Color.YELLOW) : Color.DARK_GRAY));
+        spans.addAll(TabBar.render(
+                view,
+                View.values(),
+                v -> switch (v) {
+                    case LICENSES -> "Licenses";
+                    case BY_LICENSE -> "By License";
+                    case VULNERABILITIES -> "Vulnerabilities" + (vulnCount > 0 ? " (" + vulnCount + ")" : "");
+                },
+                v -> v == View.VULNERABILITIES && vulnCount > 0 ? Color.RED : Color.YELLOW));
 
         Paragraph header = Paragraph.builder()
                 .text(dev.tamboui.text.Text.from(Line.from(spans)))

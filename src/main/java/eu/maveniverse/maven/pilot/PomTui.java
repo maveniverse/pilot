@@ -203,7 +203,7 @@ class PomTui {
         }
 
         if (key.isKey(KeyCode.TAB)) {
-            view = (view == View.RAW) ? View.EFFECTIVE : View.RAW;
+            view = TabBar.next(view, View.values());
             tableState.select(0);
             activeSearch = null;
             searchMatches = List.of();
@@ -467,14 +467,10 @@ class PomTui {
                 .build();
 
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-
-        // View tabs
-        spans.add(Span.raw("[" + (view == View.RAW ? "\u25B8 " : "  ") + "Raw POM]")
-                .fg(view == View.RAW ? Color.YELLOW : Color.DARK_GRAY));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.EFFECTIVE ? "\u25B8 " : "  ") + "Effective POM]")
-                .fg(view == View.EFFECTIVE ? Color.YELLOW : Color.DARK_GRAY));
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case RAW -> "Raw POM";
+            case EFFECTIVE -> "Effective POM";
+        }));
 
         if (searchMode) {
             spans.add(Span.raw("   Search: ").fg(Color.YELLOW));

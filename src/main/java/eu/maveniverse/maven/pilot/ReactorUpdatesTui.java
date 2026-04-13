@@ -306,7 +306,7 @@ class ReactorUpdatesTui {
         }
 
         if (key.isKey(KeyCode.TAB)) {
-            view = view == View.DEPENDENCIES ? View.MODULES : View.DEPENDENCIES;
+            view = TabBar.next(view, View.values());
             return true;
         }
 
@@ -665,7 +665,7 @@ class ReactorUpdatesTui {
 
     void render(Frame frame) {
         var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(4))
+                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
@@ -692,6 +692,10 @@ class ReactorUpdatesTui {
 
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case DEPENDENCIES -> "Dependencies";
+            case MODULES -> "Modules";
+        }));
         spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)").dim());
         if (loading) {
             spans.add(Span.raw("  Checking " + loadedCount + "/" + reactorResult.allDependencies.size() + "\u2026")
@@ -861,26 +865,12 @@ class ReactorUpdatesTui {
 
     private void renderInfoBar(Frame frame, Rect area) {
         var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.length(1))
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
                 .split(area);
-
-        // View indicator
-        List<Span> viewSpans = new ArrayList<>();
-        viewSpans.add(Span.raw(" "));
-        viewSpans.add(
-                view == View.DEPENDENCIES
-                        ? Span.raw("[Dependencies]").bold().cyan()
-                        : Span.raw(" Dependencies ").dim());
-        viewSpans.add(Span.raw(" "));
-        viewSpans.add(
-                view == View.MODULES
-                        ? Span.raw("[Modules]").bold().cyan()
-                        : Span.raw(" Modules ").dim());
-        frame.renderWidget(Paragraph.from(Line.from(viewSpans)), rows.get(0));
 
         // Status
         frame.renderWidget(
-                Paragraph.from(Line.from(List.of(Span.raw(" " + status).fg(Color.GREEN)))), rows.get(1));
+                Paragraph.from(Line.from(List.of(Span.raw(" " + status).fg(Color.GREEN)))), rows.get(0));
 
         // Selected count
         long selectedCount = reactorResult.allDependencies.stream()
@@ -890,7 +880,7 @@ class ReactorUpdatesTui {
             frame.renderWidget(
                     Paragraph.from(Line.from(List.of(Span.raw(" " + selectedCount + " update(s) selected")
                             .fg(Color.CYAN)))),
-                    rows.get(2));
+                    rows.get(1));
         }
 
         // Key bindings
@@ -935,7 +925,7 @@ class ReactorUpdatesTui {
             spans.add(Span.raw(":Quit"));
         }
 
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(3));
+        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
 
     private List<HelpOverlay.Section> buildHelp() {
