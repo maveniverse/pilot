@@ -195,6 +195,7 @@ class AuditTui {
 
     private static final String COL_SCOPE = "scope";
     private static final String LABEL_SCOPE = "  scope: ";
+    private static final List<String> SCOPE_FILTERS = List.of("compile", "runtime", "test", "provided");
 
     private final HelpOverlay helpOverlay = new HelpOverlay();
     private final DiffOverlay diffOverlay = new DiffOverlay();
@@ -210,6 +211,8 @@ class AuditTui {
     private boolean pendingQuit;
     private int lastContentHeight;
     private int lastTableHeight;
+    private String scopeFilter; // null = show all
+    private List<AuditEntry> filteredEntries;
     private List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
@@ -220,6 +223,7 @@ class AuditTui {
 
     AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
         this.entries = entries;
+        this.filteredEntries = entries;
         this.projectGav = projectGav;
         this.treeModel = treeModel;
         this.pomPath = pomPath;
@@ -298,6 +302,7 @@ class AuditTui {
         vulnRows = new ArrayList<>();
         for (var entry : entries) {
             if (entry.hasVulnerabilities()) {
+                if (scopeFilter != null && !scopeFilter.equals(entry.scope)) continue;
                 for (var vuln : entry.vulnerabilities) {
                     vulnRows.add(new VulnRow(entry, vuln));
                 }
@@ -306,6 +311,36 @@ class AuditTui {
         if (!vulnRows.isEmpty() && vulnTableState.selected() == null) {
             vulnTableState.select(0);
         }
+    }
+
+    private void rebuildFilteredEntries() {
+        if (scopeFilter == null) {
+            filteredEntries = entries;
+        } else {
+            filteredEntries = new ArrayList<>();
+            for (var entry : entries) {
+                if (scopeFilter.equals(entry.scope)) {
+                    filteredEntries.add(entry);
+                }
+            }
+        }
+        if (filteredEntries.isEmpty()) {
+            tableState.clearSelection();
+        } else if (tableState.selected() != null && tableState.selected() >= filteredEntries.size()) {
+            tableState.select(0);
+        }
+    }
+
+    private void cycleScope() {
+        if (scopeFilter == null) {
+            scopeFilter = SCOPE_FILTERS.get(0);
+        } else {
+            int idx = SCOPE_FILTERS.indexOf(scopeFilter);
+            scopeFilter = (idx + 1 >= SCOPE_FILTERS.size()) ? null : SCOPE_FILTERS.get(idx + 1);
+        }
+        rebuildFilteredEntries();
+        rebuildVulnRows();
+        rebuildByLicenseRows();
     }
 
     private void rebuildByLicenseRows() {
@@ -320,6 +355,7 @@ class AuditTui {
         var urls = new HashMap<String, String>();
         for (var entry : entries) {
             if (!entry.licenseLoaded) continue;
+            if (scopeFilter != null && !scopeFilter.equals(entry.scope)) continue;
             String key = entry.license != null ? normalizeLicense(entry.license, entry.licenseUrl) : "(not specified)";
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(entry);
             if (entry.licenseUrl != null && !urls.containsKey(key)) {
@@ -470,6 +506,11 @@ class AuditTui {
             return true;
         }
 
+        if (key.isCharIgnoreCase('s')) {
+            cycleScope();
+            return true;
+        }
+
         if (key.isCharIgnoreCase('m')) {
             addManagedDependency();
             return true;
@@ -492,7 +533,7 @@ class AuditTui {
         return switch (view) {
             case LICENSES -> {
                 int idx = tableState.selected() != null ? tableState.selected() : -1;
-                yield (idx >= 0 && idx < entries.size()) ? entries.get(idx) : null;
+                yield (idx >= 0 && idx < filteredEntries.size()) ? filteredEntries.get(idx) : null;
             }
             case VULNERABILITIES -> {
                 int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
@@ -617,8 +658,9 @@ class AuditTui {
                 .split(area);
         lastTableHeight = zones.get(0).height();
 
+        String filterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
         Block block = Block.builder()
-                .title(" Licenses (" + entries.size() + " dependencies) ")
+                .title(" Licenses (" + filteredEntries.size() + " dependencies)" + filterLabel + " ")
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(Style.create().fg(Color.DARK_GRAY))
                 .build();
@@ -627,7 +669,7 @@ class AuditTui {
                 .style(Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
-        for (var entry : entries) {
+        for (var entry : filteredEntries) {
             String license = entry.license != null
                     ? normalizeLicense(entry.license, entry.licenseUrl)
                     : (entry.licenseLoaded ? "-" : "\u2026");
@@ -660,12 +702,12 @@ class AuditTui {
                 .build();
 
         int idx = tableState.selected() != null ? tableState.selected() : -1;
-        if (idx < 0 || idx >= entries.size()) {
+        if (idx < 0 || idx >= filteredEntries.size()) {
             frame.renderWidget(Paragraph.builder().text("").block(block).build(), area);
             return;
         }
 
-        AuditEntry entry = entries.get(idx);
+        AuditEntry entry = filteredEntries.get(idx);
         List<Span> spans = new ArrayList<>();
         String centralUrl = centralUrl(entry.groupId, entry.artifactId);
         spans.add(Span.raw(entry.gav()).bold().cyan().hyperlink(centralUrl));
@@ -754,7 +796,7 @@ class AuditTui {
         return switch (view) {
             case VULNERABILITIES -> vulnRows.size();
             case BY_LICENSE -> byLicenseRows.size();
-            default -> entries.size();
+            default -> filteredEntries.size();
         };
     }
 
@@ -906,8 +948,9 @@ class AuditTui {
         lastTableHeight = zones.get(0).height();
 
         // -- Vulnerability table --
+        String vFilterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
         Block block = Block.builder()
-                .title(" Vulnerabilities (" + vulnRows.size() + ") ")
+                .title(" Vulnerabilities (" + vulnRows.size() + ")" + vFilterLabel + " ")
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(Style.create().fg(Color.RED))
                 .build();
@@ -1250,6 +1293,9 @@ class AuditTui {
                                 new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand (By License view)"),
                                 new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
+                                new HelpOverlay.Entry(
+                                        "s",
+                                        "Cycle scope filter: all \u2192 compile \u2192 runtime \u2192 test \u2192 provided"),
                                 new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
                                 new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
@@ -1286,6 +1332,8 @@ class AuditTui {
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Tab").bold());
             spans.add(Span.raw(":Licenses/Vulns  "));
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Scope" + (scopeFilter != null ? "=" + scopeFilter : "") + "  "));
             spans.add(Span.raw("m").bold());
             spans.add(Span.raw(":Manage dep  "));
             spans.add(Span.raw("d").bold());

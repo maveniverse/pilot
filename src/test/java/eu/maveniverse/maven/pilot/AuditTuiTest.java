@@ -340,11 +340,7 @@ class AuditTuiTest {
         assertThat(AuditTui.getScopeStyle("import")).isEqualTo(Style.create());
     }
 
-    @Test
-    void vulnerabilitiesViewShowsScopeColumn(@TempDir Path tempDir) throws Exception {
-        String pomPath =
-                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
-
+    private static List<AuditTui.AuditEntry> buildTestEntries() {
         List<AuditTui.AuditEntry> entries = new ArrayList<>();
         var e1 = new AuditTui.AuditEntry("org.example", "vuln-lib", "1.0.0", "test");
         e1.licenseLoaded = true;
@@ -360,6 +356,21 @@ class AuditTuiTest {
                 List.of(new OsvClient.Vulnerability("CVE-2024-0002", "Prod vuln", "CRITICAL", "2024-02-01", List.of()));
         entries.add(e2);
 
+        var e3 = new AuditTui.AuditEntry("org.example", "runtime-lib", "3.0.0", "runtime");
+        e3.licenseLoaded = true;
+        e3.vulnsLoaded = true;
+        e3.vulnerabilities = List.of();
+        entries.add(e3);
+
+        return entries;
+    }
+
+    @Test
+    void vulnerabilitiesViewRendersScopeColumn(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = buildTestEntries();
         AuditTui tui = new AuditTui(entries, "com.example:test:1.0", null, pomPath);
         tui.rebuildVulnRows();
 
@@ -373,6 +384,55 @@ class AuditTuiTest {
 
             // Navigate down to exercise detail pane rendering with different scopes
             pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
+    }
+
+    @Test
+    void scopeFilterCyclesAndFilters(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = buildTestEntries();
+        AuditTui tui = new AuditTui(entries, "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(120, 30))) {
+            var pilot = testRunner.pilot();
+
+            // Initially shows all entries (3)
+            pilot.pause();
+
+            // Press 's' to filter to compile scope
+            pilot.press('s');
+            pilot.pause();
+
+            // Press 's' again to cycle to runtime
+            pilot.press('s');
+            pilot.pause();
+
+            // Press 's' to cycle to test
+            pilot.press('s');
+            pilot.pause();
+
+            // Press 's' to cycle to provided
+            pilot.press('s');
+            pilot.pause();
+
+            // Press 's' to cycle back to all
+            pilot.press('s');
+            pilot.pause();
+
+            // Also test filtering on the vulnerabilities tab
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.press('s'); // compile — only CVE-2024-0002 visible
+            pilot.pause();
+
+            pilot.press('s'); // runtime — no vulns
+            pilot.pause();
+
+            pilot.press('s'); // test — only CVE-2024-0001 visible
             pilot.pause();
         }
     }
