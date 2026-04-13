@@ -61,21 +61,24 @@ class ReactorUpdatesDemoTest {
 
             // Initial view should show Dependencies tab active
             String rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Dependencies");
+            assertThat(rendered).contains("\u25B8 Dependencies");
+            assertThat(rendered).doesNotContain("\u25B8 Modules");
 
             // Switch to Modules view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Modules");
+            assertThat(rendered).contains("\u25B8 Modules");
+            assertThat(rendered).doesNotContain("\u25B8 Dependencies");
 
             // Switch back to Dependencies view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Dependencies");
+            assertThat(rendered).contains("\u25B8 Dependencies");
+            assertThat(rendered).doesNotContain("\u25B8 Modules");
 
             pilot.press('q');
         }

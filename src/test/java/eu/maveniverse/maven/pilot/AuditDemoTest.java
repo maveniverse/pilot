@@ -71,30 +71,35 @@ class AuditDemoTest {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
-            // Initial view: Licenses tab
+            // Initial view: Licenses tab active
             String rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Licenses");
+            assertThat(rendered).contains("\u25B8 Licenses");
+            assertThat(rendered).doesNotContain("\u25B8 By License");
+            assertThat(rendered).doesNotContain("\u25B8 Vulnerabilities");
 
             // Switch to By License view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("By License");
+            assertThat(rendered).contains("\u25B8 By License");
+            assertThat(rendered).doesNotContain("\u25B8 Licenses");
 
             // Switch to Vulnerabilities view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Vulnerabilities");
+            assertThat(rendered).contains("\u25B8 Vulnerabilities");
+            assertThat(rendered).doesNotContain("\u25B8 By License");
 
             // Switch back to Licenses view
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Licenses");
+            assertThat(rendered).contains("\u25B8 Licenses");
+            assertThat(rendered).doesNotContain("\u25B8 Vulnerabilities");
 
             pilot.press('q');
         }
@@ -113,14 +118,16 @@ class AuditDemoTest {
 
             // Verify tab bar renders even with empty data
             String rendered = renderToText(tui::render);
-            assertThat(rendered).contains("Licenses");
+            assertThat(rendered).contains("\u25B8 Licenses");
+            assertThat(rendered).doesNotContain("\u25B8 By License");
 
             // Switch views on empty data
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::render);
-            assertThat(rendered).contains("By License");
+            assertThat(rendered).contains("\u25B8 By License");
+            assertThat(rendered).doesNotContain("\u25B8 Licenses");
 
             pilot.press('q');
         }
