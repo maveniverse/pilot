@@ -19,9 +19,9 @@
 package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import javax.inject.Inject;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
@@ -33,7 +33,6 @@ import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive license and security audit dashboard.
@@ -77,9 +76,7 @@ public class AuditMojo extends AbstractMojo {
     private void executeSingleProject(MavenProject proj) throws Exception {
         CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
         DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
-        List<AuditTui.AuditEntry> entries = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        collectEntries(result.getRoot(), entries, seen, true);
+        List<AuditTui.AuditEntry> entries = AuditTui.collectEntries(result.getRoot());
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         String pomPath = proj.getFile().getAbsolutePath();
         AuditTui tui = new AuditTui(entries, gav, treeModel, pomPath);
@@ -93,40 +90,16 @@ public class AuditMojo extends AbstractMojo {
         CollectResult rootResult = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
         DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
 
-        List<AuditTui.AuditEntry> entries = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
+        Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
         for (MavenProject proj : projects) {
             CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-            collectEntries(result.getRoot(), entries, seen, true);
+            AuditTui.collectEntries(result.getRoot(), entryMap, proj.getArtifactId(), true);
         }
+        List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
 
         String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
         String pomPath = root.getFile().getAbsolutePath();
         AuditTui tui = new AuditTui(entries, gav + " (reactor: " + projects.size() + " modules)", treeModel, pomPath);
         tui.run();
-    }
-
-    /**
-     * Recursively walks the Maven dependency tree and appends unique non-root artifacts to the provided entries list.
-     *
-     * @param node the current dependency tree node to process
-     * @param entries mutable list that will be populated with AuditTui.AuditEntry for each discovered artifact
-     * @param seen a set of `"groupId:artifactId"` keys used to suppress duplicate artifacts across the tree
-     * @param isRoot true when the current node is the root project node (the root node itself is not recorded)
-     */
-    private void collectEntries(
-            DependencyNode node, List<AuditTui.AuditEntry> entries, Set<String> seen, boolean isRoot) {
-        if (!isRoot && node.getDependency() != null) {
-            var art = node.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-            if (seen.add(ga)) {
-                entries.add(new AuditTui.AuditEntry(
-                        art.getGroupId(), art.getArtifactId(),
-                        art.getVersion(), node.getDependency().getScope()));
-            }
-        }
-        for (DependencyNode child : node.getChildren()) {
-            collectEntries(child, entries, seen, false);
-        }
     }
 }

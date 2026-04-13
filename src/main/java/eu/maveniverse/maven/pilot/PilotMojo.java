@@ -559,7 +559,7 @@ public class PilotMojo extends AbstractMojo {
             Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
             for (MavenProject p : projects) {
                 CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(p));
-                collectAuditNode(result.getRoot(), entryMap, p.getArtifactId(), true);
+                AuditTui.collectEntries(result.getRoot(), entryMap, p.getArtifactId(), true);
             }
             List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
             String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
@@ -568,34 +568,9 @@ public class PilotMojo extends AbstractMojo {
         } else {
             CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
             DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
-            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-            collectAuditNode(result.getRoot(), entryMap, null, true);
-            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
+            List<AuditTui.AuditEntry> entries = AuditTui.collectEntries(result.getRoot());
             String pomPath = proj.getFile().getAbsolutePath();
             new AuditTui(entries, gavOf(proj), treeModel, pomPath).run();
-        }
-    }
-
-    private void collectAuditNode(
-            DependencyNode node, Map<String, AuditTui.AuditEntry> entryMap, String moduleName, boolean isRoot) {
-        if (!isRoot && node.getDependency() != null) {
-            var art = node.getDependency().getArtifact();
-            String ga = art.getGroupId() + ":" + art.getArtifactId();
-            AuditTui.AuditEntry entry = entryMap.get(ga);
-            if (entry == null) {
-                entry = new AuditTui.AuditEntry(
-                        art.getGroupId(),
-                        art.getArtifactId(),
-                        art.getVersion(),
-                        node.getDependency().getScope());
-                entryMap.put(ga, entry);
-            }
-            if (moduleName != null && !entry.modules.contains(moduleName)) {
-                entry.modules.add(moduleName);
-            }
-        }
-        for (DependencyNode child : node.getChildren()) {
-            collectAuditNode(child, entryMap, moduleName, false);
         }
     }
 
