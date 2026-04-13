@@ -88,6 +88,7 @@ class PomTui {
     private final HelpOverlay helpOverlay = new HelpOverlay();
 
     private TuiRunner runner;
+    private int lastContentHeight;
 
     /**
      * Get the currently selected table row index.
@@ -242,6 +243,24 @@ class PomTui {
             tableState.selectNext(visible.size());
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            tableState.select(Math.max(0, selectedIndex() - pageSize));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            tableState.select(Math.min(visible.size() - 1, selectedIndex() + pageSize));
+            return true;
+        }
+        if (key.isHome()) {
+            tableState.select(0);
+            return true;
+        }
+        if (key.isEnd()) {
+            tableState.select(visible.size() - 1);
+            return true;
+        }
 
         int sel = selectedIndex();
         if (sel >= 0 && sel < visible.size()) {
@@ -314,6 +333,8 @@ class PomTui {
                         "Navigation",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
                                 new HelpOverlay.Entry("e", "Expand all nodes"),
                                 new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"),
@@ -447,6 +468,7 @@ class PomTui {
 
         int idx = 0;
         renderHeader(frame, zones.get(idx++));
+        lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(idx++));
         } else {

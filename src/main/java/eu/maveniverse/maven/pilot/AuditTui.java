@@ -356,6 +356,26 @@ class AuditTui {
             activeTableState().selectNext(activeRowCount());
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = activeTableState().selected();
+            activeTableState().select(Math.max(0, (sel != null ? sel : 0) - pageSize));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = activeTableState().selected();
+            activeTableState().select(Math.min(activeRowCount() - 1, (sel != null ? sel : 0) + pageSize));
+            return true;
+        }
+        if (key.isHome()) {
+            activeTableState().select(0);
+            return true;
+        }
+        if (key.isEnd()) {
+            activeTableState().select(activeRowCount() - 1);
+            return true;
+        }
 
         if (key.isKey(KeyCode.TAB)) {
             view = switch (view) {
@@ -1160,6 +1180,8 @@ class AuditTui {
                         "Keys",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand (By License view)"),
                                 new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
                                 new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),

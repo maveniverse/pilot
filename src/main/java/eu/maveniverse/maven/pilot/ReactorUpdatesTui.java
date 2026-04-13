@@ -326,6 +326,26 @@ class ReactorUpdatesTui {
             tableState.selectNext(displayRows.size());
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = tableState.selected();
+            tableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = tableState.selected();
+            tableState.select(Math.min(displayRows.size() - 1, (sel != null ? sel : 0) + pageSize));
+            return true;
+        }
+        if (key.isHome()) {
+            tableState.select(0);
+            return true;
+        }
+        if (key.isEnd()) {
+            tableState.select(displayRows.size() - 1);
+            return true;
+        }
         if (key.isCharIgnoreCase(' ')) {
             toggleSelection();
             return true;
@@ -382,6 +402,26 @@ class ReactorUpdatesTui {
         }
         if (key.isDown()) {
             moduleTableState.selectNext(visible.size());
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = moduleTableState.selected();
+            moduleTableState.select(Math.max(0, (sel != null ? sel : 0) - pageSize));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            Integer sel = moduleTableState.selected();
+            moduleTableState.select(Math.min(visible.size() - 1, (sel != null ? sel : 0) + pageSize));
+            return true;
+        }
+        if (key.isHome()) {
+            moduleTableState.select(0);
+            return true;
+        }
+        if (key.isEnd()) {
+            moduleTableState.select(visible.size() - 1);
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
@@ -966,6 +1006,8 @@ class ReactorUpdatesTui {
                         "Dependencies View",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
                                 new HelpOverlay.Entry("a / n", "Select all / deselect all"),
                                 new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
@@ -976,6 +1018,8 @@ class ReactorUpdatesTui {
                         List.of(
                                 new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand module tree"))),
                 new HelpOverlay.Section(
                         "General",

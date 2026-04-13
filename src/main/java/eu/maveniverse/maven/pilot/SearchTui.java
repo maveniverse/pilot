@@ -146,6 +146,7 @@ class SearchTui {
     // Dependencies
     private final SearchClient client;
     private TuiRunner runner;
+    private int lastContentHeight;
 
     /**
      * Get the currently selected table row index, defaulting to -1 when no row is selected.
@@ -342,6 +343,39 @@ class SearchTui {
             fetchPomInfoIfNeeded();
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            tableState.select(Math.max(0, selectedIndex() - pageSize));
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            int target = Math.min(artifacts.size() - 1, selectedIndex() + pageSize);
+            if (target >= 0) {
+                tableState.select(target);
+                if (target >= artifacts.size() / 2 && artifacts.size() < totalFound) {
+                    prefetchMoreResults();
+                }
+            }
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        if (key.isHome()) {
+            tableState.select(0);
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        if (key.isEnd()) {
+            if (!artifacts.isEmpty()) {
+                tableState.select(artifacts.size() - 1);
+                if (artifacts.size() < totalFound) {
+                    prefetchMoreResults();
+                }
+                fetchPomInfoIfNeeded();
+            }
+            return true;
+        }
         if (key.isLeft()) {
             int selected = selectedIndex();
             cycleVersion(selected, -1);
@@ -382,6 +416,7 @@ class SearchTui {
                 .split(frame.area());
 
         renderSearchBar(frame, zones.get(0));
+        lastContentHeight = zones.get(1).height();
         renderResultsTable(frame, zones.get(1));
         renderInfoBar(frame, zones.get(2));
     }

@@ -249,6 +249,24 @@ class ConflictsTui {
             tableState.selectNext(displayedConflicts().size());
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            tableState.select(Math.max(0, selectedIndex() - pageSize));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            int pageSize = Math.max(1, lastContentHeight - 3);
+            tableState.select(Math.min(displayedConflicts().size() - 1, selectedIndex() + pageSize));
+            return true;
+        }
+        if (key.isHome()) {
+            tableState.select(0);
+            return true;
+        }
+        if (key.isEnd()) {
+            tableState.select(displayedConflicts().size() - 1);
+            return true;
+        }
 
         if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase(' ')) {
             showDetails = !showDetails;
@@ -378,6 +396,8 @@ class ConflictsTui {
                         "Keys",
                         List.of(
                                 new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
                                 new HelpOverlay.Entry("a", "Toggle between conflicts only / all groups"),
                                 new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
