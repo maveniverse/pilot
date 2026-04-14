@@ -83,7 +83,7 @@ public class AuditMojo extends AbstractMojo {
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         String pomPath = proj.getFile().getAbsolutePath();
         AuditTui tui = new AuditTui(entries, gav, treeModel, pomPath);
-        tui.run();
+        tui.runStandalone();
     }
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
@@ -103,7 +103,7 @@ public class AuditMojo extends AbstractMojo {
         String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
         String pomPath = root.getFile().getAbsolutePath();
         AuditTui tui = new AuditTui(entries, gav + " (reactor: " + projects.size() + " modules)", treeModel, pomPath);
-        tui.run();
+        tui.runStandalone();
     }
 
     /**

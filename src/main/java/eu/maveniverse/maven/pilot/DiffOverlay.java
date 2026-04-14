@@ -83,8 +83,7 @@ class DiffOverlay {
                 if (!allLines.isEmpty()) {
                     allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, ""));
                 }
-                allLines.add(new UnifiedDiff.DiffLine(
-                        UnifiedDiff.Type.CONTEXT, "\u2500\u2500 " + entry.getKey() + " \u2500\u2500"));
+                allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "── " + entry.getKey() + " ──"));
                 allLines.addAll(UnifiedDiff.filterContext(fullDiff, 3));
                 totalChanges += changes;
             }

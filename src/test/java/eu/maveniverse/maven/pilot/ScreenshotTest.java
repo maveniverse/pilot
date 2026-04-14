@@ -112,14 +112,14 @@ class ScreenshotTest {
 
         PomTui tui = new PomTui(rawPom, effectivePom, "pom.xml");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.press(KeyCode.DOWN);
             pilot.press(KeyCode.DOWN);
             pilot.pause();
         }
 
-        saveSvg("pom", renderToSvg(tui::render, "pilot:pom"));
+        saveSvg("pom", renderToSvg(tui::renderStandalone, "pilot:pom"));
     }
 
     @Test
@@ -160,14 +160,14 @@ class ScreenshotTest {
         var model = new DependencyTreeModel(root, List.of(conflictNode), 12);
         TreeTui tui = new TreeTui(model, "com.example:demo-app:1.0.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.press(KeyCode.DOWN);
             pilot.press(KeyCode.DOWN);
             pilot.pause();
         }
 
-        saveSvg("tree", renderToSvg(tui::render, "pilot:tree"));
+        saveSvg("tree", renderToSvg(tui::renderStandalone, "pilot:tree"));
     }
 
     @Test
@@ -203,7 +203,7 @@ class ScreenshotTest {
 
         UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.press(KeyCode.DOWN);
             pilot.press(' ');
@@ -212,7 +212,7 @@ class ScreenshotTest {
             pilot.pause();
         }
 
-        saveSvg("updates", renderToSvg(tui::render, "pilot:updates"));
+        saveSvg("updates", renderToSvg(tui::renderStandalone, "pilot:updates"));
     }
 
     @Test
@@ -245,13 +245,13 @@ class ScreenshotTest {
 
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0", true);
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.press(KeyCode.DOWN);
             pilot.pause();
         }
 
-        saveSvg("dependencies", renderToSvg(tui::render, "pilot:dependencies"));
+        saveSvg("dependencies", renderToSvg(tui::renderStandalone, "pilot:dependencies"));
     }
 
     @Test
@@ -273,13 +273,13 @@ class ScreenshotTest {
 
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, "com.example:demo:1.0.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.press(KeyCode.ENTER);
             pilot.pause();
         }
 
-        saveSvg("conflicts", renderToSvg(tui::render, "pilot:conflicts"));
+        saveSvg("conflicts", renderToSvg(tui::renderStandalone, "pilot:conflicts"));
     }
 
     private void saveSvg(String name, String svg) throws Exception {

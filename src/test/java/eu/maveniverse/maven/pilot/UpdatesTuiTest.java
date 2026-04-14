@@ -102,7 +102,7 @@ class UpdatesTuiTest {
         tui.updateStatusIfDone();
 
         assertThat(tui.loading).isTrue(); // still loading
-        assertThat(tui.status).isEqualTo("Loading updates\u2026"); // unchanged
+        assertThat(tui.status).isEqualTo("Loading updates…"); // unchanged
     }
 
     @Test

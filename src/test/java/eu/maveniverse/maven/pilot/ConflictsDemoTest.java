@@ -55,7 +55,7 @@ class ConflictsDemoTest {
 
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, "com.example:demo:1.0.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
 
             Pilot pilot = testRunner.pilot();
             pilot.pause();

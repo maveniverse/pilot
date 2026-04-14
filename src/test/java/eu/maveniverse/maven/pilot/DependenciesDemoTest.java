@@ -64,7 +64,7 @@ class DependenciesDemoTest {
         // Use a non-existent POM path since we won't actually write
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0", true);
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
 
             Pilot pilot = testRunner.pilot();
 
@@ -110,7 +110,7 @@ class DependenciesDemoTest {
         // bytecodeAnalyzed = false
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
@@ -132,7 +132,7 @@ class DependenciesDemoTest {
         DependenciesTui tui =
                 new DependenciesTui(new ArrayList<>(), new ArrayList<>(), pomPath, "com.example:demo:1.0.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
@@ -155,7 +155,7 @@ class DependenciesDemoTest {
 
         DependenciesTui tui = new DependenciesTui(declared, new ArrayList<>(), pomPath, "com.example:demo:1.0.0", true);
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
             pilot.press('q');
@@ -188,33 +188,33 @@ class DependenciesDemoTest {
         DependenciesTui tui =
                 new DependenciesTui(declared, new ArrayList<>(), pomFile.toString(), "com.example:test:1.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
-            // Press 's' to cycle scope from compile -> provided
-            pilot.press('s');
+            // Press 'c' to cycle scope from compile -> provided
+            pilot.press('c');
             pilot.pause();
 
             String pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>provided</scope>");
 
-            // Press 's' again to cycle scope from provided -> runtime
-            pilot.press('s');
+            // Press 'c' again to cycle scope from provided -> runtime
+            pilot.press('c');
             pilot.pause();
 
             pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>runtime</scope>");
 
-            // Press 's' again: runtime -> test
-            pilot.press('s');
+            // Press 'c' again: runtime -> test
+            pilot.press('c');
             pilot.pause();
 
             pomContent = tui.currentPomContent();
             assertThat(pomContent).contains("<scope>test</scope>");
 
-            // Press 's' again: test -> compile (removes <scope> element)
-            pilot.press('s');
+            // Press 'c' again: test -> compile (removes <scope> element)
+            pilot.press('c');
             pilot.pause();
 
             pomContent = tui.currentPomContent();
@@ -250,7 +250,7 @@ class DependenciesDemoTest {
         DependenciesTui tui =
                 new DependenciesTui(declared, new ArrayList<>(), pomFile.toString(), "com.example:test:1.0");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
@@ -289,7 +289,7 @@ class DependenciesDemoTest {
         DependenciesTui tui =
                 new DependenciesTui(new ArrayList<>(), transitive, pomFile.toString(), "com.example:test:1.0", true);
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 

@@ -74,19 +74,10 @@ public class PomMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            List<MavenProject> projects = session.getProjects();
-            if (projects.size() > 1) {
-                executeReactor(projects);
-            } else {
-                executeForProject(project);
-            }
+            executeForProject(project);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to display POM: " + e.getMessage(), e);
         }
-    }
-
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        ModulePickerTui.forEachSelected(projects, "pom", this::executeForProject);
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
@@ -105,7 +96,7 @@ public class PomMojo extends AbstractMojo {
         attachOrigins(originMap, effectiveTree.root, proj.getModel(), rawLines, parentPomContents);
 
         PomTui tui = new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
-        tui.run();
+        tui.runStandalone();
     }
 
     private Map<String, String[]> readParentPomContents(MavenProject proj) {
@@ -229,9 +220,9 @@ public class PomMojo extends AbstractMojo {
         int start = Math.max(0, targetLine - 3);
         int end = Math.min(lines.length - 1, targetLine + 1);
         for (int i = start; i <= end; i++) {
-            String prefix = (i == targetLine - 1) ? "\u2192 " : "  ";
+            String prefix = (i == targetLine - 1) ? "→ " : "  ";
             String lineNum = String.format("%4d", i + 1);
-            snippet.add(prefix + lineNum + " \u2502 " + lines[i]);
+            snippet.add(prefix + lineNum + " │ " + lines[i]);
         }
         return snippet;
     }

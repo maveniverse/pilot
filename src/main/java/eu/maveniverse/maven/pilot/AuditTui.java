@@ -21,15 +21,17 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -41,7 +43,6 @@ import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -50,12 +51,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * Interactive TUI for license and security audit.
  */
-class AuditTui {
+class AuditTui extends ToolPanel {
 
     static class AuditEntry {
         final String groupId;
@@ -134,7 +135,6 @@ class AuditTui {
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final OsvClient osvClient = new OsvClient();
 
-    private final HelpOverlay helpOverlay = new HelpOverlay();
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final TableState vulnTableState = new TableState();
     private final TableState byLicenseTableState = new TableState();
@@ -168,26 +168,10 @@ class AuditTui {
         }
         this.originalPomContent = pom;
         this.editor = pom.isEmpty() ? null : new PomEditor(Document.of(pom));
-        this.status = "Loading license and vulnerability data\u2026";
+        this.sortState = new SortState(4);
+        this.status = "Loading license and vulnerability data…";
         if (!entries.isEmpty()) {
             tableState.select(0);
-        }
-    }
-
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            fetchAllData();
-            configured.run();
-        } finally {
-            configured.close();
-            httpPool.shutdownNow();
-            httpPool.awaitTermination(5, TimeUnit.SECONDS);
         }
     }
 
@@ -292,9 +276,89 @@ class AuditTui {
             long withLicense = entries.stream().filter(e -> e.license != null).count();
             status = withLicense + "/" + entries.size() + " with license info, " + vulnCount + " vulnerabilities found";
         } else {
-            status = "Loading\u2026 licenses: " + licensesLoaded + "/" + entries.size() + ", vulnerabilities: "
-                    + vulnsLoaded + "/" + entries.size();
+            status = "Loading… licenses: " + licensesLoaded + "/" + entries.size() + ", vulnerabilities: " + vulnsLoaded
+                    + "/" + entries.size();
         }
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        // Diff overlay mode — consume all keys
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            return true; // consume all
+        }
+
+        if (handleSearchInput(key)) return true;
+        if (handleSortInput(key)) return true;
+
+        if (key.isUp()) {
+            activeTableState().selectPrevious();
+            return true;
+        }
+        if (key.isDown()) {
+            activeTableState().selectNext(activeRowCount());
+            return true;
+        }
+
+        // ←/→ for expand/collapse in BY_LICENSE view
+        if (key.isRight() && view == View.BY_LICENSE) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
+                if (!byLicenseRows.get(idx).expanded) {
+                    byLicenseRows.get(idx).expanded = true;
+                    rebuildByLicenseRows();
+                } else {
+                    byLicenseTableState.selectNext(byLicenseRows.size());
+                }
+                return true;
+            }
+        }
+        if (key.isLeft() && view == View.BY_LICENSE) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size()) {
+                LicenseRow row = byLicenseRows.get(idx);
+                if (row.isGroup() && row.expanded) {
+                    row.expanded = false;
+                    rebuildByLicenseRows();
+                    return true;
+                } else if (!row.isGroup()) {
+                    for (int i = idx - 1; i >= 0; i--) {
+                        if (byLicenseRows.get(i).isGroup()) {
+                            byLicenseTableState.select(i);
+                            break;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // BY_LICENSE: Enter/Space to expand/collapse groups
+        if (view == View.BY_LICENSE && (key.isKey(KeyCode.ENTER) || key.isChar(' '))) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
+                byLicenseRows.get(idx).expanded = !byLicenseRows.get(idx).expanded;
+                rebuildByLicenseRows();
+            }
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('m')) {
+            addManagedDependency();
+            return true;
+        }
+
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+
+        return false;
     }
 
     boolean handleEvent(Event event, TuiRunner runner) {
@@ -329,7 +393,7 @@ class AuditTui {
             return false;
         }
 
-        // Diff overlay mode
+        // Diff overlay in standalone — allow q to quit
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
                 diffOverlay.close();
@@ -343,20 +407,15 @@ class AuditTui {
             return false;
         }
 
-        if (key.isCtrlC() || key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
+        if (key.isCtrlC()) {
             requestQuit();
             return true;
         }
 
-        if (key.isUp()) {
-            activeTableState().selectPrevious();
-            return true;
-        }
-        if (key.isDown()) {
-            activeTableState().selectNext(activeRowCount());
-            return true;
-        }
+        // Delegate tool-specific keys
+        if (handleKeyEvent(key)) return true;
 
+        // Standalone: Tab switches views
         if (key.isKey(KeyCode.TAB)) {
             view = switch (view) {
                 case LICENSES -> View.BY_LICENSE;
@@ -366,60 +425,13 @@ class AuditTui {
             return true;
         }
 
-        // Expand/collapse and navigate license groups in BY_LICENSE view
-        if (view == View.BY_LICENSE && (key.isKey(KeyCode.ENTER) || key.isChar(' '))) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
-                byLicenseRows.get(idx).expanded = !byLicenseRows.get(idx).expanded;
-                rebuildByLicenseRows();
-            }
-            return true;
-        }
-        if (view == View.BY_LICENSE && key.isRight()) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
-                if (!byLicenseRows.get(idx).expanded) {
-                    byLicenseRows.get(idx).expanded = true;
-                    rebuildByLicenseRows();
-                } else {
-                    // Move to first child
-                    byLicenseTableState.selectNext(byLicenseRows.size());
-                }
-            }
-            return true;
-        }
-        if (view == View.BY_LICENSE && key.isLeft()) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size()) {
-                LicenseRow row = byLicenseRows.get(idx);
-                if (row.isGroup() && row.expanded) {
-                    row.expanded = false;
-                    rebuildByLicenseRows();
-                } else if (!row.isGroup()) {
-                    // Move to parent group: find nearest preceding group row
-                    for (int i = idx - 1; i >= 0; i--) {
-                        if (byLicenseRows.get(i).isGroup()) {
-                            byLicenseTableState.select(i);
-                            break;
-                        }
-                    }
-                }
-            }
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('m')) {
-            addManagedDependency();
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('d')) {
-            toggleDiffView();
+        if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            requestQuit();
             return true;
         }
 
         if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
+            helpOverlay.open(buildHelpStandalone());
             return true;
         }
 
@@ -472,19 +484,26 @@ class AuditTui {
         }
     }
 
-    private void saveAndQuit() {
+    private boolean doSave() {
         try {
             String currentOnDisk = Files.readString(Path.of(pomPath));
             if (!currentOnDisk.equals(originalPomContent)) {
-                pendingQuit = false;
-                status = "POM modified externally \u2014 save aborted";
-                return;
+                status = "POM modified externally — save aborted";
+                return false;
             }
             Files.writeString(Path.of(pomPath), editor.toXml());
-            runner.quit();
+            return true;
         } catch (Exception e) {
-            pendingQuit = false;
             status = "Failed to save: " + e.getMessage();
+            return false;
+        }
+    }
+
+    private void saveAndQuit() {
+        if (doSave()) {
+            runner.quit();
+        } else {
+            pendingQuit = false;
         }
     }
 
@@ -496,23 +515,39 @@ class AuditTui {
 
     // -- Rendering --
 
-    void render(Frame frame) {
+    @Override
+    public void render(Frame frame, Rect area) {
+        lastContentHeight = area.height();
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes ");
+        } else {
+            Rect contentArea = renderTabBar(frame, area);
+            switch (view) {
+                case LICENSES -> renderLicenses(frame, contentArea);
+                case BY_LICENSE -> renderByLicense(frame, contentArea);
+                case VULNERABILITIES -> renderVulnerabilities(frame, contentArea);
+            }
+        }
+    }
+
+    void renderStandalone(Frame frame) {
         var zones = Layout.vertical()
                 .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
 
-        lastContentHeight = zones.get(1).height();
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(1));
-        } else if (diffOverlay.isActive()) {
-            diffOverlay.render(frame, zones.get(1), " POM Changes ");
-        } else {
-            switch (view) {
-                case LICENSES -> renderLicenses(frame, zones.get(1));
-                case BY_LICENSE -> renderByLicense(frame, zones.get(1));
-                case VULNERABILITIES -> renderVulnerabilities(frame, zones.get(1));
+        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
+        if (contentArea != null) {
+            lastContentHeight = contentArea.height();
+            if (diffOverlay.isActive()) {
+                diffOverlay.render(frame, contentArea, " POM Changes ");
+            } else {
+                switch (view) {
+                    case LICENSES -> renderLicenses(frame, contentArea);
+                    case BY_LICENSE -> renderByLicense(frame, contentArea);
+                    case VULNERABILITIES -> renderVulnerabilities(frame, contentArea);
+                }
             }
         }
 
@@ -520,56 +555,50 @@ class AuditTui {
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        Block block = Block.builder()
-                .title(" Pilot \u2014 License & Security Audit ")
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         if (dirty) {
-            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+            spans.add(theme.dirtyIndicator());
         }
         spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.LICENSES ? "\u25B8 " : "  ") + "Licenses]")
-                .fg(view == View.LICENSES ? Color.YELLOW : Color.DARK_GRAY));
+        spans.add(Span.raw("[" + (view == View.LICENSES ? "▸ " : "  ") + "Licenses]")
+                .fg(view == View.LICENSES ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
         spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.BY_LICENSE ? "\u25B8 " : "  ") + "By License]")
-                .fg(view == View.BY_LICENSE ? Color.YELLOW : Color.DARK_GRAY));
+        spans.add(Span.raw("[" + (view == View.BY_LICENSE ? "▸ " : "  ") + "By License]")
+                .fg(view == View.BY_LICENSE ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
         spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.VULNERABILITIES ? "\u25B8 " : "  ") + "Vulnerabilities"
+        spans.add(Span.raw("[" + (view == View.VULNERABILITIES ? "▸ " : "  ") + "Vulnerabilities"
                         + (vulnCount > 0 ? " (" + vulnCount + ")" : "") + "]")
-                .fg(view == View.VULNERABILITIES ? (vulnCount > 0 ? Color.RED : Color.YELLOW) : Color.DARK_GRAY));
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+                .fg(
+                        view == View.VULNERABILITIES
+                                ? (vulnCount > 0 ? theme.vulnTabActiveColor() : theme.activeViewTabColor())
+                                : theme.inactiveViewTabColor()));
+        renderStandaloneHeader(frame, area, "License & Security Audit", Line.from(spans));
     }
 
     private void renderLicenses(Frame frame, Rect area) {
-        // Split into table + separator + detail pane
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
 
         Block block = Block.builder()
-                .title(" Licenses (" + entries.size() + " dependencies) ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
-        Row header = Row.from("groupId:artifactId", "version", "license", "scope")
-                .style(Style.create().bold().yellow());
+        Row header = sortState.decorateHeader(
+                List.of("groupId:artifactId", "version", "license", "scope"), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
-        for (var entry : entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            var entry = entries.get(i);
             String license = entry.license != null
                     ? normalizeLicense(entry.license, entry.licenseUrl)
-                    : (entry.licenseLoaded ? "-" : "\u2026");
+                    : (entry.licenseLoaded ? "-" : "…");
             Style style = getLicenseStyle(entry.license);
+            if (view == View.LICENSES && isSearchMatch(i)) {
+                style = style.bg(theme.searchHighlightBg());
+            }
             rows.add(Row.from(entry.ga(), entry.version, license, entry.scope).style(style));
         }
 
@@ -579,11 +608,12 @@ class AuditTui {
                 .widths(
                         Constraint.percentage(40), Constraint.percentage(15),
                         Constraint.percentage(30), Constraint.percentage(15))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = zones.get(0);
         frame.renderStatefulWidget(table, zones.get(0), tableState);
 
         // -- Detail pane --
@@ -594,7 +624,7 @@ class AuditTui {
         Block block = Block.builder()
                 .title(" Details ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(theme.unfocusedBorder())
                 .build();
 
         int idx = tableState.selected() != null ? tableState.selected() : -1;
@@ -607,28 +637,28 @@ class AuditTui {
         List<Span> spans = new ArrayList<>();
         String centralUrl = centralUrl(entry.groupId, entry.artifactId);
         spans.add(Span.raw(entry.gav()).bold().cyan().hyperlink(centralUrl));
-        spans.add(Span.raw("  scope: ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw("  scope: ").fg(theme.detailSeparatorColor()));
         spans.add(Span.raw(entry.scope));
-        spans.add(Span.raw("  \u2197 ").fg(Color.DARK_GRAY));
-        spans.add(Span.raw(centralUrl).fg(Color.BLUE).hyperlink(centralUrl));
+        spans.add(Span.raw("  ↗ ").fg(theme.detailSeparatorColor()));
+        spans.add(Span.raw(centralUrl).fg(theme.linkColor()).hyperlink(centralUrl));
 
         List<Span> licSpans = new ArrayList<>();
         if (entry.license != null) {
-            licSpans.add(Span.raw("License: ").fg(Color.DARK_GRAY));
+            licSpans.add(Span.raw("License: ").fg(theme.detailSeparatorColor()));
             if (entry.licenseUrl != null && !entry.licenseUrl.isEmpty()) {
                 licSpans.add(Span.raw(entry.license)
                         .style(getLicenseStyle(entry.license))
                         .hyperlink(entry.licenseUrl));
-                licSpans.add(Span.raw("  \u2197 ").fg(Color.DARK_GRAY));
-                licSpans.add(Span.raw(entry.licenseUrl).fg(Color.BLUE).hyperlink(entry.licenseUrl));
+                licSpans.add(Span.raw("  ↗ ").fg(theme.detailSeparatorColor()));
+                licSpans.add(Span.raw(entry.licenseUrl).fg(theme.linkColor()).hyperlink(entry.licenseUrl));
             } else {
                 licSpans.add(Span.raw(entry.license).style(getLicenseStyle(entry.license)));
             }
         } else if (entry.licenseLoaded) {
-            licSpans.add(Span.raw("License: ").fg(Color.DARK_GRAY));
-            licSpans.add(Span.raw("not specified").fg(Color.DARK_GRAY));
+            licSpans.add(Span.raw("License: ").fg(theme.detailSeparatorColor()));
+            licSpans.add(Span.raw("not specified").fg(theme.detailSeparatorColor()));
         } else {
-            licSpans.add(Span.raw("Loading\u2026").fg(Color.DARK_GRAY));
+            licSpans.add(Span.raw("Loading…").fg(theme.detailSeparatorColor()));
         }
 
         List<Line> lines = new ArrayList<>();
@@ -637,20 +667,18 @@ class AuditTui {
         Line modulesLine = buildModulesLine(entry);
         if (modulesLine != null) lines.add(modulesLine);
 
-        Paragraph detail = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(lines))
-                .block(block)
-                .build();
+        Paragraph detail =
+                Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(detail, area);
     }
 
     private Line buildModulesLine(AuditEntry entry) {
         if (entry.modules.isEmpty()) return null;
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw("Modules: ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw("Modules: ").fg(theme.detailSeparatorColor()));
         for (int i = 0; i < entry.modules.size(); i++) {
-            if (i > 0) spans.add(Span.raw(", ").fg(Color.DARK_GRAY));
-            spans.add(Span.raw(entry.modules.get(i)).fg(Color.MAGENTA));
+            if (i > 0) spans.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(entry.modules.get(i)).fg(theme.moduleColor()));
         }
         return Line.from(spans);
     }
@@ -662,9 +690,9 @@ class AuditTui {
         var path = treeModel.pathToRoot(node);
         if (path.size() <= 1) return null; // root or direct dep — no path to show
         List<Span> pathSpans = new ArrayList<>();
-        pathSpans.add(Span.raw("Path: ").fg(Color.DARK_GRAY));
+        pathSpans.add(Span.raw("Path: ").fg(theme.detailSeparatorColor()));
         for (int i = 0; i < path.size(); i++) {
-            if (i > 0) pathSpans.add(Span.raw(" \u2192 ").fg(Color.DARK_GRAY));
+            if (i > 0) pathSpans.add(Span.raw(" → ").fg(theme.detailSeparatorColor()));
             var n = path.get(i);
             if (i == 0) {
                 pathSpans.add(Span.raw(n.artifactId).dim());
@@ -696,16 +724,132 @@ class AuditTui {
         };
     }
 
+    @Override
+    protected void updateSearchMatches() {
+        String query = searchBuffer.toString().toLowerCase();
+        if (query.isEmpty()) {
+            searchMatches = List.of();
+            searchMatchIndex = -1;
+            return;
+        }
+        searchMatches = new ArrayList<>();
+        switch (view) {
+            case LICENSES -> {
+                for (int i = 0; i < entries.size(); i++) {
+                    if (auditEntryMatchesSearch(entries.get(i), query)) {
+                        searchMatches.add(i);
+                    }
+                }
+            }
+            case BY_LICENSE -> {
+                for (int i = 0; i < byLicenseRows.size(); i++) {
+                    if (licenseRowMatchesSearch(byLicenseRows.get(i), query)) {
+                        searchMatches.add(i);
+                    }
+                }
+            }
+            case VULNERABILITIES -> {
+                for (int i = 0; i < vulnRows.size(); i++) {
+                    var vr = vulnRows.get(i);
+                    if (auditEntryMatchesSearch(vr.entry(), query)
+                            || vr.vuln().id.toLowerCase().contains(query)
+                            || vr.vuln().summary.toLowerCase().contains(query)) {
+                        searchMatches.add(i);
+                    }
+                }
+            }
+        }
+        if (!searchMatches.isEmpty()) {
+            searchMatchIndex = 0;
+            selectSearchMatch(0);
+        } else {
+            searchMatchIndex = -1;
+        }
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        activeTableState().select(searchMatches.get(matchIndex));
+    }
+
+    private boolean auditEntryMatchesSearch(AuditEntry entry, String query) {
+        String searchable = entry.groupId + ":" + entry.artifactId + ":" + entry.version;
+        if (entry.license != null) searchable += ":" + entry.license;
+        if (entry.scope != null) searchable += ":" + entry.scope;
+        return searchable.toLowerCase().contains(query);
+    }
+
+    private boolean licenseRowMatchesSearch(LicenseRow row, String query) {
+        if (row.isGroup()) {
+            return row.licenseName != null && row.licenseName.toLowerCase().contains(query);
+        }
+        return auditEntryMatchesSearch(row.entry, query);
+    }
+
+    @Override
+    int subViewCount() {
+        return 3;
+    }
+
+    @Override
+    int activeSubView() {
+        return view.ordinal();
+    }
+
+    @Override
+    void setActiveSubView(int index) {
+        view = View.values()[index];
+        clearSearch();
+        sortState = new SortState(4);
+    }
+
+    @Override
+    List<String> subViewNames() {
+        return List.of("Licenses", "By License", "Vulns");
+    }
+
+    private List<Function<AuditEntry, String>> licensesExtractors() {
+        return List.of(
+                AuditEntry::ga,
+                e -> e.version,
+                e -> e.license != null ? normalizeLicense(e.license, e.licenseUrl) : "",
+                e -> e.scope);
+    }
+
+    private List<Function<VulnRow, String>> vulnExtractors() {
+        return List.of(
+                vr -> vr.entry().ga() + ":" + vr.entry().version,
+                vr -> vr.vuln().id,
+                vr -> normalizeSeverity(vr.vuln().severity),
+                vr -> vr.vuln().summary);
+    }
+
+    private List<Function<LicenseRow, String>> byLicenseExtractors() {
+        return List.of(
+                r -> r.isGroup() ? r.licenseName : r.entry.ga(),
+                r -> r.isGroup() ? "" : r.entry.version,
+                r -> r.isGroup() ? "" : r.entry.scope,
+                r -> "");
+    }
+
+    @Override
+    protected void onSortChanged() {
+        switch (view) {
+            case LICENSES -> sortState.sort(entries, licensesExtractors());
+            case BY_LICENSE -> sortState.sort(byLicenseRows, byLicenseExtractors());
+            case VULNERABILITIES -> sortState.sort(vulnRows, vulnExtractors());
+        }
+    }
+
     private void renderByLicense(Frame frame, Rect area) {
         if (byLicenseRows.isEmpty()) {
             Block block = Block.builder()
-                    .title(" By License ")
                     .borderType(BorderType.ROUNDED)
-                    .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                    .borderStyle(borderStyle())
                     .build();
             String msg = (licensesLoaded >= entries.size())
                     ? "No license data available"
-                    : "Loading licenses\u2026 " + licensesLoaded + "/" + entries.size();
+                    : "Loading licenses… " + licensesLoaded + "/" + entries.size();
             frame.renderWidget(
                     Paragraph.builder().text(msg).block(block).centered().build(), area);
             return;
@@ -717,27 +861,31 @@ class AuditTui {
                 .split(area);
 
         Block block = Block.builder()
-                .title(" By License (" + countLicenseGroups() + " licenses) ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         List<Row> rows = new ArrayList<>();
-        for (var row : byLicenseRows) {
+        for (int i = 0; i < byLicenseRows.size(); i++) {
+            var row = byLicenseRows.get(i);
+            boolean highlight = view == View.BY_LICENSE && isSearchMatch(i);
             if (row.isGroup()) {
-                String arrow = row.expanded ? "\u25BE " : "\u25B8 ";
+                String arrow = row.expanded ? "▾ " : "▸ ";
                 String label = arrow + row.licenseName + " (" + row.deps.size() + ")";
-                rows.add(Row.from(label, "", "", "")
-                        .style(getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
-                                .bold()));
+                Style style = getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
+                        .bold();
+                if (highlight) style = style.bg(theme.searchHighlightBg());
+                rows.add(Row.from(label, "", "", "").style(style));
             } else {
+                Style style = theme.unfocusedBorder();
+                if (highlight) style = style.bg(theme.searchHighlightBg());
                 rows.add(Row.from("    " + row.entry.ga(), row.entry.version, row.entry.scope, "")
-                        .style(Style.create().fg(Color.DARK_GRAY)));
+                        .style(style));
             }
         }
 
-        Row header = Row.from("license / artifact", "version", "scope", "")
-                .style(Style.create().bold().yellow());
+        Row header =
+                sortState.decorateHeader(List.of("license / artifact", "version", "scope", ""), theme.tableHeader());
 
         Table table = Table.builder()
                 .header(header)
@@ -745,11 +893,12 @@ class AuditTui {
                 .widths(
                         Constraint.percentage(55), Constraint.percentage(20),
                         Constraint.percentage(15), Constraint.percentage(10))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = zones.get(0);
         frame.renderStatefulWidget(table, zones.get(0), byLicenseTableState);
 
         // -- Detail pane --
@@ -764,7 +913,7 @@ class AuditTui {
         Block block = Block.builder()
                 .title(" Details ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(theme.unfocusedBorder())
                 .build();
 
         int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
@@ -779,31 +928,32 @@ class AuditTui {
         if (row.isGroup()) {
             List<Span> titleSpans = new ArrayList<>();
             titleSpans.add(Span.raw(row.licenseName).bold().cyan());
-            titleSpans.add(Span.raw("  " + row.deps.size() + " dependencies").fg(Color.DARK_GRAY));
+            titleSpans.add(Span.raw("  " + row.deps.size() + " dependencies").fg(theme.detailSeparatorColor()));
             lines.add(Line.from(titleSpans));
 
             if (row.licenseUrl != null && !row.licenseUrl.isEmpty()) {
                 lines.add(Line.from(
-                        Span.raw("URL: ").fg(Color.DARK_GRAY),
-                        Span.raw(row.licenseUrl).fg(Color.BLUE).hyperlink(row.licenseUrl)));
+                        Span.raw("URL: ").fg(theme.detailSeparatorColor()),
+                        Span.raw(row.licenseUrl).fg(theme.linkColor()).hyperlink(row.licenseUrl)));
             }
         } else {
             String centralUrl = centralUrl(row.entry.groupId, row.entry.artifactId);
             lines.add(Line.from(
                     Span.raw(row.entry.gav()).bold().cyan().hyperlink(centralUrl),
-                    Span.raw("  scope: ").fg(Color.DARK_GRAY),
+                    Span.raw("  scope: ").fg(theme.detailSeparatorColor()),
                     Span.raw(row.entry.scope),
-                    Span.raw("  \u2197 ").fg(Color.DARK_GRAY),
-                    Span.raw(centralUrl).fg(Color.BLUE).hyperlink(centralUrl)));
+                    Span.raw("  ↗ ").fg(theme.detailSeparatorColor()),
+                    Span.raw(centralUrl).fg(theme.linkColor()).hyperlink(centralUrl)));
             if (row.entry.license != null) {
                 List<Span> licSpans = new ArrayList<>();
-                licSpans.add(Span.raw("License: ").fg(Color.DARK_GRAY));
+                licSpans.add(Span.raw("License: ").fg(theme.detailSeparatorColor()));
                 if (row.entry.licenseUrl != null && !row.entry.licenseUrl.isEmpty()) {
                     licSpans.add(Span.raw(row.entry.license)
                             .style(getLicenseStyle(row.entry.license))
                             .hyperlink(row.entry.licenseUrl));
-                    licSpans.add(Span.raw("  \u2197 ").fg(Color.DARK_GRAY));
-                    licSpans.add(Span.raw(row.entry.licenseUrl).fg(Color.BLUE).hyperlink(row.entry.licenseUrl));
+                    licSpans.add(Span.raw("  ↗ ").fg(theme.detailSeparatorColor()));
+                    licSpans.add(
+                            Span.raw(row.entry.licenseUrl).fg(theme.linkColor()).hyperlink(row.entry.licenseUrl));
                 } else {
                     licSpans.add(Span.raw(row.entry.license).style(getLicenseStyle(row.entry.license)));
                 }
@@ -813,23 +963,20 @@ class AuditTui {
             if (modulesLine != null) lines.add(modulesLine);
         }
 
-        Paragraph detail = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(lines))
-                .block(block)
-                .build();
+        Paragraph detail =
+                Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(detail, area);
     }
 
     private void renderVulnerabilities(Frame frame, Rect area) {
         if (vulnRows.isEmpty()) {
             Block block = Block.builder()
-                    .title(" Vulnerabilities ")
                     .borderType(BorderType.ROUNDED)
-                    .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                    .borderStyle(borderStyle())
                     .build();
             String msg = (vulnsLoaded >= entries.size())
-                    ? "No known vulnerabilities found \u2713"
-                    : "Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size();
+                    ? "No known vulnerabilities found ✓"
+                    : "Checking vulnerabilities… " + vulnsLoaded + "/" + entries.size();
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
@@ -843,21 +990,26 @@ class AuditTui {
 
         // -- Vulnerability table --
         Block block = Block.builder()
-                .title(" Vulnerabilities (" + vulnRows.size() + ") ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.RED))
+                .borderStyle(borderStyle())
                 .build();
 
         List<Row> rows = new ArrayList<>();
-        for (var vr : vulnRows) {
-            String severity = normalizeSeverity(vr.vuln.severity);
-            String summary = vr.vuln.summary.length() > 60 ? vr.vuln.summary.substring(0, 57) + "..." : vr.vuln.summary;
-            rows.add(Row.from(vr.entry.ga() + ":" + vr.entry.version, vr.vuln.id, severity, summary)
-                    .style(getSeverityStyle(severity)));
+        for (int i = 0; i < vulnRows.size(); i++) {
+            var vr = vulnRows.get(i);
+            String severity = normalizeSeverity(vr.vuln().severity);
+            String summary =
+                    vr.vuln().summary.length() > 60 ? vr.vuln().summary.substring(0, 57) + "..." : vr.vuln().summary;
+            Style style = getSeverityStyle(severity);
+            if (view == View.VULNERABILITIES && isSearchMatch(i)) {
+                style = style.bg(theme.searchHighlightBg());
+            }
+            rows.add(Row.from(vr.entry().ga() + ":" + vr.entry().version, vr.vuln().id, severity, summary)
+                    .style(style));
         }
 
-        Row header = Row.from("artifact", "CVE/ID", "severity", "summary")
-                .style(Style.create().bold().yellow());
+        Row header =
+                sortState.decorateHeader(List.of("artifact", "CVE/ID", "severity", "summary"), theme.tableHeader());
 
         Table table = Table.builder()
                 .header(header)
@@ -865,11 +1017,12 @@ class AuditTui {
                 .widths(
                         Constraint.percentage(30), Constraint.percentage(18),
                         Constraint.percentage(10), Constraint.percentage(42))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = zones.get(0);
         frame.renderStatefulWidget(table, zones.get(0), vulnTableState);
 
         // -- Detail pane --
@@ -880,7 +1033,7 @@ class AuditTui {
         Block block = Block.builder()
                 .title(" Details ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(theme.unfocusedBorder())
                 .build();
 
         int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
@@ -901,14 +1054,14 @@ class AuditTui {
                 Span.raw(severity).style(getSeverityStyle(severity).bold()),
                 Span.raw("  "),
                 Span.raw(vr.entry.ga() + ":" + vr.entry.version)
-                        .fg(Color.DARK_GRAY)
+                        .fg(theme.detailSeparatorColor())
                         .hyperlink(centralUrl)));
         lines.add(Line.from(
-                Span.raw("\u2197 ").fg(Color.DARK_GRAY),
-                Span.raw(url).fg(Color.BLUE).hyperlink(url)));
+                Span.raw("↗ ").fg(theme.detailSeparatorColor()),
+                Span.raw(url).fg(theme.linkColor()).hyperlink(url)));
         if (!vuln.aliases.isEmpty()) {
             List<Span> aliasSpans = new ArrayList<>();
-            aliasSpans.add(Span.raw("Aliases: ").fg(Color.DARK_GRAY));
+            aliasSpans.add(Span.raw("Aliases: ").fg(theme.detailSeparatorColor()));
             for (int i = 0; i < vuln.aliases.size(); i++) {
                 if (i > 0) aliasSpans.add(Span.raw(", "));
                 String alias = vuln.aliases.get(i);
@@ -918,16 +1071,14 @@ class AuditTui {
         }
         if (vuln.published != null && !vuln.published.isEmpty()) {
             String pub = vuln.published.length() > 10 ? vuln.published.substring(0, 10) : vuln.published;
-            lines.add(Line.from(Span.raw("Published: ").fg(Color.DARK_GRAY), Span.raw(pub)));
+            lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
         }
         lines.add(Line.from(Span.raw(vuln.summary)));
         Line modulesLine = buildModulesLine(vr.entry);
         if (modulesLine != null) lines.add(modulesLine);
 
-        Paragraph detail = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(lines))
-                .block(block)
-                .build();
+        Paragraph detail =
+                Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(detail, area);
     }
 
@@ -950,32 +1101,32 @@ class AuditTui {
         return severity.toUpperCase();
     }
 
-    private static Style getSeverityStyle(String severity) {
-        if (severity == null) return Style.create().fg(Color.DARK_GRAY);
+    private Style getSeverityStyle(String severity) {
+        if (severity == null) return theme.severityUnknown();
         return switch (severity.toUpperCase()) {
-            case "CRITICAL" -> Style.create().fg(Color.RED).bold();
-            case "HIGH" -> Style.create().fg(Color.RED);
-            case "MEDIUM" -> Style.create().fg(Color.YELLOW);
-            case "LOW" -> Style.create();
+            case "CRITICAL" -> theme.severityCritical();
+            case "HIGH" -> theme.severityHigh();
+            case "MEDIUM" -> theme.severityMedium();
+            case "LOW" -> theme.severityLow();
             default -> {
                 if (severity.toUpperCase().startsWith("CVSS")) {
-                    yield Style.create().fg(Color.RED);
+                    yield theme.severityHigh();
                 }
-                yield Style.create().fg(Color.DARK_GRAY);
+                yield theme.severityUnknown();
             }
         };
     }
 
     private Style getLicenseStyle(String license) {
-        if (license == null) return Style.create().fg(Color.DARK_GRAY);
+        if (license == null) return theme.licenseUnknown();
         String normalized = normalizeLicense(license, null);
         // GPL with classpath exception is weak copyleft
         if (normalized.equals("GPL-2.0-CE")) {
-            return Style.create().fg(Color.YELLOW);
+            return theme.licenseWeakCopyleft();
         }
         // Strong copyleft
         if (normalized.startsWith("AGPL") || normalized.startsWith("GPL")) {
-            return Style.create().fg(Color.RED);
+            return theme.licenseStrongCopyleft();
         }
         // Permissive
         if (normalized.startsWith("Apache")
@@ -986,16 +1137,16 @@ class AuditTui {
                 || normalized.equals("CC0-1.0")
                 || normalized.equals("Public Domain")
                 || normalized.startsWith("EDL")) {
-            return Style.create();
+            return theme.licensePermissive();
         }
         // Weak copyleft
         if (normalized.startsWith("LGPL")
                 || normalized.startsWith("MPL")
                 || normalized.startsWith("EPL")
                 || normalized.startsWith("CDDL")) {
-            return Style.create().fg(Color.YELLOW);
+            return theme.licenseWeakCopyleft();
         }
-        return Style.create().fg(Color.DARK_GRAY);
+        return theme.licenseUnknown();
     }
 
     // -- Well-known license URL → SPDX mapping --
@@ -1126,7 +1277,8 @@ class AuditTui {
         return name;
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
         return List.of(
                 new HelpOverlay.Section(
                         "License & Security Audit",
@@ -1157,15 +1309,27 @@ class AuditTui {
                                 new HelpOverlay.Entry("default", "Low severity"),
                                 new HelpOverlay.Entry("dim", "Unknown severity"))),
                 new HelpOverlay.Section(
-                        "Keys",
+                        "Audit Actions",
                         List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand (By License view)"),
-                                new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("← / →", "Switch view / collapse / expand"),
                                 new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
+    }
+
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "Keys",
+                List.of(
+                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("← / →", "Collapse / expand (By License view)"),
+                        new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
+                        new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
+                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        return sections;
     }
 
     private void renderInfoBar(Frame frame, Rect area) {
@@ -1174,7 +1338,7 @@ class AuditTui {
                 .split(area);
 
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         List<Span> spans = new ArrayList<>();
@@ -1187,14 +1351,14 @@ class AuditTui {
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Cancel"));
         } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Close  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Tab").bold());
             spans.add(Span.raw(":Licenses/Vulns  "));
@@ -1209,5 +1373,100 @@ class AuditTui {
         }
 
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+    }
+
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Audit";
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseTabBar(mouse)) return true;
+        if (handleMouseSortHeader(mouse, currentTableWidths())) return true;
+        if (mouse.isScroll()) {
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                activeTableState().selectPrevious();
+            } else {
+                activeTableState().selectNext(activeRowCount());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private List<Constraint> currentTableWidths() {
+        return switch (view) {
+            case LICENSES ->
+                List.of(
+                        Constraint.percentage(40), Constraint.percentage(15),
+                        Constraint.percentage(30), Constraint.percentage(15));
+            case BY_LICENSE ->
+                List.of(
+                        Constraint.percentage(55), Constraint.percentage(20),
+                        Constraint.percentage(15), Constraint.percentage(10));
+            case VULNERABILITIES ->
+                List.of(
+                        Constraint.percentage(30), Constraint.percentage(18),
+                        Constraint.percentage(10), Constraint.percentage(42));
+        };
+    }
+
+    @Override
+    public String status() {
+        String search = searchStatus();
+        if (search != null) {
+            return searchMode ? search : status + " — " + search;
+        }
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
+        List<Span> spans = new ArrayList<>();
+        if (diffOverlay.isActive()) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close"));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("m").bold());
+            spans.add(Span.raw(":Manage dep  "));
+            spans.addAll(sortKeyHints());
+            spans.add(Span.raw("/").bold());
+            spans.add(Span.raw(":Search  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff"));
+        }
+        return spans;
+    }
+
+    @Override
+    public boolean isDirty() {
+        return dirty;
+    }
+
+    @Override
+    public boolean save() {
+        return doSave();
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
+        fetchAllData();
+    }
+
+    @Override
+    void close() {
+        httpPool.shutdownNow();
     }
 }

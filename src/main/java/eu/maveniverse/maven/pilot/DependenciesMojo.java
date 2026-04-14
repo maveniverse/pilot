@@ -82,19 +82,10 @@ public class DependenciesMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            List<MavenProject> projects = session.getProjects();
-            if (projects.size() > 1) {
-                executeReactor(projects);
-            } else {
-                executeForProject(project);
-            }
+            executeForProject(project);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to analyze dependencies: " + e.getMessage(), e);
         }
-    }
-
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        ModulePickerTui.forEachSelected(projects, "dependencies", this::executeForProject);
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
@@ -187,7 +178,7 @@ public class DependenciesMojo extends AbstractMojo {
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
 
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, gav, bytecodeAnalyzed);
-        tui.run();
+        tui.runStandalone();
     }
 
     private static final Set<String> TEST_SCOPES = Set.of("test", "test-only", "test-runtime");

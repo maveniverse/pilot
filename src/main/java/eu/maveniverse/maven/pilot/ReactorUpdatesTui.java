@@ -21,7 +21,6 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -30,6 +29,8 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -40,14 +41,13 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * Interactive TUI for viewing and applying dependency updates across a multi-module reactor.
@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  *   <li><b>Modules</b> — reactor tree with per-module update counts</li>
  * </ul>
  */
-class ReactorUpdatesTui {
+class ReactorUpdatesTui extends ToolPanel {
 
     private enum View {
         DEPENDENCIES,
@@ -106,9 +106,8 @@ class ReactorUpdatesTui {
     private List<ReactorRow> displayRows = new ArrayList<>();
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
-    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
-    String status = "Loading updates\u2026";
+    String status = "Loading updates…";
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
@@ -124,25 +123,9 @@ class ReactorUpdatesTui {
         this.reactorModel = reactorModel;
         this.projectGav = projectGav;
         this.versionResolver = versionResolver;
+        this.sortState = new SortState(6);
         if (!reactorModel.allModules.isEmpty()) {
             moduleTableState.select(0);
-        }
-    }
-
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            fetchAllUpdates();
-            configured.run();
-        } finally {
-            configured.close();
-            httpPool.shutdownNow();
-            httpPool.awaitTermination(5, TimeUnit.SECONDS);
         }
     }
 
@@ -201,6 +184,7 @@ class ReactorUpdatesTui {
             }
             updateReactorCounts();
             buildDisplayRows();
+            onSortChanged();
             long updates = reactorResult.allDependencies.stream()
                     .filter(ReactorCollector.AggregatedDependency::hasUpdate)
                     .count();
@@ -260,6 +244,87 @@ class ReactorUpdatesTui {
         }
     }
 
+    private List<Function<ReactorRow, String>> depsSortExtractors() {
+        return List.of(
+                row -> row.isGroupHeader()
+                        ? (row.propertyGroup.selected ? "[✓]" : "[ ]")
+                        : (row.dependency.selected ? "[✓]" : "   "),
+                row -> row.isGroupHeader() ? "${" + row.propertyGroup.propertyName + "}" : row.dependency.artifactId,
+                row -> row.isGroupHeader()
+                        ? (row.propertyGroup.resolvedVersion != null ? row.propertyGroup.resolvedVersion : "")
+                        : (row.dependency.isPropertyManaged()
+                                ? ""
+                                : (row.dependency.primaryVersion != null ? row.dependency.primaryVersion : "")),
+                row -> row.isGroupHeader()
+                        ? (row.propertyGroup.hasUpdate() ? "→" : "")
+                        : (!row.dependency.isPropertyManaged() && row.dependency.hasUpdate() ? "→" : ""),
+                row -> row.isGroupHeader()
+                        ? (row.propertyGroup.hasUpdate() ? row.propertyGroup.newestVersion : "")
+                        : (!row.dependency.isPropertyManaged() && row.dependency.hasUpdate()
+                                ? row.dependency.newestVersion
+                                : ""),
+                row -> {
+                    if (row.isGroupHeader()) {
+                        return String.valueOf(row.propertyGroup.totalModuleCount());
+                    }
+                    return String.valueOf(row.dependency.moduleCount());
+                });
+    }
+
+    private List<Function<ReactorModel.ModuleNode, String>> modulesSortExtractors() {
+        return List.of(node -> node.name, node -> String.valueOf(node.totalUpdateCount));
+    }
+
+    @Override
+    protected void onSortChanged() {
+        if (view == View.DEPENDENCIES) {
+            sortState.sort(displayRows, depsSortExtractors());
+        }
+        // Modules view uses visibleNodes() which is tree-based; sorting not applied there.
+    }
+
+    @Override
+    protected void updateSearchMatches() {
+        String query = searchBuffer.toString().toLowerCase();
+        if (query.isEmpty()) {
+            searchMatches = List.of();
+            searchMatchIndex = -1;
+            return;
+        }
+        searchMatches = new ArrayList<>();
+        for (int i = 0; i < displayRows.size(); i++) {
+            if (reactorRowMatchesSearch(displayRows.get(i), query)) {
+                searchMatches.add(i);
+            }
+        }
+        if (!searchMatches.isEmpty()) {
+            searchMatchIndex = 0;
+            selectSearchMatch(0);
+        } else {
+            searchMatchIndex = -1;
+        }
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        tableState.select(searchMatches.get(matchIndex));
+    }
+
+    private boolean reactorRowMatchesSearch(ReactorRow row, String query) {
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            String searchable = group.propertyName;
+            if (group.resolvedVersion != null) searchable += ":" + group.resolvedVersion;
+            if (group.newestVersion != null) searchable += ":" + group.newestVersion;
+            return searchable.toLowerCase().contains(query);
+        }
+        var dep = row.dependency;
+        String searchable = dep.groupId + ":" + dep.artifactId;
+        if (dep.primaryVersion != null) searchable += ":" + dep.primaryVersion;
+        if (dep.newestVersion != null) searchable += ":" + dep.newestVersion;
+        return searchable.toLowerCase().contains(query);
+    }
+
     private boolean matchesFilter(VersionComparator.UpdateType type) {
         return switch (filter) {
             case ALL -> true;
@@ -276,7 +341,7 @@ class ReactorUpdatesTui {
             return true;
         }
 
-        // Diff overlay mode
+        // Diff overlay in standalone — allow q to quit
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
                 diffOverlay.close();
@@ -300,24 +365,46 @@ class ReactorUpdatesTui {
             return false;
         }
 
-        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+        if (key.isCtrlC()) {
             runner.quit();
             return true;
         }
 
-        if (key.isKey(KeyCode.TAB)) {
-            view = view == View.DEPENDENCIES ? View.MODULES : View.DEPENDENCIES;
+        if (view == View.DEPENDENCIES) {
+            if (handleKeyEvent(key)) return true;
+        } else {
+            if (handleModulesEvent(key)) return true;
+        }
+
+        // Standalone-specific keys
+        if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            runner.quit();
             return true;
         }
 
-        if (view == View.DEPENDENCIES) {
-            return handleDepsEvent(key);
-        } else {
-            return handleModulesEvent(key);
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
         }
+
+        return false;
     }
 
-    private boolean handleDepsEvent(KeyEvent key) {
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        // Diff overlay mode — consume all keys
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            return true; // consume all
+        }
+
+        if (handleSearchInput(key)) return true;
+        if (handleSortInput(key)) return true;
+
         if (key.isUp()) {
             tableState.selectPrevious();
             return true;
@@ -346,30 +433,27 @@ class ReactorUpdatesTui {
             applyUpdates();
             return true;
         }
-        if (key.isCharIgnoreCase('1')) {
+        if (key.isChar('1')) {
             filter = Filter.ALL;
             buildDisplayRows();
             return true;
         }
-        if (key.isCharIgnoreCase('2')) {
+        if (key.isChar('2')) {
             filter = Filter.PATCH;
             buildDisplayRows();
             return true;
         }
-        if (key.isCharIgnoreCase('3')) {
+        if (key.isChar('3')) {
             filter = Filter.MINOR;
             buildDisplayRows();
             return true;
         }
-        if (key.isCharIgnoreCase('4')) {
+        if (key.isChar('4')) {
             filter = Filter.MAJOR;
             buildDisplayRows();
             return true;
         }
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
-            return true;
-        }
+
         return false;
     }
 
@@ -405,7 +489,7 @@ class ReactorUpdatesTui {
             return true;
         }
         if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
+            helpOverlay.open(buildHelpStandalone());
             return true;
         }
         return false;
@@ -663,74 +747,73 @@ class ReactorUpdatesTui {
 
     // -- Rendering --
 
-    void render(Frame frame) {
+    @Override
+    public void render(Frame frame, Rect area) {
+        lastContentHeight = area.height();
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes ");
+        } else {
+            Rect contentArea = renderTabBar(frame, area);
+            if (view == View.DEPENDENCIES) {
+                renderDepsTable(frame, contentArea);
+            } else {
+                renderModulesTable(frame, contentArea);
+            }
+        }
+    }
+
+    void renderStandalone(Frame frame) {
         var zones = Layout.vertical()
                 .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(4))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        lastContentHeight = zones.get(1).height();
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(1));
-        } else if (diffOverlay.isActive()) {
-            diffOverlay.render(frame, zones.get(1), " POM Changes ");
-        } else if (view == View.DEPENDENCIES) {
-            renderDepsTable(frame, zones.get(1));
-        } else {
-            renderModulesTable(frame, zones.get(1));
+        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
+        if (contentArea != null) {
+            lastContentHeight = contentArea.height();
+            if (diffOverlay.isActive()) {
+                diffOverlay.render(frame, contentArea, " POM Changes ");
+            } else if (view == View.DEPENDENCIES) {
+                renderDepsTable(frame, contentArea);
+            } else {
+                renderModulesTable(frame, contentArea);
+            }
         }
         renderInfoBar(frame, zones.get(2));
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        String title = loading ? " Pilot \u2014 Checking Updates\u2026 " : " Pilot \u2014 Reactor Updates ";
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
+        String title = loading ? "Checking Updates…" : "Reactor Updates";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)").dim());
         if (loading) {
-            spans.add(Span.raw("  Checking " + loadedCount + "/" + reactorResult.allDependencies.size() + "\u2026")
+            spans.add(Span.raw("  Checking " + loadedCount + "/" + reactorResult.allDependencies.size() + "…")
                     .dim());
         }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+        renderStandaloneHeader(frame, area, title, Line.from(spans));
     }
 
     private void renderDepsTable(Frame frame, Rect area) {
-        long updateCount = reactorResult.allDependencies.stream()
-                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
-                .count();
-        String title = " Dependencies (" + updateCount + " updates) [" + filter + "] ";
-
         Block block = Block.builder()
-                .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         if (displayRows.isEmpty()) {
-            String msg = loading ? "Checking versions\u2026" : "No updates available";
+            String msg = loading ? "Checking versions…" : "No updates available";
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
             return;
         }
 
-        Row header = Row.from("", "dependency / property", "current", "", "available", "info")
-                .style(Style.create().bold().yellow());
+        Row header = sortState.decorateHeader(
+                List.of("", "dependency / property", "current", "", "available", "info"), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
-        for (var row : displayRows) {
-            rows.add(createReactorRow(row));
+        for (int i = 0; i < displayRows.size(); i++) {
+            rows.add(createReactorRow(displayRows.get(i), isSearchMatch(i)));
         }
 
         Table table = Table.builder()
@@ -743,34 +826,36 @@ class ReactorUpdatesTui {
                         Constraint.length(3),
                         Constraint.percentage(15),
                         Constraint.percentage(10))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = area;
         frame.renderStatefulWidget(table, area, tableState);
     }
 
-    private Row createReactorRow(ReactorRow row) {
+    private Row createReactorRow(ReactorRow row, boolean highlight) {
         if (row.isGroupHeader()) {
             var group = row.propertyGroup;
-            String check = group.selected ? "[\u2713]" : "[ ]";
+            String check = group.selected ? "[✓]" : "[ ]";
             String name = "${" + group.propertyName + "}";
             String current = group.resolvedVersion != null ? group.resolvedVersion : "";
-            String arrow = group.hasUpdate() ? "\u2192" : "";
+            String arrow = group.hasUpdate() ? "→" : "";
             String available = group.hasUpdate() ? group.newestVersion : "";
             int modCount = group.totalModuleCount();
             String info = modCount + " mod";
 
-            Style style = Style.create().fg(Color.CYAN).bold();
+            Style style = theme.propertyGroupHeader();
+            if (highlight) style = style.bg(theme.searchHighlightBg());
             return Row.from(check, name, current, arrow, available, info).style(style);
         } else {
             var dep = row.dependency;
-            String check = dep.selected ? "[\u2713]" : "   ";
-            String ga = "  \u21B3 " + dep.artifactId;
+            String check = dep.selected ? "[✓]" : "   ";
+            String ga = "  ↳ " + dep.artifactId;
             boolean inGroup = dep.isPropertyManaged();
             String current = inGroup ? "" : (dep.primaryVersion != null ? dep.primaryVersion : "");
-            String arrow = (!inGroup && dep.hasUpdate()) ? "\u2192" : "";
+            String arrow = (!inGroup && dep.hasUpdate()) ? "→" : "";
             String available = (!inGroup && dep.hasUpdate()) ? dep.newestVersion : "";
             int modCount = dep.moduleCount();
             String info = modCount + " mod";
@@ -780,23 +865,21 @@ class ReactorUpdatesTui {
 
             Style style = dep.updateType != null
                     ? switch (dep.updateType) {
-                        case PATCH -> Style.create().fg(Color.GREEN);
-                        case MINOR -> Style.create().fg(Color.YELLOW);
-                        case MAJOR -> Style.create().fg(Color.RED);
+                        case PATCH -> theme.updatePatch();
+                        case MINOR -> theme.updateMinor();
+                        case MAJOR -> theme.updateMajor();
                     }
                     : Style.create();
+            if (highlight) style = style.bg(theme.searchHighlightBg());
 
             return Row.from(check, ga, current, arrow, available, info).style(style);
         }
     }
 
     private void renderModulesTable(Frame frame, Rect area) {
-        String title = " Modules (" + reactorModel.allModules.size() + ") ";
-
         Block block = Block.builder()
-                .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
@@ -811,7 +894,7 @@ class ReactorUpdatesTui {
             return;
         }
 
-        Row header = Row.from("module", "updates").style(Style.create().bold().yellow());
+        Row header = sortState.decorateHeader(List.of("module", "updates"), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         for (var node : visible) {
@@ -822,11 +905,12 @@ class ReactorUpdatesTui {
                 .header(header)
                 .rows(rows)
                 .widths(Constraint.percentage(75), Constraint.percentage(25))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = area;
         frame.renderStatefulWidget(table, area, moduleTableState);
     }
 
@@ -836,7 +920,7 @@ class ReactorUpdatesTui {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "\u25BE " : "\u25B8 ");
+            sb.append(node.expanded ? "▾ " : "▸ ");
         } else {
             sb.append("  ");
         }
@@ -851,7 +935,7 @@ class ReactorUpdatesTui {
 
         Style style;
         if (node.totalUpdateCount > 0 || node.ownUpdateCount > 0) {
-            style = Style.create().fg(Color.YELLOW);
+            style = theme.moduleWithUpdates();
         } else {
             style = Style.create();
         }
@@ -880,7 +964,8 @@ class ReactorUpdatesTui {
 
         // Status
         frame.renderWidget(
-                Paragraph.from(Line.from(List.of(Span.raw(" " + status).fg(Color.GREEN)))), rows.get(1));
+                Paragraph.from(Line.from(List.of(Span.raw(" " + status).fg(theme.standaloneStatusColor())))),
+                rows.get(1));
 
         // Selected count
         long selectedCount = reactorResult.allDependencies.stream()
@@ -889,7 +974,7 @@ class ReactorUpdatesTui {
         if (selectedCount > 0) {
             frame.renderWidget(
                     Paragraph.from(Line.from(List.of(Span.raw(" " + selectedCount + " update(s) selected")
-                            .fg(Color.CYAN)))),
+                            .fg(theme.selectedCountColor())))),
                     rows.get(2));
         }
 
@@ -897,17 +982,15 @@ class ReactorUpdatesTui {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
         if (diffOverlay.isActive()) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Close  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("Tab").bold());
-            spans.add(Span.raw(":View  "));
             if (view == View.DEPENDENCIES) {
-                spans.add(Span.raw("\u2191\u2193").bold());
+                spans.add(Span.raw("↑↓").bold());
                 spans.add(Span.raw(":Nav  "));
                 spans.add(Span.raw("Space").bold());
                 spans.add(Span.raw(":Toggle  "));
@@ -924,9 +1007,9 @@ class ReactorUpdatesTui {
                 spans.add(Span.raw("h").bold());
                 spans.add(Span.raw(":Help  "));
             } else {
-                spans.add(Span.raw("\u2191\u2193").bold());
+                spans.add(Span.raw("↑↓").bold());
                 spans.add(Span.raw(":Nav  "));
-                spans.add(Span.raw("\u2190\u2192").bold());
+                spans.add(Span.raw("←→").bold());
                 spans.add(Span.raw(":Expand  "));
                 spans.add(Span.raw("h").bold());
                 spans.add(Span.raw(":Help  "));
@@ -938,14 +1021,112 @@ class ReactorUpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(3));
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
+    // -- ToolPanel methods --
+
+    @Override
+    public String toolName() {
+        return "Updates";
+    }
+
+    @Override
+    int subViewCount() {
+        return 2;
+    }
+
+    @Override
+    int activeSubView() {
+        return view.ordinal();
+    }
+
+    @Override
+    void setActiveSubView(int index) {
+        view = View.values()[index];
+        clearSearch();
+        sortState = new SortState(view == View.DEPENDENCIES ? 6 : 2);
+    }
+
+    @Override
+    List<String> subViewNames() {
+        return List.of("Dependencies", "Modules");
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseTabBar(mouse)) return true;
+        List<Constraint> widths = view == View.DEPENDENCIES
+                ? List.of(
+                        Constraint.length(3), Constraint.percentage(40),
+                        Constraint.percentage(15), Constraint.length(3),
+                        Constraint.percentage(15), Constraint.percentage(10))
+                : List.of(Constraint.percentage(75), Constraint.percentage(25));
+        if (handleMouseSortHeader(mouse, widths)) {
+            return true;
+        }
+        if (mouse.isScroll()) {
+            if (displayRows.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(displayRows.size() - 1, sel + 1));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String status() {
+        String search = searchStatus();
+        if (search != null) {
+            return searchMode ? search : status + " — " + search;
+        }
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
+        List<Span> spans = new ArrayList<>();
+        if (diffOverlay.isActive()) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close"));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Nav  "));
+            spans.add(Span.raw("Space").bold());
+            spans.add(Span.raw(":Toggle  "));
+            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw(":All  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":None  "));
+            spans.addAll(sortKeyHints());
+            spans.add(Span.raw("/").bold());
+            spans.add(Span.raw(":Search  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("1-4").bold());
+            spans.add(Span.raw(":Filter"));
+        }
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
         return List.of(
                 new HelpOverlay.Section(
                         "Reactor Dependency Updates",
                         List.of(
                                 new HelpOverlay.Entry("", "Aggregates dependency updates across all reactor"),
                                 new HelpOverlay.Entry("", "modules. Dependencies managed via properties (e.g."),
-                                new HelpOverlay.Entry("", "${jackson.version}) are grouped together \u2014 selecting"),
+                                new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"),
                                 new HelpOverlay.Entry("", "the group header toggles all dependencies in it."),
                                 new HelpOverlay.Entry("", ""),
                                 new HelpOverlay.Entry("", "The 'N mod' column shows how many reactor modules"),
@@ -958,30 +1139,50 @@ class ReactorUpdatesTui {
                 new HelpOverlay.Section(
                         "Colors",
                         List.of(
-                                new HelpOverlay.Entry("green", "Patch update \u2014 bug fixes, safe to apply"),
-                                new HelpOverlay.Entry("yellow", "Minor update \u2014 new features, usually compatible"),
-                                new HelpOverlay.Entry("red", "Major update \u2014 breaking changes possible"),
+                                new HelpOverlay.Entry("green", "Patch update — bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update — new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"),
                                 new HelpOverlay.Entry("cyan", "Property group header (${property.name})"))),
                 new HelpOverlay.Section(
-                        "Dependencies View",
+                        "Reactor Updates Actions",
                         List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
                                 new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
                                 new HelpOverlay.Entry("a / n", "Select all / deselect all"),
                                 new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
                                 new HelpOverlay.Entry("1-4", "Filter: all / patch / minor / major"),
-                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"))),
-                new HelpOverlay.Section(
-                        "Modules View",
-                        List.of(
-                                new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand module tree"))),
-                new HelpOverlay.Section(
-                        "General",
-                        List.of(
-                                new HelpOverlay.Entry("Tab", "Switch Dependencies / Modules view"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
+                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"))));
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
+        if (loading) {
+            fetchAllUpdates();
+        }
+    }
+
+    @Override
+    void close() {
+        httpPool.shutdownNow();
+    }
+
+    // -- Help --
+
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "Modules View",
+                List.of(
+                        new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
+                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("← / →", "Collapse / expand module tree"))));
+        sections.add(new HelpOverlay.Section(
+                "General",
+                List.of(
+                        new HelpOverlay.Entry("Tab", "Switch Dependencies / Modules view"),
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        return sections;
     }
 }

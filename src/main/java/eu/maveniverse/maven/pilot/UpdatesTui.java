@@ -21,7 +21,6 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -30,6 +29,8 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -41,7 +42,6 @@ import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -49,12 +49,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * Interactive TUI for viewing and applying dependency updates.
  */
-class UpdatesTui {
+class UpdatesTui extends ToolPanel {
 
     @FunctionalInterface
     interface VersionResolver {
@@ -116,7 +117,7 @@ class UpdatesTui {
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
 
     private Filter filter = Filter.ALL;
-    String status = "Loading updates\u2026";
+    String status = "Loading updates…";
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
@@ -125,7 +126,6 @@ class UpdatesTui {
     private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
-    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
 
     private TuiRunner runner;
@@ -164,6 +164,7 @@ class UpdatesTui {
         }
         this.originalPomContent = pom;
         this.editor = new PomEditor(Document.of(pom));
+        this.sortState = new SortState(6); // "", ga, current, "", available, type
         detectPropertyGroups();
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
@@ -197,23 +198,6 @@ class UpdatesTui {
                 }
             }
         });
-    }
-
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            fetchAllUpdates();
-            configured.run();
-        } finally {
-            configured.close();
-            httpPool.shutdownNow();
-            httpPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-        }
     }
 
     private void fetchAllUpdates() {
@@ -294,7 +278,7 @@ class UpdatesTui {
             return true;
         }
 
-        // Save prompt mode
+        // Save prompt mode (standalone only)
         if (pendingQuit) {
             if (key.isCharIgnoreCase('y')) {
                 saveAndQuit();
@@ -312,7 +296,7 @@ class UpdatesTui {
             return false;
         }
 
-        // Diff overlay mode — Esc closes overlay first
+        // Diff overlay mode (standalone — panel mode handles in handleKeyEvent)
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
                 diffOverlay.close();
@@ -326,7 +310,7 @@ class UpdatesTui {
             return false;
         }
 
-        // Help overlay mode
+        // Help overlay mode (standalone only)
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
@@ -336,10 +320,58 @@ class UpdatesTui {
             return false;
         }
 
-        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+        if (key.isCtrlC()) {
             requestQuit();
             return true;
         }
+
+        // Try panel-level handling first
+        if (handleKeyEvent(key)) return true;
+
+        // Standalone-only keys
+        if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
+            requestQuit();
+            return true;
+        }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
+        }
+
+        return false;
+    }
+
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Updates";
+    }
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes ");
+            lastContentHeight = area.height();
+            return;
+        }
+        lastContentHeight = area.height();
+        renderUpdatesTable(frame, area);
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        // Diff overlay (panel mode)
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            return true; // consume all keys during overlay
+        }
+
+        if (handleSortInput(key)) return true;
 
         if (key.isUp()) {
             tableState.selectPrevious();
@@ -398,12 +430,138 @@ class UpdatesTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
+        return false;
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseSortHeader(
+                mouse,
+                List.of(
+                        Constraint.length(3), Constraint.percentage(40),
+                        Constraint.percentage(15), Constraint.length(3),
+                        Constraint.percentage(15), Constraint.percentage(10)))) {
             return true;
         }
-
+        if (mouse.isClick()) {
+            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header + scroll
+            if (row >= 0 && row < displayDeps.size()) {
+                tableState.select(row);
+                fetchPomInfoIfNeeded();
+                return true;
+            }
+        }
+        if (mouse.isScroll()) {
+            if (displayDeps.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(displayDeps.size() - 1, sel + 1));
+            }
+            fetchPomInfoIfNeeded();
+            return true;
+        }
         return false;
+    }
+
+    @Override
+    protected void onSortChanged() {
+        sortState.sort(displayDeps, sortExtractors());
+    }
+
+    private List<Function<DependencyInfo, String>> sortExtractors() {
+        return List.of(
+                dep -> dep.selected ? "1" : "0", // "" (checkbox)
+                DependencyInfo::ga, // groupId:artifactId
+                dep -> dep.version, // current
+                dep -> dep.hasUpdate() ? "1" : "0", // "" (arrow)
+                dep -> dep.newestVersion != null ? dep.newestVersion : "", // available
+                dep -> dep.updateType != null ? dep.updateType.name() : "" // type
+                );
+    }
+
+    @Override
+    public String status() {
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> spans = new ArrayList<>();
+        if (diffOverlay.isActive()) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Nav  "));
+            spans.add(Span.raw("Space").bold());
+            spans.add(Span.raw(":Toggle  "));
+            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw(":All  "));
+            spans.add(Span.raw("n").bold());
+            spans.add(Span.raw(":None  "));
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("1-4").bold());
+            spans.add(Span.raw(":Filter  "));
+            spans.addAll(sortKeyHints());
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+        }
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Updates",
+                        List.of(
+                                new HelpOverlay.Entry("", "Checks Maven Central for newer versions of each"),
+                                new HelpOverlay.Entry("", "declared dependency. Select updates with Space,"),
+                                new HelpOverlay.Entry("", "then press Enter to apply. Use 'd' to preview."),
+                                new HelpOverlay.Entry("", ""))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("green", "Patch update — bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update — new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"))),
+                new HelpOverlay.Section(
+                        "Updates Actions",
+                        List.of(
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("Space", "Toggle selection of current dependency"),
+                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
+                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM"),
+                                new HelpOverlay.Entry("1-4", "Filter: all / patch / minor / major"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
+    }
+
+    @Override
+    public boolean isDirty() {
+        return dirty;
+    }
+
+    @Override
+    public boolean save() {
+        return doSave();
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
+        if (loading) {
+            fetchAllUpdates();
+        }
+    }
+
+    @Override
+    void close() {
+        httpPool.shutdownNow();
     }
 
     /**
@@ -439,19 +597,28 @@ class UpdatesTui {
         }
     }
 
-    private void saveAndQuit() {
+    private boolean doSave() {
         try {
             String currentOnDisk = Files.readString(Path.of(pomPath));
             if (!currentOnDisk.equals(originalPomContent)) {
-                pendingQuit = false;
-                status = "POM modified externally \u2014 save aborted";
-                return;
+                status = "POM modified externally — save aborted";
+                return false;
             }
             Files.writeString(Path.of(pomPath), editor.toXml());
-            runner.quit();
+            dirty = false;
+            status = "Saved";
+            return true;
         } catch (Exception e) {
-            pendingQuit = false;
             status = "Failed to save: " + e.getMessage();
+            return false;
+        }
+    }
+
+    private void saveAndQuit() {
+        if (doSave()) {
+            runner.quit();
+        } else {
+            pendingQuit = false;
         }
     }
 
@@ -501,7 +668,8 @@ class UpdatesTui {
                     case MINOR -> dep.updateType == VersionComparator.UpdateType.MINOR;
                     case MAJOR -> dep.updateType == VersionComparator.UpdateType.MAJOR;
                 })
-                .toList();
+                .collect(Collectors.toCollection(ArrayList::new));
+        onSortChanged();
         if (!displayDeps.isEmpty()) {
             tableState.select(0);
         }
@@ -540,7 +708,7 @@ class UpdatesTui {
             }
 
             dirty = true;
-            status = "Staged " + toUpdate.size() + " update(s) \u2014 save on exit";
+            status = "Staged " + toUpdate.size() + " update(s) — save on exit";
 
             for (var dep : toUpdate) {
                 dep.version = dep.newestVersion;
@@ -556,46 +724,36 @@ class UpdatesTui {
 
     // -- Rendering --
 
-    void render(Frame frame) {
+    void renderStandalone(Frame frame) {
         var zones = Layout.vertical()
                 .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        lastContentHeight = zones.get(1).height();
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(1));
-        } else if (diffOverlay.isActive()) {
-            diffOverlay.render(frame, zones.get(1), " POM Changes ");
-        } else {
-            renderUpdatesTable(frame, zones.get(1));
+        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
+        if (contentArea != null) {
+            lastContentHeight = contentArea.height();
+            if (diffOverlay.isActive()) {
+                diffOverlay.render(frame, contentArea, " POM Changes ");
+            } else {
+                renderUpdatesTable(frame, contentArea);
+            }
         }
         renderInfoBar(frame, zones.get(2));
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        String title = loading ? " Pilot \u2014 Checking Updates\u2026 " : " Pilot \u2014 Dependency Updates ";
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
+        String title = loading ? "Checking Updates…" : "Dependency Updates";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         if (loading) {
-            spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "\u2026")
+            spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "…")
                     .dim());
         }
         if (dirty) {
-            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+            spans.add(theme.dirtyIndicator());
         }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+        renderStandaloneHeader(frame, area, title, Line.from(spans));
     }
 
     private void renderUpdatesTable(Frame frame, Rect area) {
@@ -606,19 +764,19 @@ class UpdatesTui {
         Block block = Block.builder()
                 .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         if (displayDeps.isEmpty()) {
-            String msg = loading ? "Checking versions\u2026" : "No updates available";
+            String msg = loading ? "Checking versions…" : "No updates available";
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
             return;
         }
 
-        Row header = Row.from("", "groupId:artifactId", "current", "", "available", "type")
-                .style(Style.create().bold().yellow());
+        Row header = sortState.decorateHeader(
+                List.of("", "groupId:artifactId", "current", "", "available", "type"), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         for (var dep : displayDeps) {
@@ -633,26 +791,27 @@ class UpdatesTui {
                         Constraint.percentage(15), Constraint.length(3),
                         Constraint.percentage(15), Constraint.percentage(10))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
+        lastTableArea = area;
         frame.renderStatefulWidget(table, area, tableState);
     }
 
     private Row createUpdateRow(DependencyInfo dep) {
-        String check = dep.selected ? "[\u2713]" : "[ ]";
+        String check = dep.selected ? "[✓]" : "[ ]";
         String ga = dep.groupId + ":" + dep.artifactId;
         String current = dep.version;
-        String arrow = dep.hasUpdate() ? "\u2192" : "";
+        String arrow = dep.hasUpdate() ? "→" : "";
         String available = dep.hasUpdate() ? dep.newestVersion : "";
         String type = dep.updateType != null ? dep.updateType.name().toLowerCase() : "";
 
         Style style = dep.updateType != null
                 ? switch (dep.updateType) {
-                    case PATCH -> Style.create().fg(Color.GREEN);
-                    case MINOR -> Style.create().fg(Color.YELLOW);
-                    case MAJOR -> Style.create().fg(Color.RED);
+                    case PATCH -> theme.updatePatch();
+                    case MINOR -> theme.updateMinor();
+                    case MAJOR -> theme.updateMajor();
                 }
                 : Style.create();
 
@@ -669,7 +828,8 @@ class UpdatesTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
+        statusSpans.add(
+                Span.raw(" " + status).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
@@ -683,14 +843,14 @@ class UpdatesTui {
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Cancel"));
         } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Close  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Nav  "));
             spans.add(Span.raw("Space").bold());
             spans.add(Span.raw(":Toggle  "));
@@ -735,11 +895,11 @@ class UpdatesTui {
                 spans.add(Span.raw(" "));
                 spans.add(Span.raw(info.name).bold().cyan());
                 if (info.license != null) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
-                    spans.add(Span.raw(info.license).fg(Color.GREEN));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
+                    spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
                 }
                 if (info.organization != null) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.organization).dim());
                 }
             } else {
@@ -752,51 +912,15 @@ class UpdatesTui {
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Dependency Updates",
-                        List.of(
-                                new HelpOverlay.Entry("", "Checks Maven Central for newer versions of each"),
-                                new HelpOverlay.Entry("", "declared dependency. The table shows the current"),
-                                new HelpOverlay.Entry("", "version, the latest available version, and the"),
-                                new HelpOverlay.Entry("", "update type (patch, minor, or major)."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Select the updates you want with Space, then press"),
-                                new HelpOverlay.Entry("", "Enter to write changes to the POM. Use 'd' to"),
-                                new HelpOverlay.Entry("", "preview the exact POM diff before applying."))),
-                new HelpOverlay.Section(
-                        "Table Columns",
-                        List.of(
-                                new HelpOverlay.Entry("[ ] / [x]", "Selection checkbox"),
-                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
-                                new HelpOverlay.Entry("current", "Version currently in the POM"),
-                                new HelpOverlay.Entry("latest", "Newest version on Maven Central"),
-                                new HelpOverlay.Entry("type", "patch / minor / major"))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("green", "Patch update \u2014 bug fixes, safe to apply"),
-                                new HelpOverlay.Entry("yellow", "Minor update \u2014 new features, usually compatible"),
-                                new HelpOverlay.Entry("red", "Major update \u2014 breaking changes possible"),
-                                new HelpOverlay.Entry("cyan", "Artifact name/info in footer"))),
-                new HelpOverlay.Section(
-                        "Selection & Filtering",
-                        List.of(
-                                new HelpOverlay.Entry("Space", "Toggle selection of current dependency"),
-                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
-                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM"),
-                                new HelpOverlay.Entry("1", "Show all updates"),
-                                new HelpOverlay.Entry("2", "Patch only (e.g. 1.0.0 \u2192 1.0.1)"),
-                                new HelpOverlay.Entry("3", "Minor only (e.g. 1.0.0 \u2192 1.1.0)"),
-                                new HelpOverlay.Entry("4", "Major only (e.g. 1.0.0 \u2192 2.0.0)"))),
-                new HelpOverlay.Section(
-                        "General",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "General",
+                List.of(
+                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        return sections;
     }
 
     /**

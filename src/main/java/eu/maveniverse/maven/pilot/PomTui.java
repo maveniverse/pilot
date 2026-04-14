@@ -21,8 +21,6 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
-import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -30,6 +28,8 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -40,7 +40,6 @@ import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Comment;
 import eu.maveniverse.domtrip.Element;
 import eu.maveniverse.domtrip.Node;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -49,7 +48,7 @@ import java.util.Map;
 /**
  * Interactive POM viewer with switchable Raw/Effective views and origin detail pane.
  */
-class PomTui {
+class PomTui extends ToolPanel {
 
     private enum View {
         RAW,
@@ -79,13 +78,6 @@ class PomTui {
 
     private View view = View.RAW;
     private final TableState tableState = new TableState();
-    private boolean searchMode = false;
-    private final StringBuilder searchBuffer = new StringBuilder();
-    private String activeSearch = null;
-    private List<Integer> searchMatches = List.of();
-    private int searchMatchIndex = -1;
-
-    private final HelpOverlay helpOverlay = new HelpOverlay();
 
     private TuiRunner runner;
 
@@ -140,20 +132,6 @@ class PomTui {
         tableState.select(0);
     }
 
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            configured.run();
-        } finally {
-            configured.close();
-        }
-    }
-
     /**
      * Handle keyboard input events and perform corresponding UI actions such as navigation,
      * search entry/processing, toggling between Raw and Effective views, expanding/collapsing
@@ -174,10 +152,6 @@ class PomTui {
             return true;
         }
 
-        if (searchMode) {
-            return handleSearchKeys(key);
-        }
-
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
@@ -187,13 +161,18 @@ class PomTui {
             return false;
         }
 
+        // Delegate tool-specific keys
+        if (handleKeyEvent(key)) return true;
+
+        // Standalone: Tab switches views
+        if (key.isKey(KeyCode.TAB)) {
+            view = (view == View.RAW) ? View.EFFECTIVE : View.RAW;
+            tableState.select(0);
+            clearSearch();
+            return true;
+        }
+
         if (key.isKey(KeyCode.ESCAPE)) {
-            if (activeSearch != null) {
-                activeSearch = null;
-                searchMatches = List.of();
-                searchMatchIndex = -1;
-                return true;
-            }
             runner.quit();
             return true;
         }
@@ -202,32 +181,56 @@ class PomTui {
             return true;
         }
 
-        if (key.isKey(KeyCode.TAB)) {
-            view = (view == View.RAW) ? View.EFFECTIVE : View.RAW;
-            tableState.select(0);
-            activeSearch = null;
-            searchMatches = List.of();
-            searchMatchIndex = -1;
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
             return true;
         }
 
-        if (key.isCharIgnoreCase('/')) {
-            searchMode = true;
-            searchBuffer.setLength(0);
-            activeSearch = null;
-            searchMatches = List.of();
-            searchMatchIndex = -1;
-            return true;
-        }
+        return false;
+    }
 
-        if (key.isChar('n') && activeSearch != null && !searchMatches.isEmpty()) {
-            searchMatchIndex = (searchMatchIndex + 1) % searchMatches.size();
-            tableState.select(searchMatches.get(searchMatchIndex));
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Pom";
+    }
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        SnippetInfo snippet = getSelectedOriginSnippet();
+
+        Rect contentArea = renderTabBar(frame, area);
+        if (view == View.EFFECTIVE) {
+            int detailHeight = snippet != null ? Math.min(snippet.lines().size() + 2, 9) : 3;
+            var zones = Layout.vertical()
+                    .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(detailHeight))
+                    .split(contentArea);
+            renderXmlTree(frame, zones.get(0));
+            renderOriginDetail(frame, zones.get(2), snippet);
+        } else {
+            renderXmlTree(frame, contentArea);
+        }
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        if (handleSearchInput(key)) return true;
+
+        if (key.isChar('1')) {
+            if (view != View.RAW) {
+                view = View.RAW;
+                tableState.select(0);
+                clearSearch();
+            }
             return true;
         }
-        if (key.isChar('N') && activeSearch != null && !searchMatches.isEmpty()) {
-            searchMatchIndex = (searchMatchIndex - 1 + searchMatches.size()) % searchMatches.size();
-            tableState.select(searchMatches.get(searchMatchIndex));
+        if (key.isChar('2')) {
+            if (view != View.EFFECTIVE) {
+                view = View.EFFECTIVE;
+                tableState.select(0);
+                clearSearch();
+            }
             return true;
         }
 
@@ -279,15 +282,54 @@ class PomTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
-            return true;
-        }
-
         return false;
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseTabBar(mouse)) return true;
+        if (mouse.isScroll()) {
+            var visible = currentModel().visibleNodes();
+            if (visible.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(visible.size() - 1, sel + 1));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String status() {
+        String viewName = view == View.RAW ? "Raw POM" : "Effective POM";
+        String search = searchStatus();
+        if (search != null) {
+            return searchMode ? search : viewName + " — " + search;
+        }
+        return viewName;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw("←→").bold());
+        spans.add(Span.raw(":Expand  "));
+        spans.add(Span.raw("/").bold());
+        spans.add(Span.raw(":Search  "));
+        spans.add(Span.raw("e/w").bold());
+        spans.add(Span.raw(":Expand/Collapse all"));
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
         return List.of(
                 new HelpOverlay.Section(
                         "POM Browser",
@@ -313,50 +355,58 @@ class PomTui {
                 new HelpOverlay.Section(
                         "Navigation",
                         List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("← / →", "Collapse / expand tree node"),
                                 new HelpOverlay.Entry("e", "Expand all nodes"),
                                 new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"),
                                 new HelpOverlay.Entry("Tab", "Switch Raw POM / Effective POM"))),
                 new HelpOverlay.Section(
                         "Search",
                         List.of(
-                                new HelpOverlay.Entry("/", "Enter search mode \u2014 type to search"),
+                                new HelpOverlay.Entry("/", "Enter search mode — type to search"),
                                 new HelpOverlay.Entry("n / N", "Next / previous search match"),
-                                new HelpOverlay.Entry("Esc", "Clear search or quit"))),
-                new HelpOverlay.Section(
-                        "General",
-                        List.of(
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
+                                new HelpOverlay.Entry("Esc", "Clear search or quit"))));
     }
 
-    private boolean handleSearchKeys(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE)) {
-            searchMode = false;
-            activeSearch = null;
-            searchMatches = List.of();
-            searchMatchIndex = -1;
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            searchMode = false;
-            if (searchBuffer.length() > 0) {
-                activeSearch = searchBuffer.toString().toLowerCase();
-            }
-            return true;
-        }
-        if (key.code() == KeyCode.CHAR) {
-            searchBuffer.append(key.character());
-            updateSearchMatches();
-            return true;
-        }
-        if (key.isKey(KeyCode.BACKSPACE) && searchBuffer.length() > 0) {
-            searchBuffer.deleteCharAt(searchBuffer.length() - 1);
-            updateSearchMatches();
-            return true;
-        }
-        return false;
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
+    }
+
+    @Override
+    int subViewCount() {
+        return 2;
+    }
+
+    @Override
+    int activeSubView() {
+        return view.ordinal();
+    }
+
+    @Override
+    void setActiveSubView(int index) {
+        view = View.values()[index];
+        tableState.select(0);
+    }
+
+    @Override
+    List<String> subViewNames() {
+        return List.of("Raw", "Effective");
+    }
+
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "General",
+                List.of(
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        return sections;
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        tableState.select(searchMatches.get(matchIndex));
     }
 
     /**
@@ -367,7 +417,8 @@ class PomTui {
      * Otherwise computes matching visible-node indices, sets the active match to
      * the first result (if any) and selects that row in {@code tableState}.</p>
      */
-    private void updateSearchMatches() {
+    @Override
+    protected void updateSearchMatches() {
         String query = searchBuffer.toString().toLowerCase();
         if (query.isEmpty()) {
             searchMatches = List.of();
@@ -421,23 +472,24 @@ class PomTui {
     }
 
     /**
-     * Render the complete TUI into the given frame.
+     * Render the complete standalone TUI into the given frame.
      *
      * Renders a header, the XML tree view, an optional origin snippet detail (only when in Effective view and a snippet exists),
      * and a footer, laying out vertical regions and allocating extra rows for the detail section when shown.
      *
      * @param frame the frame to render the UI into
      */
-    void render(Frame frame) {
+    void renderStandalone(Frame frame) {
         SnippetInfo snippet = getSelectedOriginSnippet();
-        boolean showDetail = view == View.EFFECTIVE && snippet != null;
+        boolean showDetail = view == View.EFFECTIVE;
 
         List<Constraint> constraints = new ArrayList<>();
         constraints.add(Constraint.length(3));
         constraints.add(Constraint.fill());
         if (showDetail) {
+            int detailHeight = snippet != null ? Math.min(snippet.lines().size() + 2, 9) : 3;
             constraints.add(Constraint.length(1)); // spacer above detail
-            constraints.add(Constraint.length(Math.min(snippet.lines().size() + 2, 9)));
+            constraints.add(Constraint.length(detailHeight));
         }
         constraints.add(Constraint.length(showDetail ? 1 : 2));
 
@@ -447,11 +499,11 @@ class PomTui {
 
         int idx = 0;
         renderHeader(frame, zones.get(idx++));
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(idx++));
-        } else {
-            renderXmlTree(frame, zones.get(idx++));
+        Rect treeArea = renderStandaloneHelp(frame, zones.get(idx));
+        if (treeArea != null) {
+            renderXmlTree(frame, treeArea);
         }
+        idx++;
         if (showDetail) {
             idx++; // skip spacer
             renderOriginDetail(frame, zones.get(idx++), snippet);
@@ -460,45 +512,34 @@ class PomTui {
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        Block block = Block.builder()
-                .title(" Pilot \u2014 POM Viewer ")
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
 
         // View tabs
-        spans.add(Span.raw("[" + (view == View.RAW ? "\u25B8 " : "  ") + "Raw POM]")
-                .fg(view == View.RAW ? Color.YELLOW : Color.DARK_GRAY));
+        spans.add(Span.raw("[" + (view == View.RAW ? "▸ " : "  ") + "Raw POM]")
+                .fg(view == View.RAW ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
         spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.EFFECTIVE ? "\u25B8 " : "  ") + "Effective POM]")
-                .fg(view == View.EFFECTIVE ? Color.YELLOW : Color.DARK_GRAY));
+        spans.add(Span.raw("[" + (view == View.EFFECTIVE ? "▸ " : "  ") + "Effective POM]")
+                .fg(view == View.EFFECTIVE ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
 
         if (searchMode) {
-            spans.add(Span.raw("   Search: ").fg(Color.YELLOW));
+            spans.add(Span.raw("   Search: ").fg(theme.searchBarLabelColor()));
             spans.add(Span.raw(searchBuffer.toString()));
-            spans.add(Span.raw("\u2588").fg(Color.YELLOW));
+            spans.add(Span.raw("█").fg(theme.searchBarLabelColor()));
             if (!searchMatches.isEmpty()) {
                 spans.add(Span.raw("  " + (searchMatchIndex + 1) + "/" + searchMatches.size())
-                        .fg(Color.GREEN));
-            } else if (searchBuffer.length() > 0) {
-                spans.add(Span.raw("  no matches").fg(Color.RED));
+                        .fg(theme.searchMatchCountColor()));
+            } else if (!searchBuffer.isEmpty()) {
+                spans.add(Span.raw("  no matches").fg(theme.searchNoMatchColor()));
             }
         } else if (activeSearch != null) {
-            spans.add(Span.raw("   [" + activeSearch + "] ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("   [" + activeSearch + "] ").fg(theme.inactiveViewTabColor()));
             if (!searchMatches.isEmpty()) {
                 spans.add(Span.raw((searchMatchIndex + 1) + "/" + searchMatches.size())
-                        .fg(Color.GREEN));
+                        .fg(theme.searchMatchCountColor()));
             }
         }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+        renderStandaloneHeader(frame, area, "POM Viewer", Line.from(spans));
     }
 
     /**
@@ -513,12 +554,10 @@ class PomTui {
      */
     private void renderXmlTree(Frame frame, Rect area) {
         var model = currentModel();
-        String title = view == View.RAW ? " " + fileName + " " : " Effective POM ";
 
         Block block = Block.builder()
-                .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
+                .borderStyle(borderStyle())
                 .build();
 
         var visible = model.visibleNodes();
@@ -529,13 +568,13 @@ class PomTui {
             return;
         }
 
-        String searchQuery = searchMode ? searchBuffer.toString().toLowerCase() : activeSearch;
+        String searchQuery = currentSearchQuery();
         List<Row> rows = new ArrayList<>();
         for (var node : visible) {
             Line line = model.renderNode(node);
 
             if (searchQuery != null && !searchQuery.isEmpty() && nodeMatchesSearch(node, searchQuery)) {
-                rows.add(Row.from(Cell.from(line)).style(Style.create().bg(Color.DARK_GRAY)));
+                rows.add(Row.from(Cell.from(line)).style(theme.searchHighlight()));
                 continue;
             }
 
@@ -545,8 +584,8 @@ class PomTui {
         Table table = Table.builder()
                 .rows(rows)
                 .widths(Constraint.fill())
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
@@ -554,20 +593,28 @@ class PomTui {
     }
 
     private void renderOriginDetail(Frame frame, Rect area, SnippetInfo snippet) {
-        Block block = Block.builder()
-                .title(" Source: " + snippet.source() + " ")
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().yellow())
-                .build();
+        Block.Builder blockBuilder =
+                Block.builder().borderType(BorderType.ROUNDED).borderStyle(theme.originDetailBorder());
+        if (snippet != null) {
+            blockBuilder.title(" Source: " + snippet.source() + " ");
+        } else {
+            blockBuilder.title(" Source ");
+        }
+        Block block = blockBuilder.build();
+
+        if (snippet == null) {
+            frame.renderWidget(Paragraph.builder().text("").block(block).build(), area);
+            return;
+        }
 
         List<Row> rows = new ArrayList<>();
         for (String sourceLine : snippet.lines()) {
             List<Span> spans = new ArrayList<>();
-            boolean isTarget = sourceLine.startsWith("\u2192");
+            boolean isTarget = sourceLine.startsWith("→");
             if (isTarget) {
-                spans.add(Span.raw(sourceLine).bold().fg(Color.YELLOW));
+                spans.add(Span.raw(sourceLine).bold().fg(theme.originTargetColor()));
             } else {
-                spans.add(Span.raw(sourceLine).fg(Color.DARK_GRAY));
+                spans.add(Span.raw(sourceLine).fg(theme.originContextColor()));
             }
             rows.add(Row.from(Cell.from(Line.from(spans))));
         }
@@ -601,7 +648,7 @@ class PomTui {
         } else {
             spans.add(Span.raw("Tab").bold());
             spans.add(Span.raw(":Switch view  "));
-            spans.add(Span.raw("\u2190\u2192").bold());
+            spans.add(Span.raw("←→").bold());
             spans.add(Span.raw(":Expand/Collapse  "));
             spans.add(Span.raw("/").bold());
             spans.add(Span.raw(":Search  "));
@@ -647,11 +694,23 @@ class PomTui {
 
         // Direct lookup via IdentityHashMap — no path building needed
         OriginInfo origin = originMap.get(node);
-        if (origin != null && origin.sourceLines != null && !origin.sourceLines.isEmpty()) {
-            return new SnippetInfo(origin.sourceLines, origin.source);
+        if (origin != null) {
+            if (origin.sourceLines != null && !origin.sourceLines.isEmpty()) {
+                return new SnippetInfo(origin.sourceLines, origin.source);
+            }
+            // Pre-computed snippet was empty but we have a line number — build snippet now
+            if (origin.lineNumber > 0) {
+                String[] lines = resolveSourceLines(origin.source);
+                if (lines != null) {
+                    return new SnippetInfo(buildSnippet(lines, origin.lineNumber - 1), origin.source);
+                }
+                // Can't load source file but we know where it's from
+                return new SnippetInfo(
+                        List.of("Source: " + origin.source + ", line " + origin.lineNumber), origin.source);
+            }
         }
 
-        // Fall back to raw POM text search
+        // No origin info in map — fall back to raw POM text search
         int matchLine = findInLines(node, rawPomLines);
         if (matchLine >= 0) {
             return new SnippetInfo(buildSnippet(rawPomLines, matchLine), fileName);
@@ -685,11 +744,18 @@ class PomTui {
         int start = Math.max(0, matchLine - 2);
         int end = Math.min(lines.length - 1, matchLine + 2);
         for (int i = start; i <= end; i++) {
-            String prefix = (i == matchLine) ? "\u2192 " : "  ";
+            String prefix = (i == matchLine) ? "→ " : "  ";
             String lineNum = String.format("%4d", i + 1);
-            snippet.add(prefix + lineNum + " \u2502 " + lines[i]);
+            snippet.add(prefix + lineNum + " │ " + lines[i]);
         }
         return snippet;
+    }
+
+    private String[] resolveSourceLines(String source) {
+        if (fileName.equals(source) || "this POM".equals(source)) {
+            return rawPomLines;
+        }
+        return parentPomContents.get(source);
     }
 
     /**

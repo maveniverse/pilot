@@ -18,9 +18,7 @@
  */
 package eu.maveniverse.maven.pilot;
 
-import java.util.List;
 import javax.inject.Inject;
-import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -48,9 +46,6 @@ public class TreeMojo extends AbstractMojo {
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
 
-    @Parameter(defaultValue = "${session}", readonly = true, required = true)
-    private MavenSession session;
-
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
 
@@ -66,25 +61,16 @@ public class TreeMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            List<MavenProject> projects = session.getProjects();
-            if (projects.size() > 1) {
-                executeReactor(projects);
-            } else {
-                executeForProject(project);
-            }
+            executeForProject(project);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to display dependency tree: " + e.getMessage(), e);
         }
-    }
-
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        ModulePickerTui.forEachSelected(projects, "tree", this::executeForProject);
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
         CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         TreeTui tui = new TreeTui(result.getRoot(), scope, gav);
-        tui.run();
+        tui.runStandalone();
     }
 }

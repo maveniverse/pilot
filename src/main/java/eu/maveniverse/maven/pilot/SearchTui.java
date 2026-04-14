@@ -21,15 +21,17 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -42,7 +44,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -52,7 +53,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
@@ -64,7 +65,7 @@ import org.w3c.dom.NodeList;
  *
  * @since 0.1.0
  */
-class SearchTui {
+class SearchTui extends ToolPanel {
 
     @FunctionalInterface
     interface SearchClient {
@@ -176,6 +177,7 @@ class SearchTui {
         this.searchBuffer = new StringBuilder(initialQuery != null ? initialQuery : "");
         this.cursorPos = searchBuffer.length();
         this.lastSearchedQuery = initialQuery != null ? initialQuery.trim() : "";
+        this.sortState = new SortState(3);
         if (initialResults != null && !initialResults.isEmpty()) {
             this.artifacts = new ArrayList<>(initialResults);
             this.versionIndices = new int[artifacts.size()];
@@ -187,21 +189,14 @@ class SearchTui {
         }
     }
 
-    String run() throws Exception {
-        TuiRunner.ConfiguredRunner configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            configured.run();
-        } finally {
-            configured.close();
-            httpPool.shutdownNow();
-            httpPool.awaitTermination(5, TimeUnit.SECONDS);
-        }
+    String runAndSelect() throws Exception {
+        runStandalone();
         return selectedGav;
+    }
+
+    @Override
+    void close() {
+        httpPool.shutdownNow();
     }
 
     // -- Event handling -----------------------------------------------------
@@ -215,24 +210,144 @@ class SearchTui {
             runner.quit();
             return true;
         }
+
+        // Delegate tool-specific keys
+        if (handleKeyEvent(key)) return true;
+
+        // Standalone: Tab switches focus
+        if (key.isKey(KeyCode.TAB)) {
+            focus = (focus == Focus.SEARCH) ? Focus.TABLE : Focus.SEARCH;
+            return true;
+        }
+
+        // Standalone: q quits (from table mode)
+        if (key.isCharIgnoreCase('q') && focus == Focus.TABLE) {
+            runner.quit();
+            return true;
+        }
+
+        if (key.isKey(KeyCode.ESCAPE)) {
+            runner.quit();
+            return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public String toolName() {
+        return "Search";
+    }
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        var zones = Layout.vertical()
+                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(2))
+                .split(area);
+
+        renderSearchBar(frame, zones.get(0));
+        renderResultsTable(frame, zones.get(1));
+
+        // Simplified info: just details + key bindings (no syntax help)
+        var infoRows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1))
+                .split(zones.get(2));
+        renderArtifactDetails(frame, infoRows.get(0));
+        renderKeyBindings(frame, infoRows.get(1));
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
         if (key.isKey(KeyCode.ESCAPE)) {
             if (focus == Focus.TABLE) {
                 focus = Focus.SEARCH;
                 return true;
             }
-            runner.quit();
-            return true;
+            return false; // let shell handle
         }
-        if (key.isKey(KeyCode.TAB)) {
-            focus = (focus == Focus.SEARCH) ? Focus.TABLE : Focus.SEARCH;
-            return true;
-        }
+
+        if (focus == Focus.TABLE && handleSortInput(key)) return true;
 
         if (focus == Focus.SEARCH) {
             return handleSearchKeys(key);
         } else {
             return handleTableKeys(key);
         }
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseSortHeader(
+                mouse, List.of(Constraint.percentage(45), Constraint.percentage(30), Constraint.percentage(25)))) {
+            return true;
+        }
+        if (mouse.isScroll()) {
+            if (artifacts.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(artifacts.size() - 1, sel + 1));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String status() {
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> spans = new ArrayList<>();
+        if (focus == Focus.SEARCH) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Results  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Back"));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("←→").bold());
+            spans.add(Span.raw(":Version  "));
+            spans.addAll(sortKeyHints());
+            spans.add(Span.raw("Enter").bold());
+            spans.add(Span.raw(":Select  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Back"));
+        }
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Maven Central Search",
+                        List.of(
+                                new HelpOverlay.Entry("", "Search for artifacts on Maven Central."),
+                                new HelpOverlay.Entry("", "Type to search, use arrows to navigate."))),
+                new HelpOverlay.Section(
+                        "Search Syntax",
+                        List.of(
+                                new HelpOverlay.Entry("free text", "Full-text search"),
+                                new HelpOverlay.Entry("g:groupId", "Search by groupId"),
+                                new HelpOverlay.Entry("a:artifactId", "Search by artifactId"),
+                                new HelpOverlay.Entry("g:... AND a:...", "Combined search"))),
+                new HelpOverlay.Section(
+                        "Search Actions",
+                        List.of(
+                                new HelpOverlay.Entry("↑ / ↓", "Navigate results"),
+                                new HelpOverlay.Entry("← / →", "Cycle through versions"),
+                                new HelpOverlay.Entry("Enter", "Select artifact / confirm search"),
+                                new HelpOverlay.Entry("Esc", "Back to search / quit"))));
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
     }
 
     private boolean handleSearchKeys(KeyEvent key) {
@@ -298,7 +413,7 @@ class SearchTui {
      * Handle a key event when the UI is in the table focus, performing navigation,
      * selection, version cycling, or switching back to the search editor as needed.
      *
-     * Handles: quit (`q`), typing (moves focus to search and inserts the character),
+     * Handles: typing (moves focus to search and inserts the character),
      * up/down navigation (moves selection and may fetch or prefetch results/POMs),
      * left/right version cycling, and confirm/select to choose the artifact.
      *
@@ -307,11 +422,6 @@ class SearchTui {
     private boolean handleTableKeys(KeyEvent key) {
         if (artifacts.isEmpty()) {
             return false;
-        }
-
-        if (key.isCharIgnoreCase('q')) {
-            runner.quit();
-            return true;
         }
 
         // Typing in table mode jumps back to search
@@ -376,7 +486,7 @@ class SearchTui {
 
     // -- Rendering ----------------------------------------------------------
 
-    void render(Frame frame) {
+    void renderStandalone(Frame frame) {
         List<Rect> zones = Layout.vertical()
                 .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(4))
                 .split(frame.area());
@@ -387,10 +497,9 @@ class SearchTui {
     }
 
     private void renderSearchBar(Frame frame, Rect area) {
-        Style borderStyle =
-                focus == Focus.SEARCH ? Style.create().cyan() : Style.create().fg(Color.DARK_GRAY);
+        Style borderStyle = focus == Focus.SEARCH ? theme.focusedBorder() : theme.unfocusedBorder();
 
-        String title = loading ? " Searching\u2026 " : " Pilot \u2014 Maven Central Search ";
+        String title = loading ? " Searching… " : " Pilot — Maven Central Search ";
         Block block = Block.builder()
                 .title(title)
                 .borderType(BorderType.ROUNDED)
@@ -399,7 +508,7 @@ class SearchTui {
 
         String text = searchBuffer.toString();
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" \uD83D\uDD0D ").bold());
+        spans.add(Span.raw(" 🔍 ").bold());
         if (focus == Focus.SEARCH) {
             String before = text.substring(0, cursorPos);
             String cursorChar = cursorPos < text.length() ? String.valueOf(text.charAt(cursorPos)) : " ";
@@ -412,7 +521,7 @@ class SearchTui {
         }
 
         Paragraph searchLine = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
+                .text(Text.from(Line.from(spans)))
                 .block(block)
                 .build();
         frame.renderWidget(searchLine, area);
@@ -429,8 +538,9 @@ class SearchTui {
      * @param area the rectangular region within the frame reserved for the results table
      */
     private void renderResultsTable(Frame frame, Rect area) {
-        Style borderStyle =
-                focus == Focus.TABLE ? Style.create().cyan() : Style.create().fg(Color.DARK_GRAY);
+        Style borderStyle = focused
+                ? (focus == Focus.TABLE ? theme.focusedBorder() : theme.unfocusedBorder())
+                : theme.unfocusedBorder();
 
         String title;
         if (artifacts.isEmpty()) {
@@ -446,15 +556,16 @@ class SearchTui {
                 .build();
 
         if (artifacts.isEmpty()) {
-            String msg = loading ? "Searching\u2026" : "No results";
+            String msg = loading ? "Searching…" : "No results";
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
             return;
         }
 
-        Row header = Row.from("groupId", "artifactId", "version")
-                .style(Style.create().bold().yellow());
+        Row header = sortState.decorateHeader(
+                List.of("groupId", "artifactId", "version"),
+                Style.create().bold().yellow());
 
         List<Row> rows = new ArrayList<>();
         int selected = selectedIndex();
@@ -469,10 +580,11 @@ class SearchTui {
                 .rows(rows)
                 .widths(Constraint.percentage(45), Constraint.percentage(30), Constraint.percentage(25))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ") // triangular bullet
+                .highlightSymbol("▸ ") // triangular bullet
                 .block(block)
                 .build();
 
+        lastTableArea = area;
         frame.renderStatefulWidget(table, area, tableState);
     }
 
@@ -503,34 +615,34 @@ class SearchTui {
                 spans.add(Span.raw(displayName).bold().cyan());
                 // Organization
                 if (info.organization != null && !info.organization.isEmpty()) {
-                    spans.add(Span.raw(" by ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" by ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.organization).dim());
                 }
                 // License
                 if (info.license != null && !info.license.isEmpty()) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
-                    spans.add(Span.raw(info.license).fg(Color.GREEN));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
+                    spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
                 }
                 // URL
                 if (info.url != null && !info.url.isEmpty()) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.url).dim());
                 }
                 // Publication date from Last-Modified header
                 if (info.date != null && !info.date.isEmpty()) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.date).dim());
                 }
             } else {
                 spans.add(Span.raw(" "));
                 spans.add(Span.raw(a[0] + ":" + a[1]).cyan());
                 if (pomInfoCache.containsKey(pomKey + ":loading")) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
-                    spans.add(Span.raw("loading\u2026").dim());
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
+                    spans.add(Span.raw("loading…").dim());
                 }
             }
         } else {
-            spans.add(Span.raw(" " + status).fg(Color.GREEN));
+            spans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
         }
         Paragraph line = Paragraph.from(Line.from(spans));
         frame.renderWidget(line, area);
@@ -538,15 +650,15 @@ class SearchTui {
 
     private void renderSyntaxHelp(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" Syntax: ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw(" Syntax: ").fg(theme.separatorColor()));
         spans.add(Span.raw("free text").dim());
-        spans.add(Span.raw(" | ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw(" | ").fg(theme.separatorColor()));
         spans.add(Span.raw("g:").bold().dim());
         spans.add(Span.raw("groupId").dim());
-        spans.add(Span.raw(" | ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw(" | ").fg(theme.separatorColor()));
         spans.add(Span.raw("a:").bold().dim());
         spans.add(Span.raw("artifactId").dim());
-        spans.add(Span.raw(" | ").fg(Color.DARK_GRAY));
+        spans.add(Span.raw(" | ").fg(theme.separatorColor()));
         spans.add(Span.raw("g:").bold().dim());
         spans.add(Span.raw("... ").dim());
         spans.add(Span.raw("AND").bold().dim());
@@ -560,14 +672,14 @@ class SearchTui {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
         if (focus == Focus.SEARCH) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Results  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Quit  "));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("\u2190\u2192").bold());
+            spans.add(Span.raw("←→").bold());
             spans.add(Span.raw(":Version  "));
             spans.add(Span.raw("Enter").bold());
             spans.add(Span.raw(":Select  "));
@@ -578,6 +690,21 @@ class SearchTui {
         }
         Paragraph line = Paragraph.from(Line.from(spans));
         frame.renderWidget(line, area);
+    }
+
+    // -- Sorting ------------------------------------------------------------
+
+    private List<Function<String[], String>> sortExtractors() {
+        List<Function<String[], String>> extractors = new ArrayList<>();
+        extractors.add(a -> a[0]); // groupId
+        extractors.add(a -> a[1]); // artifactId
+        extractors.add(a -> a[2]); // version
+        return extractors;
+    }
+
+    @Override
+    protected void onSortChanged() {
+        sortState.sort(artifacts, sortExtractors());
     }
 
     // -- Version display ----------------------------------------------------
@@ -600,7 +727,7 @@ class SearchTui {
 
         boolean hasLeft = idx > 0;
         boolean hasRight = idx < versions.size() - 1;
-        return (hasLeft ? "\u25C0 " : "  ") + v + (hasRight ? " \u25B6" : "");
+        return (hasLeft ? "◀ " : "  ") + v + (hasRight ? " ▶" : "");
     }
 
     private String getDisplayVersionPlain(int rowIndex) {
@@ -626,7 +753,7 @@ class SearchTui {
         lastSearchedQuery = q;
         final int gen = ++searchGeneration;
         final String searchQuery = q;
-        status = "Searching\u2026";
+        status = "Searching…";
 
         CompletableFuture.supplyAsync(() -> {
                     try {
@@ -649,6 +776,7 @@ class SearchTui {
                     artifacts = extractArtifacts(responseBody);
                     versionIndices = new int[artifacts.size()];
                     versionCache.clear();
+                    sortState.reset();
 
                     if (artifacts.isEmpty()) {
                         status = "No results";
@@ -766,7 +894,7 @@ class SearchTui {
 
         List<String> versions = versionCache.get(key);
         if (versions == null) {
-            status = "Loading versions\u2026";
+            status = "Loading versions…";
             final int dir = direction;
             CompletableFuture.supplyAsync(() -> fetchVersionsFromMetadata(a[0], a[1]), httpPool)
                     .thenAccept(vers -> runner.runOnRenderThread(() -> {

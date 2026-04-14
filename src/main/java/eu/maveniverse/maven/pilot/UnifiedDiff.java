@@ -19,11 +19,11 @@
 package eu.maveniverse.maven.pilot;
 
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -126,14 +126,15 @@ class UnifiedDiff {
             DiffLine dl = lines.get(idx);
             String prefix;
             Style style;
+            Theme theme = Theme.DEFAULT;
             switch (dl.type()) {
                 case ADDED -> {
                     prefix = "+ ";
-                    style = Style.create().fg(Color.GREEN);
+                    style = theme.diffAdded();
                 }
                 case REMOVED -> {
                     prefix = "- ";
-                    style = Style.create().fg(Color.RED);
+                    style = theme.diffRemoved();
                 }
                 default -> {
                     prefix = "  ";
@@ -144,7 +145,7 @@ class UnifiedDiff {
         }
 
         // Build a single Text block from all visible lines
-        dev.tamboui.text.Text text = dev.tamboui.text.Text.from(visibleLines);
+        Text text = Text.from(visibleLines);
         Paragraph paragraph = Paragraph.builder().text(text).block(block).build();
         frame.renderWidget(paragraph, area);
     }

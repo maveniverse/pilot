@@ -49,6 +49,7 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -60,6 +61,7 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResult;
+import org.eclipse.aether.transfer.AbstractTransferListener;
 
 /**
  * Interactive launcher that displays the reactor module tree and lets the user
@@ -95,90 +97,40 @@ public class PilotMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        // Suppress transfer progress output to prevent corruption of TUI rendering
+        DefaultRepositorySystemSession quietSession = new DefaultRepositorySystemSession(repoSession);
+        quietSession.setTransferListener(new AbstractTransferListener() {});
+        this.repoSession = quietSession;
+
         try {
             List<MavenProject> projects = session.getProjects();
-            if (projects.size() > 1) {
-                executeReactor(projects);
-            } else {
-                executeSingleProject(project);
-            }
+            ReactorModel reactorModel = projects.size() > 1 ? ReactorModel.build(projects) : null;
+            new PilotShell(reactorModel, projects, this::createPanel).run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run pilot: " + e.getMessage(), e);
         }
     }
 
-    private void executeSingleProject(MavenProject proj) throws Exception {
-        String gav = gavOf(proj);
-        while (true) {
-            String tool = new ToolPickerTui(gav, false).pick();
-            if (tool == null) break;
-            runTool(tool, proj, List.of(proj));
-        }
+    private ToolPanel createPanel(String toolId, MavenProject proj, List<MavenProject> projects) throws Exception {
+        return switch (toolId) {
+            case "tree" -> createTreePanel(proj);
+            case "dependencies" -> createDependenciesPanel(proj);
+            case "updates" -> createUpdatesPanel(proj, projects);
+            case "conflicts" -> createConflictsPanel(proj, projects);
+            case "align" -> createAlignPanel(proj, projects);
+            case "audit" -> createAuditPanel(proj, projects);
+            case "pom" -> createPomPanel(proj);
+            case "search" -> createSearchPanel();
+            default -> null;
+        };
     }
 
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        ReactorModel reactorModel = ReactorModel.build(projects);
-        MavenProject root = projects.get(0);
-        String reactorGav = gavOf(root);
-
-        ModulePickerTui picker = new ModulePickerTui(reactorModel, reactorGav, "pilot", true);
-        while (true) {
-            ModulePickerTui.PickResult result = picker.pick();
-            if (result == null) break;
-            if (result.directTool() != null) {
-                runTool(result.directTool(), root, projects);
-                continue;
-            }
-            MavenProject selected = result.projects().get(0);
-            ReactorModel.ModuleNode node = findNode(reactorModel, selected);
-            boolean isParent = node != null && node.hasChildren();
-            String tool = new ToolPickerTui(gavOf(selected), true, isParent).pick();
-            if (tool == null) continue;
-
-            // For parent modules, auto-scope aggregate tools to the subtree
-            List<MavenProject> scope;
-            if (isParent) {
-                scope = reactorModel.collectSubtree(node);
-            } else {
-                scope = List.of(selected);
-            }
-            runTool(tool, selected, scope);
-        }
-    }
-
-    private static ReactorModel.ModuleNode findNode(ReactorModel model, MavenProject project) {
-        for (ReactorModel.ModuleNode node : model.allModules) {
-            if (node.project == project) {
-                return node;
-            }
-        }
-        return null;
-    }
-
-    private void runTool(String tool, MavenProject proj, List<MavenProject> projects) throws Exception {
-        switch (tool) {
-            case "tree" -> runTree(proj);
-            case "dependencies" -> runDependencies(proj);
-            case "pom" -> runPom(proj);
-            case "align" -> runAlign(proj, projects);
-            case "updates" -> runUpdates(proj, projects);
-            case "conflicts" -> runConflicts(proj, projects);
-            case "audit" -> runAudit(proj, projects);
-            case "search" -> runSearch();
-            default -> getLog().warn("Unknown tool: " + tool);
-        }
-    }
-
-    // ── tree ────────────────────────────────────────────────────────────────
-
-    private void runTree(MavenProject proj) throws Exception {
+    private ToolPanel createTreePanel(MavenProject proj) throws Exception {
         CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        new TreeTui(result.getRoot(), scope, gavOf(proj)).run();
+        return new TreeTui(result.getRoot(), scope, gavOf(proj));
     }
 
-    // ── dependencies ────────────────────────────────────────────────────────
-
-    private void runDependencies(MavenProject proj) throws Exception {
+    private ToolPanel createDependenciesPanel(MavenProject proj) throws Exception {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (Dependency dep : proj.getDependencies()) {
@@ -233,32 +185,10 @@ public class PilotMojo extends AbstractMojo {
                 dep.usageStatus = usage.transitiveUsage()
                         .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
             }
-        } else {
-            getLog().warn("target/classes not found \u2014 skipping bytecode analysis. Run 'mvn compile' first.");
         }
 
         String pomPath = proj.getFile().getAbsolutePath();
-        new DependenciesTui(declared, transitive, pomPath, gavOf(proj), bytecodeAnalyzed).run();
-    }
-
-    // ── pom ─────────────────────────────────────────────────────────────────
-
-    private void runPom(MavenProject proj) throws Exception {
-        File pomFile = proj.getFile();
-        String rawPom = Files.readString(pomFile.toPath());
-        String[] rawLines = rawPom.split("\n");
-
-        StringWriter sw = new StringWriter();
-        new MavenXpp3Writer().write(sw, proj.getModel());
-        String effectivePom = sw.toString();
-
-        Map<String, String[]> parentPomContents = readParentPomContents(proj);
-
-        XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
-        var originMap = new IdentityHashMap<Node, PomTui.OriginInfo>();
-        attachOrigins(originMap, effectiveTree.root, proj.getModel(), rawLines, parentPomContents);
-
-        new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents).run();
+        return new DependenciesTui(declared, transitive, pomPath, gavOf(proj), bytecodeAnalyzed);
     }
 
     private Map<String, String[]> readParentPomContents(MavenProject proj) {
@@ -292,6 +222,23 @@ public class PilotMojo extends AbstractMojo {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String[] resolveSourcePom(String modelId, Map<String, String[]> cache) {
+        String[] parts = modelId.split(":");
+        if (parts.length != 3) return null;
+        File pomFile = resolveParentPom(parts[0], parts[1], parts[2]);
+        if (pomFile != null && pomFile.exists()) {
+            try {
+                String[] lines = Files.readString(pomFile.toPath()).split("\n");
+                if (cache != null) {
+                    cache.put(modelId, lines);
+                }
+                return lines;
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
     }
 
     private void attachOrigins(
@@ -350,7 +297,11 @@ public class PilotMojo extends AbstractMojo {
         } else if (parentPomContents != null && parentPomContents.containsKey(sourceName)) {
             sourceLines = parentPomContents.get(sourceName);
         } else {
-            return new PomTui.OriginInfo(sourceName, lineNum, List.of());
+            // Try to resolve the source POM (e.g., imported BOM)
+            sourceLines = resolveSourcePom(sourceName, parentPomContents);
+            if (sourceLines == null) {
+                return new PomTui.OriginInfo(sourceName, lineNum, List.of());
+            }
         }
 
         return new PomTui.OriginInfo(sourceName, lineNum, buildSnippet(sourceLines, lineNum));
@@ -364,40 +315,11 @@ public class PilotMojo extends AbstractMojo {
         int start = Math.max(0, targetLine - 3);
         int end = Math.min(lines.length - 1, targetLine + 1);
         for (int i = start; i <= end; i++) {
-            String prefix = (i == targetLine - 1) ? "\u2192 " : "  ";
+            String prefix = (i == targetLine - 1) ? "→ " : "  ";
             String lineNum = String.format("%4d", i + 1);
-            snippet.add(prefix + lineNum + " \u2502 " + lines[i]);
+            snippet.add(prefix + lineNum + " │ " + lines[i]);
         }
         return snippet;
-    }
-
-    // ── align ───────────────────────────────────────────────────────────────
-
-    private void runAlign(MavenProject proj, List<MavenProject> projects) throws Exception {
-        if (projects.size() > 1) {
-            // Batch mode: find the actual management POM from a child's perspective
-            MavenProject managementTarget = findManagementPom(projects);
-            String mgmtPomPath = managementTarget.getFile().getAbsolutePath();
-            String mgmtContent = Files.readString(Path.of(mgmtPomPath));
-            PomEditor mgmtEditor = new PomEditor(Document.of(mgmtContent));
-            var detectedOptions = mgmtEditor.dependencies().detectConventions();
-
-            // Children = all modules except the management POM
-            List<String> childPomPaths = projects.stream()
-                    .filter(p -> p != managementTarget)
-                    .map(p -> p.getFile().getAbsolutePath())
-                    .toList();
-
-            new AlignTui(mgmtPomPath, childPomPaths, gavOf(managementTarget), detectedOptions, null).run();
-        } else {
-            String pomPath = proj.getFile().getAbsolutePath();
-            String pomContent = Files.readString(Path.of(pomPath));
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-            var detectedOptions = editor.dependencies().detectConventions();
-
-            AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
-            new AlignTui(pomPath, gavOf(proj), detectedOptions, parentInfo).run();
-        }
     }
 
     /**
@@ -432,15 +354,13 @@ public class PilotMojo extends AbstractMojo {
         return projects.get(0);
     }
 
-    // ── updates ─────────────────────────────────────────────────────────────
-
-    private void runUpdates(MavenProject proj, List<MavenProject> projects) throws Exception {
+    private ToolPanel createUpdatesPanel(MavenProject proj, List<MavenProject> projects) throws Exception {
         UpdatesTui.VersionResolver versionResolver = createVersionResolver();
         if (projects.size() > 1) {
             ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
             ReactorModel reactorModel = ReactorModel.build(projects);
             String reactorGav = gavOf(projects.get(0));
-            new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver).run();
+            return new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
         } else {
             List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
             for (Dependency dep : proj.getDependencies()) {
@@ -461,7 +381,7 @@ public class PilotMojo extends AbstractMojo {
                 }
             }
             String pomPath = proj.getFile().getAbsolutePath();
-            new UpdatesTui(dependencies, pomPath, gavOf(proj), versionResolver).run();
+            return new UpdatesTui(dependencies, pomPath, gavOf(proj), versionResolver);
         }
     }
 
@@ -479,9 +399,7 @@ public class PilotMojo extends AbstractMojo {
         };
     }
 
-    // ── conflicts ───────────────────────────────────────────────────────────
-
-    private void runConflicts(MavenProject proj, List<MavenProject> projects) throws Exception {
+    private ToolPanel createConflictsPanel(MavenProject proj, List<MavenProject> projects) throws Exception {
         if (projects.size() > 1) {
             Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
             for (MavenProject p : projects) {
@@ -500,7 +418,7 @@ public class PilotMojo extends AbstractMojo {
             MavenProject root = projects.get(0);
             String pomPath = root.getFile().getAbsolutePath();
             String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
-            new ConflictsTui(conflicts, pomPath, gav).run();
+            return new ConflictsTui(conflicts, pomPath, gav);
         } else {
             CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
             Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
@@ -513,8 +431,79 @@ public class PilotMojo extends AbstractMojo {
                     .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
                     .collect(Collectors.toList());
             String pomPath = proj.getFile().getAbsolutePath();
-            new ConflictsTui(conflicts, pomPath, gavOf(proj)).run();
+            return new ConflictsTui(conflicts, pomPath, gavOf(proj));
         }
+    }
+
+    private ToolPanel createAlignPanel(MavenProject proj, List<MavenProject> projects) throws Exception {
+        if (projects.size() > 1) {
+            MavenProject managementTarget = findManagementPom(projects);
+            String mgmtPomPath = managementTarget.getFile().getAbsolutePath();
+            String mgmtContent = Files.readString(Path.of(mgmtPomPath));
+            PomEditor mgmtEditor = new PomEditor(Document.of(mgmtContent));
+            var detectedOptions = mgmtEditor.dependencies().detectConventions();
+            List<String> childPomPaths = projects.stream()
+                    .filter(p -> p != managementTarget)
+                    .map(p -> p.getFile().getAbsolutePath())
+                    .toList();
+            return new AlignTui(mgmtPomPath, childPomPaths, gavOf(managementTarget), detectedOptions, null);
+        } else {
+            String pomPath = proj.getFile().getAbsolutePath();
+            String pomContent = Files.readString(Path.of(pomPath));
+            PomEditor editor = new PomEditor(Document.of(pomContent));
+            var detectedOptions = editor.dependencies().detectConventions();
+            AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
+            return new AlignTui(pomPath, gavOf(proj), detectedOptions, parentInfo);
+        }
+    }
+
+    private ToolPanel createAuditPanel(MavenProject proj, List<MavenProject> projects) throws Exception {
+        if (projects.size() > 1) {
+            MavenProject root = projects.get(0);
+            CollectResult rootResult =
+                    repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
+            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
+            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
+            for (MavenProject p : projects) {
+                CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(p));
+                collectAuditNode(result.getRoot(), entryMap, p.getArtifactId(), true);
+            }
+            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
+            String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
+            String pomPath = root.getFile().getAbsolutePath();
+            return new AuditTui(entries, gav, treeModel, pomPath);
+        } else {
+            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
+            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
+            collectAuditNode(result.getRoot(), entryMap, null, true);
+            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
+            String pomPath = proj.getFile().getAbsolutePath();
+            return new AuditTui(entries, gavOf(proj), treeModel, pomPath);
+        }
+    }
+
+    private ToolPanel createPomPanel(MavenProject proj) throws Exception {
+        File pomFile = proj.getFile();
+        String rawPom = Files.readString(pomFile.toPath());
+        String[] rawLines = rawPom.split("\n");
+
+        StringWriter sw = new StringWriter();
+        new MavenXpp3Writer().write(sw, proj.getModel());
+        String effectivePom = sw.toString();
+
+        Map<String, String[]> parentPomContents = readParentPomContents(proj);
+
+        XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
+        var originMap = new IdentityHashMap<Node, PomTui.OriginInfo>();
+        attachOrigins(originMap, effectiveTree.root, proj.getModel(), rawLines, parentPomContents);
+
+        return new PomTui(rawPom, effectiveTree, originMap, pomFile.getName(), parentPomContents);
+    }
+
+    private ToolPanel createSearchPanel() {
+        CentralSearchClient client = new CentralSearchClient();
+        return new SearchTui(client, "", List.of(), 0);
     }
 
     private void collectConflicts(
@@ -539,40 +528,11 @@ public class PilotMojo extends AbstractMojo {
                     art.getArtifactId(),
                     requestedVersion,
                     resolvedVersion,
-                    String.join(" \u2192 ", currentPath),
+                    String.join(" → ", currentPath),
                     child.getDependency().getScope());
 
             conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
             collectConflicts(child, conflicts, currentPath);
-        }
-    }
-
-    // ── audit ───────────────────────────────────────────────────────────────
-
-    private void runAudit(MavenProject proj, List<MavenProject> projects) throws Exception {
-        if (projects.size() > 1) {
-            MavenProject root = projects.get(0);
-            CollectResult rootResult =
-                    repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
-            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(rootResult.getRoot());
-
-            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-            for (MavenProject p : projects) {
-                CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(p));
-                collectAuditNode(result.getRoot(), entryMap, p.getArtifactId(), true);
-            }
-            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-            String gav = gavOf(root) + " (reactor: " + projects.size() + " modules)";
-            String pomPath = root.getFile().getAbsolutePath();
-            new AuditTui(entries, gav, treeModel, pomPath).run();
-        } else {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-            DependencyTreeModel treeModel = DependencyTreeModel.fromDependencyNode(result.getRoot());
-            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-            collectAuditNode(result.getRoot(), entryMap, null, true);
-            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-            String pomPath = proj.getFile().getAbsolutePath();
-            new AuditTui(entries, gavOf(proj), treeModel, pomPath).run();
         }
     }
 
@@ -597,14 +557,6 @@ public class PilotMojo extends AbstractMojo {
         for (DependencyNode child : node.getChildren()) {
             collectAuditNode(child, entryMap, moduleName, false);
         }
-    }
-
-    // ── search ──────────────────────────────────────────────────────────────
-
-    private void runSearch() throws Exception {
-        CentralSearchClient client = new CentralSearchClient();
-        SearchTui tui = new SearchTui(client, "", List.of(), 0);
-        tui.run();
     }
 
     // ── utils ───────────────────────────────────────────────────────────────

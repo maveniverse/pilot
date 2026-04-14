@@ -109,7 +109,7 @@ public class UpdatesMojo extends AbstractMojo {
         String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
 
         UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav, versionResolver);
-        tui.run();
+        tui.runStandalone();
     }
 
     private void executeReactor(List<MavenProject> projects, UpdatesTui.VersionResolver versionResolver)
@@ -121,7 +121,7 @@ public class UpdatesMojo extends AbstractMojo {
         String reactorGav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
 
         ReactorUpdatesTui tui = new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
-        tui.run();
+        tui.runStandalone();
     }
 
     private UpdatesTui.VersionResolver createVersionResolver() {

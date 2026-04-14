@@ -221,7 +221,7 @@ class XmlTreeModelTest {
         var line = model.renderNode(deps);
         String text = line.spans().stream().map(s -> s.content()).reduce("", String::concat);
         // Collapsed container should have ellipsis
-        assertThat(text).contains("dependencies").contains("\u2026");
+        assertThat(text).contains("dependencies").contains("…");
     }
 
     @Test

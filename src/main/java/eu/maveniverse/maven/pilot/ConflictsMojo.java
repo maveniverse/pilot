@@ -80,7 +80,7 @@ public class ConflictsMojo extends AbstractMojo {
         String pomPath = proj.getFile().getAbsolutePath();
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav);
-        tui.run();
+        tui.runStandalone();
     }
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
@@ -103,7 +103,7 @@ public class ConflictsMojo extends AbstractMojo {
         String pomPath = root.getFile().getAbsolutePath();
         String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav + " (reactor: " + projects.size() + " modules)");
-        tui.run();
+        tui.runStandalone();
     }
 
     private List<ConflictsTui.ConflictGroup> collectConflictsForProject(MavenProject proj) throws Exception {
@@ -155,7 +155,7 @@ public class ConflictsMojo extends AbstractMojo {
                     art.getArtifactId(),
                     requestedVersion,
                     resolvedVersion,
-                    String.join(" \u2192 ", currentPath),
+                    String.join(" → ", currentPath),
                     child.getDependency().getScope());
 
             conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);

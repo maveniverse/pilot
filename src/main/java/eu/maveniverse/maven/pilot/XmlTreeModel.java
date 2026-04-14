@@ -228,7 +228,7 @@ class XmlTreeModel {
 
         // Expand/collapse indicator
         if (hasTreeChildren(element)) {
-            spans.add(Span.raw(isExpanded(element) ? "\u25BE " : "\u25B8 ").bold());
+            spans.add(Span.raw(isExpanded(element) ? "▾ " : "▸ ").bold());
         } else {
             spans.add(Span.raw("  "));
         }
@@ -261,7 +261,7 @@ class XmlTreeModel {
     private void renderContainerElement(List<Span> spans, Element element, Style tagStyle, Style attrStyle) {
         addTagOpen(spans, element, tagStyle, attrStyle, ">");
         if (!isExpanded(element)) {
-            spans.add(Span.raw(" \u2026 ").dim());
+            spans.add(Span.raw(" … ").dim());
             addTagClose(spans, element, tagStyle);
         }
     }
@@ -300,7 +300,7 @@ class XmlTreeModel {
 
         if (origin != null && !origin.isEmpty()) {
             spans.add(Span.raw("  "));
-            spans.add(Span.raw("\u2190 " + origin).fg(Color.YELLOW).dim());
+            spans.add(Span.raw("← " + origin).fg(Color.YELLOW).dim());
         }
 
         return Line.from(spans);
@@ -322,9 +322,9 @@ class XmlTreeModel {
         StringBuilder sb = new StringBuilder();
         for (var entry : attrs.entrySet()) {
             if (entry.getKey().startsWith("xmlns")) continue;
-            if (sb.length() > 0) sb.append(' ');
+            if (!sb.isEmpty()) sb.append(' ');
             sb.append(entry.getKey()).append("=\"").append(entry.getValue()).append('"');
         }
-        return sb.length() > 0 ? sb.toString() : null;
+        return !sb.isEmpty() ? sb.toString() : null;
     }
 }

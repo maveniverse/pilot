@@ -21,7 +21,6 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -30,6 +29,8 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -37,7 +38,6 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -48,14 +48,10 @@ import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI for browsing the dependency tree.
+ *
+ * <p>Implements {@link ToolPanel} for embedding in the unified shell.</p>
  */
-class TreeTui {
-
-    private enum Mode {
-        TREE,
-        FILTER,
-        REVERSE_PATH
-    }
+class TreeTui extends ToolPanel {
 
     private static final List<String> SCOPES = List.of("compile", "runtime", "test");
 
@@ -64,20 +60,15 @@ class TreeTui {
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = MojoHelper.newHttpPool();
     private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
-    private final HelpOverlay helpOverlay = new HelpOverlay();
 
     private DependencyTreeModel model;
     private String scope;
-    private Mode mode = Mode.TREE;
     private List<DependencyTreeModel.TreeNode> displayNodes;
     private int conflictIndex = -1;
 
-    // Filter
-    private final StringBuilder filterBuffer = new StringBuilder();
-    private List<DependencyTreeModel.TreeNode> filteredNodes;
-
     // Reverse path
     private List<DependencyTreeModel.TreeNode> reversePath;
+    private boolean showReversePath;
 
     private TuiRunner runner;
 
@@ -103,21 +94,6 @@ class TreeTui {
         }
     }
 
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            configured.run();
-        } finally {
-            configured.close();
-            httpPool.shutdownNow();
-        }
-    }
-
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -137,31 +113,167 @@ class TreeTui {
             return true;
         }
 
-        if (mode == Mode.FILTER) {
-            return handleFilterKeys(key);
-        }
-        if (mode == Mode.REVERSE_PATH) {
-            return handleReversePathKeys(key);
-        }
-        return handleTreeKeys(key);
-    }
+        // Try panel-level handling first
+        if (handleKeyEvent(key)) return true;
 
-    /**
-     * Handle keyboard input while in the tree view (navigation, expansion, and mode actions).
-     *
-     * Processes movement (up/down/left/right), expand/collapse, switching to filter or reverse-path modes,
-     * cycling conflicts, expanding/collapsing all nodes, and quit. Updates selection, node expansion state,
-     * and may trigger background metadata fetches or UI refreshes.
-     *
-     * @param key the key event to handle
-     * @return `true` if the key was handled by the tree view, `false` otherwise
-     */
-    private boolean handleTreeKeys(KeyEvent key) {
+        // Standalone-only keys
         if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
             runner.quit();
             return true;
         }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
+        }
 
+        return false;
+    }
+
+    void renderStandalone(Frame frame) {
+        var zones = Layout.vertical()
+                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
+                .split(frame.area());
+
+        renderHeader(frame, zones.get(0));
+
+        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
+        if (contentArea != null) {
+            render(frame, contentArea);
+        }
+
+        renderInfoBar(frame, zones.get(2));
+    }
+
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Tree";
+    }
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        if (showReversePath) {
+            renderReversePath(frame, area);
+        } else {
+            renderTree(frame, area);
+        }
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        if (showReversePath) {
+            return handleReversePathKeys(key);
+        }
+        if (handleSearchInput(key)) return true;
+        return handleTreeKeys(key);
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (mouse.isClick()) {
+            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header + scroll
+            if (row >= 0 && row < displayNodes.size()) {
+                tableState.select(row);
+                fetchPomInfoIfNeeded();
+                return true;
+            }
+        }
+        if (mouse.isScroll()) {
+            if (displayNodes.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(displayNodes.size() - 1, sel + 1));
+            }
+            fetchPomInfoIfNeeded();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String status() {
+        int sel = selectedIndex();
+        if (sel < 0 || sel >= displayNodes.size()) return "";
+        var node = displayNodes.get(sel);
+        String pomKey = node.gav();
+        SearchTui.PomInfo info = pomInfoCache.get(pomKey);
+        if (info != null && info.name != null) {
+            StringBuilder sb = new StringBuilder(info.name);
+            if (info.license != null) sb.append(" │ ").append(info.license);
+            if (info.organization != null) sb.append(" │ ").append(info.organization);
+            if (info.date != null) sb.append(" │ ").append(info.date);
+            return sb.toString();
+        }
+        StringBuilder sb = new StringBuilder(node.gav());
+        if (!node.scope.isEmpty() && !"compile".equals(node.scope)) {
+            sb.append(" [").append(node.scope).append("]");
+        }
+        return sb.toString();
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
+        List<Span> spans = new ArrayList<>();
+        if (showReversePath) {
+            spans.add(Span.raw("Esc/Enter").bold());
+            spans.add(Span.raw(":Back  "));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Nav  "));
+            spans.add(Span.raw("←→").bold());
+            spans.add(Span.raw(":Expand  "));
+            spans.add(Span.raw("/").bold());
+            spans.add(Span.raw(":Search  "));
+            if (!model.conflicts.isEmpty()) {
+                spans.add(Span.raw("c").bold());
+                spans.add(Span.raw(":Conflicts  "));
+            }
+            spans.add(Span.raw("r").bold());
+            spans.add(Span.raw(":Reverse  "));
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Scope(" + scope + ")  "));
+            spans.add(Span.raw("e/w").bold());
+            spans.add(Span.raw(":All  "));
+        }
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
+        return List.of(new HelpOverlay.Section(
+                "Dependency Tree",
+                List.of(
+                        new HelpOverlay.Entry("", "Shows the resolved dependency tree."),
+                        new HelpOverlay.Entry("", ""),
+                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("← / →", "Collapse / expand tree node"),
+                        new HelpOverlay.Entry("e / w", "Expand all / collapse all"),
+                        new HelpOverlay.Entry("/", "Search by groupId or artifactId"),
+                        new HelpOverlay.Entry("c", "Jump to next conflict"),
+                        new HelpOverlay.Entry("r", "Reverse path (why was this pulled in?)"),
+                        new HelpOverlay.Entry("s", "Cycle scope: compile → runtime → test"))));
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
+    }
+
+    @Override
+    void close() {
+        httpPool.shutdownNow();
+    }
+
+    // ── Key handling ────────────────────────────────────────────────────────
+
+    private boolean handleTreeKeys(KeyEvent key) {
         if (key.isUp()) {
             tableState.selectPrevious();
             fetchPomInfoIfNeeded();
@@ -195,7 +307,6 @@ class TreeTui {
                     node.expanded = false;
                     refreshDisplay();
                 } else {
-                    // Move to parent: find nearest preceding node at depth-1
                     for (int i = sel - 1; i >= 0; i--) {
                         if (displayNodes.get(i).depth < node.depth) {
                             tableState.select(i);
@@ -208,20 +319,13 @@ class TreeTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('/')) {
-            mode = Mode.FILTER;
-            filterBuffer.setLength(0);
-            filteredNodes = null;
-            return true;
-        }
-
         if (key.isCharIgnoreCase('c')) {
             cycleConflict();
             return true;
         }
 
         if (key.isCharIgnoreCase('r')) {
-            showReversePath();
+            enterReversePath();
             return true;
         }
 
@@ -240,13 +344,18 @@ class TreeTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
-            return true;
-        }
-
         return false;
     }
+
+    private boolean handleReversePathKeys(KeyEvent key) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isKey(KeyCode.ENTER)) {
+            showReversePath = false;
+            return true;
+        }
+        return false;
+    }
+
+    // ── Tree logic ──────────────────────────────────────────────────────────
 
     private void cycleScope() {
         if (rootNode == null) return;
@@ -262,72 +371,17 @@ class TreeTui {
         }
     }
 
-    private boolean handleFilterKeys(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE)) {
-            mode = Mode.TREE;
-            displayNodes = model.visibleNodes();
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            mode = Mode.TREE;
-            if (filteredNodes != null && !filteredNodes.isEmpty()) {
-                displayNodes = filteredNodes;
-                tableState.select(0);
-            }
-            return true;
-        }
-        if (key.code() == KeyCode.CHAR) {
-            filterBuffer.append(key.character());
-            applyFilter();
-            return true;
-        }
-        if (key.isKey(KeyCode.BACKSPACE) && filterBuffer.length() > 0) {
-            filterBuffer.deleteCharAt(filterBuffer.length() - 1);
-            applyFilter();
-            return true;
-        }
-        return false;
-    }
-
-    private boolean handleReversePathKeys(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isKey(KeyCode.ENTER)) {
-            mode = Mode.TREE;
-            return true;
-        }
-        return false;
-    }
-
-    private void applyFilter() {
-        if (filterBuffer.length() == 0) {
-            filteredNodes = null;
-            displayNodes = model.visibleNodes();
-        } else {
-            filteredNodes = model.filter(filterBuffer.toString());
-            displayNodes = filteredNodes;
-        }
-        if (!displayNodes.isEmpty()) {
-            tableState.select(0);
-        }
-    }
-
-    /**
-     * Advances the internal conflict pointer to the next conflicting node, makes that node visible, and selects it in the table.
-     *
-     * <p>If there are no conflicts, this method has no effect.</p>
-     */
     private void cycleConflict() {
         if (model.conflicts.isEmpty()) return;
         conflictIndex = (conflictIndex + 1) % model.conflicts.size();
         var conflict = model.conflicts.get(conflictIndex);
 
-        // Expand parents to make conflict visible
         var path = model.pathToRoot(conflict);
         for (var node : path) {
             node.expanded = true;
         }
         refreshDisplay();
 
-        // Select the conflict node
         for (int i = 0; i < displayNodes.size(); i++) {
             if (displayNodes.get(i) == conflict) {
                 tableState.select(i);
@@ -336,19 +390,12 @@ class TreeTui {
         }
     }
 
-    /**
-     * Switches the view to the reverse-path mode for the currently selected node.
-     *
-     * If a valid node is selected, computes the path from that node to the tree root,
-     * stores it in {@code reversePath}, and sets the UI mode to {@code REVERSE_PATH}.
-     * If no valid selection exists, no state is changed.
-     */
-    private void showReversePath() {
+    private void enterReversePath() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;
         var node = displayNodes.get(sel);
         reversePath = model.pathToRoot(node);
-        mode = Mode.REVERSE_PATH;
+        showReversePath = true;
     }
 
     private void expandAll() {
@@ -357,20 +404,17 @@ class TreeTui {
     }
 
     private void collapseAll() {
-        // Remember the selected node before collapsing
         int sel = selectedIndex();
         DependencyTreeModel.TreeNode selectedNode =
                 (sel >= 0 && sel < displayNodes.size()) ? displayNodes.get(sel) : null;
 
         collapseNode(model.root);
-        model.root.expanded = true; // keep root expanded
+        model.root.expanded = true;
         displayNodes = model.visibleNodes();
 
-        // Find the selected node or its nearest visible ancestor
         if (selectedNode != null) {
             int newIndex = displayNodes.indexOf(selectedNode);
             if (newIndex < 0) {
-                // Node is hidden — find nearest visible ancestor via path from root
                 List<DependencyTreeModel.TreeNode> path = model.pathToRoot(selectedNode);
                 for (int i = path.size() - 2; i >= 0; i--) {
                     newIndex = displayNodes.indexOf(path.get(i));
@@ -389,11 +433,6 @@ class TreeTui {
         }
     }
 
-    /**
-     * Collapse the given tree node and all of its descendants.
-     *
-     * @param node the tree node to collapse; its {@code expanded} flag (and that of every descendant) will be set to {@code false}
-     */
     private void collapseNode(DependencyTreeModel.TreeNode node) {
         node.expanded = false;
         for (var child : node.children) {
@@ -401,57 +440,6 @@ class TreeTui {
         }
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Dependency Tree",
-                        List.of(
-                                new HelpOverlay.Entry("", "Shows the fully resolved dependency tree of the project."),
-                                new HelpOverlay.Entry("", "Each row is a dependency (groupId:artifactId:version)."),
-                                new HelpOverlay.Entry("", "Indentation shows the transitive dependency chain:"),
-                                new HelpOverlay.Entry("", "a child was pulled in by its parent in the tree."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Scope (compile, test, runtime, provided) is shown"),
-                                new HelpOverlay.Entry("", "in brackets when not 'compile'. Each scope has a"),
-                                new HelpOverlay.Entry("", "distinct color. The status bar shows artifact"),
-                                new HelpOverlay.Entry("", "metadata (name, license) fetched from Central."))),
-                new HelpOverlay.Section(
-                        "Colors (by scope)",
-                        List.of(
-                                new HelpOverlay.Entry("default", "compile scope"),
-                                new HelpOverlay.Entry("blue", "runtime scope"),
-                                new HelpOverlay.Entry("magenta", "provided scope"),
-                                new HelpOverlay.Entry("dark gray", "test scope"),
-                                new HelpOverlay.Entry("red", "system scope"),
-                                new HelpOverlay.Entry("yellow", "Version conflict \u2014 multiple versions requested"),
-                                new HelpOverlay.Entry("dim", "Scope label, optional marker"))),
-                new HelpOverlay.Section(
-                        "Navigation",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
-                                new HelpOverlay.Entry("e", "Expand all nodes"),
-                                new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"))),
-                new HelpOverlay.Section(
-                        "Actions",
-                        List.of(
-                                new HelpOverlay.Entry("/", "Filter \u2014 type to search by groupId or artifactId"),
-                                new HelpOverlay.Entry("c", "Jump to next conflict (only when conflicts exist)"),
-                                new HelpOverlay.Entry("r", "Reverse path \u2014 show how root depends on selection"),
-                                new HelpOverlay.Entry("s", "Cycle scope filter: compile \u2192 runtime \u2192 test"))),
-                new HelpOverlay.Section(
-                        "General",
-                        List.of(
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
-    }
-
-    /**
-     * Refreshes the list of nodes shown in the UI from the model and preserves a valid selection.
-     *
-     * Saves the current selected index, replaces {@code displayNodes} with {@code model.visibleNodes()},
-     * and if the previous selection is now out of range selects the last available row (or 0 if the list is empty).
-     */
     private void refreshDisplay() {
         int selBefore = selectedIndex();
         displayNodes = model.visibleNodes();
@@ -460,59 +448,42 @@ class TreeTui {
         }
     }
 
-    /**
-     * Get the currently selected row index from the table state, defaulting to -1 when no selection is set.
-     *
-     * @return `-1` if no selection is set, otherwise the selected row index.
-     */
+    @Override
+    protected void updateSearchMatches() {
+        String query = searchBuffer.toString().toLowerCase();
+        if (query.isEmpty()) {
+            searchMatches = List.of();
+            searchMatchIndex = -1;
+            return;
+        }
+        searchMatches = new ArrayList<>();
+        for (int i = 0; i < displayNodes.size(); i++) {
+            var node = displayNodes.get(i);
+            String searchable = node.groupId + ":" + node.artifactId + ":" + node.version;
+            if (searchable.toLowerCase().contains(query)) {
+                searchMatches.add(i);
+            }
+        }
+        if (!searchMatches.isEmpty()) {
+            searchMatchIndex = 0;
+            selectSearchMatch(0);
+        } else {
+            searchMatchIndex = -1;
+        }
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        tableState.select(searchMatches.get(matchIndex));
+        fetchPomInfoIfNeeded();
+    }
+
     private int selectedIndex() {
         Integer sel = tableState.selected();
         return sel != null ? sel : -1;
     }
 
-    // -- Rendering --
-
-    void render(Frame frame) {
-        var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
-                .split(frame.area());
-
-        renderHeader(frame, zones.get(0));
-
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(1));
-        } else if (mode == Mode.REVERSE_PATH) {
-            renderReversePath(frame, zones.get(1));
-        } else {
-            renderTree(frame, zones.get(1));
-        }
-
-        renderInfoBar(frame, zones.get(2));
-    }
-
-    private void renderHeader(Frame frame, Rect area) {
-        String title = " Pilot \u2014 Dependency Tree ";
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
-        List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" " + projectGav).bold().cyan());
-
-        if (mode == Mode.FILTER) {
-            spans.add(Span.raw("  Filter: ").fg(Color.YELLOW));
-            spans.add(Span.raw(filterBuffer.toString()));
-            spans.add(Span.raw("\u2588").fg(Color.YELLOW));
-        }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
-    }
+    // ── Rendering ───────────────────────────────────────────────────────────
 
     private void renderTree(Frame frame, Rect area) {
         String conflictInfo = model.conflicts.isEmpty() ? "" : ", " + model.conflicts.size() + " conflicts";
@@ -521,7 +492,7 @@ class TreeTui {
         Block block = Block.builder()
                 .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         if (displayNodes.isEmpty()) {
@@ -535,15 +506,19 @@ class TreeTui {
         }
 
         List<Row> rows = new ArrayList<>();
-        for (var node : displayNodes) {
-            rows.add(createTreeRow(node));
+        for (int i = 0; i < displayNodes.size(); i++) {
+            Row row = createTreeRow(displayNodes.get(i));
+            if (isSearchMatch(i)) {
+                row = row.style(row.style().bg(theme.searchHighlightBg()));
+            }
+            rows.add(row);
         }
 
         Table table = Table.builder()
                 .rows(rows)
                 .widths(Constraint.fill())
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
@@ -553,36 +528,28 @@ class TreeTui {
     private Row createTreeRow(DependencyTreeModel.TreeNode node) {
         List<Span> spans = new ArrayList<>();
 
-        // Indentation
         String indent = "  ".repeat(node.depth);
         spans.add(Span.raw(indent));
 
-        // Expand/collapse indicator
         if (node.hasChildren()) {
-            spans.add(Span.raw(node.expanded ? "\u25BE " : "\u25B8 ").bold());
+            spans.add(Span.raw(node.expanded ? "▾ " : "▸ ").bold());
         } else {
             spans.add(Span.raw("  "));
         }
 
-        // Scope coloring
         Style style = scopeStyle(node.scope);
-
-        // Artifact coordinates
         String coords = node.groupId + ":" + node.artifactId + ":" + node.version;
         spans.add(Span.styled(coords, style));
 
-        // Optional marker
         if (node.optional) {
             spans.add(Span.raw(" (optional)").dim());
         }
 
-        // Conflict marker
         if (node.isConflict()) {
-            spans.add(Span.raw(" \u26A0 conflict").fg(Color.YELLOW));
+            spans.add(Span.raw(" ⚠ conflict").fg(theme.statusWarningColor()));
             spans.add(Span.raw(" (wanted " + node.requestedVersion + ")").dim());
         }
 
-        // Scope label (if not compile)
         if (!"compile".equals(node.scope) && !node.scope.isEmpty()) {
             spans.add(Span.raw(" [" + node.scope + "]").dim());
         }
@@ -592,12 +559,12 @@ class TreeTui {
 
     private Style scopeStyle(String scope) {
         return switch (scope) {
-            case "compile" -> Style.create();
-            case "runtime" -> Style.create().fg(Color.BLUE);
-            case "test" -> Style.create().fg(Color.DARK_GRAY);
-            case "provided" -> Style.create().fg(Color.MAGENTA);
-            case "system" -> Style.create().fg(Color.RED);
-            default -> Style.create();
+            case "compile" -> theme.scopeCompile();
+            case "runtime" -> theme.scopeRuntime();
+            case "test" -> theme.scopeTest();
+            case "provided" -> theme.scopeProvided();
+            case "system" -> theme.scopeSystem();
+            default -> theme.scopeCompile();
         };
     }
 
@@ -625,13 +592,13 @@ class TreeTui {
 
             if (i > 0) {
                 spans.add(Span.raw("  ".repeat(i - 1)));
-                spans.add(Span.raw("\u2514\u2500 ").fg(Color.DARK_GRAY));
+                spans.add(Span.raw("└─ ").fg(theme.treeConnectorColor()));
             }
 
             spans.add(Span.raw(node.gav()).bold());
 
             if (i == reversePath.size() - 1) {
-                spans.add(Span.raw(" \u25C0 selected").fg(Color.YELLOW));
+                spans.add(Span.raw(" ◀ selected").fg(theme.statusWarningColor()));
             }
 
             rows.add(Row.from(Cell.from(Line.from(spans))));
@@ -647,6 +614,32 @@ class TreeTui {
         frame.renderStatefulWidget(table, area, reverseState);
     }
 
+    // ── Standalone-only rendering ───────────────────────────────────────────
+
+    private void renderHeader(Frame frame, Rect area) {
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" " + projectGav).bold().cyan());
+
+        if (searchMode) {
+            spans.add(Span.raw("  Search: ").fg(theme.searchBarLabelColor()));
+            spans.add(Span.raw(searchBuffer.toString()));
+            spans.add(Span.raw("█").fg(theme.searchBarLabelColor()));
+            if (!searchMatches.isEmpty()) {
+                spans.add(Span.raw("  " + (searchMatchIndex + 1) + "/" + searchMatches.size())
+                        .fg(theme.searchMatchCountColor()));
+            } else if (!searchBuffer.isEmpty()) {
+                spans.add(Span.raw("  no matches").fg(theme.searchNoMatchColor()));
+            }
+        } else if (activeSearch != null) {
+            spans.add(Span.raw("  [" + activeSearch + "] ").fg(theme.inactiveViewTabColor()));
+            if (!searchMatches.isEmpty()) {
+                spans.add(Span.raw((searchMatchIndex + 1) + "/" + searchMatches.size())
+                        .fg(theme.searchMatchCountColor()));
+            }
+        }
+        renderStandaloneHeader(frame, area, "Dependency Tree", Line.from(spans));
+    }
+
     private void renderInfoBar(Frame frame, Rect area) {
         var rows = Layout.vertical()
                 .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
@@ -656,16 +649,6 @@ class TreeTui {
         renderKeyBindings(frame, rows.get(2));
     }
 
-    /**
-     * Renders the selected artifact's details into the given area of the frame.
-     *
-     * If cached POM metadata for the selected node exists and contains a name, renders the artifact
-     * name and, when available, its license, organization, and date. Otherwise renders the node's
-     * GAV and, if applicable, its scope.
-     *
-     * @param frame the frame to render into
-     * @param area the rectangle area within the frame where details are drawn
-     */
     private void renderArtifactDetails(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         int sel = selectedIndex();
@@ -678,15 +661,15 @@ class TreeTui {
                 spans.add(Span.raw(" "));
                 spans.add(Span.raw(info.name).bold().cyan());
                 if (info.license != null) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
-                    spans.add(Span.raw(info.license).fg(Color.GREEN));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
+                    spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
                 }
                 if (info.organization != null) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.organization).dim());
                 }
                 if (info.date != null) {
-                    spans.add(Span.raw(" \u2502 ").fg(Color.DARK_GRAY));
+                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
                     spans.add(Span.raw(info.date).dim());
                 }
             } else {
@@ -701,37 +684,27 @@ class TreeTui {
         frame.renderWidget(line, area);
     }
 
-    /**
-     * Renders the single-line key binding hint bar for the current UI mode.
-     *
-     * Displays mode-specific key labels and short action hints (Filter, Navigate,
-     * Expand/Collapse, Conflicts, Reverse, Quit) and paints them into the given
-     * area of the frame.
-     *
-     * @param frame the frame to render widgets into
-     * @param area the rectangular area within the frame where the key hints are drawn
-     */
     private void renderKeyBindings(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
 
-        if (mode == Mode.FILTER) {
-            spans.add(Span.raw("Type").bold());
-            spans.add(Span.raw(":Filter  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Apply  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (mode == Mode.REVERSE_PATH) {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            spans.addAll(searchHints);
+            Paragraph line = Paragraph.from(Line.from(spans));
+            frame.renderWidget(line, area);
+            return;
+        }
+        if (showReversePath) {
             spans.add(Span.raw("Esc/Enter").bold());
             spans.add(Span.raw(":Back"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("\u2190\u2192").bold());
+            spans.add(Span.raw("←→").bold());
             spans.add(Span.raw(":Expand/Collapse  "));
             spans.add(Span.raw("/").bold());
-            spans.add(Span.raw(":Filter  "));
+            spans.add(Span.raw(":Search  "));
             if (!model.conflicts.isEmpty()) {
                 spans.add(Span.raw("c").bold());
                 spans.add(Span.raw(":Conflicts  "));
@@ -752,13 +725,29 @@ class TreeTui {
         frame.renderWidget(line, area);
     }
 
-    /**
-     * Ensures POM metadata for the currently selected dependency is being fetched and cached.
-     *
-     * If the selected row corresponds to a node whose GAV is not already cached, inserts a
-     * placeholder entry and starts an asynchronous fetch from Maven Central. When the fetch
-     * completes the retrieved `PomInfo` is stored in the cache on the render thread.
-     */
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>();
+        sections.addAll(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "Colors (by scope)",
+                List.of(
+                        new HelpOverlay.Entry("default", "compile scope"),
+                        new HelpOverlay.Entry("blue", "runtime scope"),
+                        new HelpOverlay.Entry("magenta", "provided scope"),
+                        new HelpOverlay.Entry("dark gray", "test scope"),
+                        new HelpOverlay.Entry("red", "system scope"),
+                        new HelpOverlay.Entry("yellow", "Version conflict"),
+                        new HelpOverlay.Entry("dim", "Scope label, optional marker"))));
+        sections.add(new HelpOverlay.Section(
+                "General",
+                List.of(
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        return sections;
+    }
+
+    // ── Async ───────────────────────────────────────────────────────────────
+
     private void fetchPomInfoIfNeeded() {
         int sel = selectedIndex();
         if (sel < 0 || sel >= displayNodes.size()) return;
@@ -769,6 +758,10 @@ class TreeTui {
 
         CompletableFuture.supplyAsync(
                         () -> SearchTui.fetchPomFromCentral(node.groupId, node.artifactId, node.version), httpPool)
-                .thenAccept(info -> runner.runOnRenderThread(() -> pomInfoCache.put(pomKey, info)));
+                .thenAccept(info -> {
+                    if (runner != null) {
+                        runner.runOnRenderThread(() -> pomInfoCache.put(pomKey, info));
+                    }
+                });
     }
 }

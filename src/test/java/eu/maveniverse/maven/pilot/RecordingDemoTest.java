@@ -298,9 +298,9 @@ class RecordingDemoTest {
                 new IdentityHashMap<>(),
                 "pom.xml",
                 Map.of("parent-pom/pom.xml", parentPom.split("\n")));
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:pom");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:pom");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -386,9 +386,9 @@ class RecordingDemoTest {
 
         var model = new DependencyTreeModel(root, List.of(conflictNode), 12);
         TreeTui tui = new TreeTui(model, "com.example:demo-app:1.0.0");
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:tree");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:tree");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -458,9 +458,9 @@ class RecordingDemoTest {
         deps.add(d5);
 
         UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:updates");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:updates");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -528,9 +528,9 @@ class RecordingDemoTest {
         transitive.add(t2);
 
         DependenciesTui tui = new DependenciesTui(declared, transitive, pomPath, "com.example:demo:1.0.0", true);
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:dependencies");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:dependencies");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -594,9 +594,9 @@ class RecordingDemoTest {
         conflicts.add(new ConflictsTui.ConflictGroup("com.fasterxml.jackson.core:jackson-databind", List.of(e5, e6)));
 
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, "com.example:demo:1.0.0");
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:conflicts");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:conflicts");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -700,9 +700,9 @@ class RecordingDemoTest {
                         "Apache-2.0",
                         null,
                         "2024-06-10"));
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:search");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:search");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();
@@ -797,9 +797,9 @@ class RecordingDemoTest {
         entries.add(e7);
 
         AuditTui tui = new AuditTui(entries, "com.example:demo-app:1.0.0", null, pomPath);
-        DemoRecorder recorder = new DemoRecorder(tui::render, "pilot:audit");
+        DemoRecorder recorder = new DemoRecorder(tui::renderStandalone, "pilot:audit");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(WIDTH, HEIGHT))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
 
             pilot.pause();

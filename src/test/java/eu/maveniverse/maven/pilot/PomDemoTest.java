@@ -89,7 +89,7 @@ class PomDemoTest {
     void browseAndNavigatePom() throws Exception {
         PomTui tui = new PomTui(RAW_POM, EFFECTIVE_POM, "pom.xml");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 30))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 30))) {
 
             Pilot pilot = testRunner.pilot();
 
@@ -142,7 +142,7 @@ class PomDemoTest {
     void expandCollapseXmlNodes() throws Exception {
         PomTui tui = new PomTui(RAW_POM, EFFECTIVE_POM, "pom.xml");
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 30))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 30))) {
 
             Pilot pilot = testRunner.pilot();
             pilot.pause();

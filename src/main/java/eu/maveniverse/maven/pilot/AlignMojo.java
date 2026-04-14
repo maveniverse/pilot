@@ -22,7 +22,6 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -57,19 +56,10 @@ public class AlignMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
-            List<MavenProject> projects = session.getProjects();
-            if (projects.size() > 1) {
-                executeReactor(projects);
-            } else {
-                executeForProject(project);
-            }
+            executeForProject(project);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run alignment TUI: " + e.getMessage(), e);
         }
-    }
-
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        ModulePickerTui.forEachSelected(projects, "align", this::executeForProject);
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
@@ -82,6 +72,6 @@ public class AlignMojo extends AbstractMojo {
 
         AlignTui.ParentPomInfo parentInfo = AlignHelper.findParentPomInfo(proj, session.getProjects());
         AlignTui tui = new AlignTui(pomPath, gav, detectedOptions, parentInfo);
-        tui.run();
+        tui.runStandalone();
     }
 }

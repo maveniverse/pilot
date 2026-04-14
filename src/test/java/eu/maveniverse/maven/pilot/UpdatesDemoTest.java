@@ -62,7 +62,7 @@ class UpdatesDemoTest {
 
         UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
 
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::render, new Size(100, 24))) {
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
 
             Pilot pilot = testRunner.pilot();
             pilot.pause();

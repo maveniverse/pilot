@@ -65,7 +65,7 @@ public class SearchMojo extends AbstractMojo {
             }
 
             SearchTui tui = new SearchTui(client, q, initialResults, totalHits);
-            String selectedGav = tui.run();
+            String selectedGav = tui.runAndSelect();
             if (selectedGav != null) {
                 getLog().info("Selected: " + selectedGav);
             }

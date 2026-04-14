@@ -26,12 +26,16 @@ import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
+import dev.tamboui.widgets.block.Title;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
@@ -42,23 +46,23 @@ import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import org.eclipse.aether.graph.DependencyNode;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
  */
-class DependenciesTui {
+class DependenciesTui extends ToolPanel {
 
     private static final String COMPILE_SCOPE = "compile";
     private static final String COL_GA = "groupId:artifactId";
     private static final String COL_VERSION = "version";
     private static final String COL_SCOPE = "scope";
-    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
+    private static final String HIGHLIGHT_SYMBOL = "▸ ";
 
     // Maven 3 scopes (modelVersion 4.0.0)
     private static final List<String> SCOPES_3X = List.of(COMPILE_SCOPE, "provided", "runtime", "test");
@@ -208,7 +212,6 @@ class DependenciesTui {
     private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
-    private final HelpOverlay helpOverlay = new HelpOverlay();
     private int lastContentHeight;
     private TuiRunner runner;
 
@@ -262,6 +265,7 @@ class DependenciesTui {
         }
         this.originalPomContent = pom;
         this.editor = new PomEditor(Document.of(pom));
+        this.sortState = new SortState(sortColumnCount());
         updateStatus();
         if (!declared.isEmpty()) {
             tableState.select(0);
@@ -283,26 +287,12 @@ class DependenciesTui {
         }
     }
 
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            configured.run();
-        } finally {
-            configured.close();
-        }
-    }
-
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
         }
 
-        // Save prompt mode
+        // Save prompt mode (standalone only)
         if (pendingQuit) {
             if (key.isCharIgnoreCase('y')) {
                 saveAndQuit();
@@ -320,7 +310,7 @@ class DependenciesTui {
             return false;
         }
 
-        // Diff overlay mode — Esc closes overlay first
+        // Diff overlay mode (standalone — panel mode handles in handleKeyEvent)
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
                 diffOverlay.close();
@@ -334,7 +324,7 @@ class DependenciesTui {
             return false;
         }
 
-        // Help overlay mode
+        // Help overlay mode (standalone only)
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
@@ -344,10 +334,69 @@ class DependenciesTui {
             return false;
         }
 
-        if (key.isCtrlC() || key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+        if (key.isCtrlC()) {
             requestQuit();
             return true;
         }
+
+        // Try panel-level handling first
+        if (handleKeyEvent(key)) return true;
+
+        // Standalone-only keys
+        if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
+            requestQuit();
+            return true;
+        }
+        if (key.isKey(KeyCode.TAB)) {
+            view = (view == View.DECLARED) ? View.TRANSITIVE : View.DECLARED;
+            tableState.select(0);
+            return true;
+        }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
+        }
+
+        return false;
+    }
+
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Deps";
+    }
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes ");
+            lastContentHeight = area.height();
+            return;
+        }
+        Rect contentArea = renderTabBar(frame, area);
+        var zones = Layout.vertical()
+                .constraints(Constraint.fill(), Constraint.percentage(25))
+                .split(contentArea);
+        lastContentHeight = zones.get(0).height();
+        renderTable(frame, zones.get(0), null);
+        renderDetails(frame, zones.get(1));
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        // Diff overlay (panel mode — standalone handles before delegation)
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            return true; // consume all keys during overlay
+        }
+
+        if (handleSearchInput(key)) return true;
+        if (handleSortInput(key)) return true;
 
         if (key.isUp()) {
             tableState.selectPrevious();
@@ -355,12 +404,6 @@ class DependenciesTui {
         }
         if (key.isDown()) {
             tableState.selectNext(currentList().size());
-            return true;
-        }
-
-        if (key.isKey(KeyCode.TAB)) {
-            view = (view == View.DECLARED) ? View.TRANSITIVE : View.DECLARED;
-            tableState.select(0);
             return true;
         }
 
@@ -379,7 +422,7 @@ class DependenciesTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('s')) {
+        if (key.isCharIgnoreCase('c')) {
             changeScope();
             return true;
         }
@@ -389,16 +432,217 @@ class DependenciesTui {
             return true;
         }
 
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
+        return false;
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseTabBar(mouse)) return true;
+        if (handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
+        if (mouse.isClick()) {
+            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header + scroll
+            if (row >= 0 && row < currentList().size()) {
+                tableState.select(row);
+                return true;
+            }
+        }
+        if (mouse.isScroll()) {
+            var list = currentList();
+            if (list.isEmpty()) return false;
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.select(Math.max(0, sel - 1));
+            } else {
+                tableState.select(Math.min(list.size() - 1, sel + 1));
+            }
             return true;
         }
-
         return false;
+    }
+
+    @Override
+    int subViewCount() {
+        return 2;
+    }
+
+    @Override
+    int activeSubView() {
+        return view.ordinal();
+    }
+
+    @Override
+    void setActiveSubView(int index) {
+        view = View.values()[index];
+        tableState.select(0);
+        clearSearch();
+        sortState = new SortState(sortColumnCount());
+    }
+
+    @Override
+    List<String> subViewNames() {
+        return List.of("Declared: " + declared.size(), "Transitive: " + transitive.size());
+    }
+
+    @Override
+    public String status() {
+        String search = searchStatus();
+        if (search != null) {
+            return searchMode ? search : status + " — " + search;
+        }
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
+        List<Span> spans = new ArrayList<>();
+        if (diffOverlay.isActive()) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Close  "));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Nav  "));
+            if (view == View.DECLARED) {
+                spans.add(Span.raw("x/Enter").bold());
+                spans.add(Span.raw(":Delete  "));
+            } else {
+                spans.add(Span.raw("a/Enter").bold());
+                spans.add(Span.raw(":Add  "));
+            }
+            spans.add(Span.raw("c").bold());
+            spans.add(Span.raw(":Scope  "));
+            spans.addAll(sortKeyHints());
+            spans.add(Span.raw("/").bold());
+            spans.add(Span.raw(":Search  "));
+            spans.add(Span.raw("d").bold());
+            spans.add(Span.raw(":Diff  "));
+        }
+        return spans;
+    }
+
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
+        return List.of(
+                new HelpOverlay.Section(
+                        "Dependency Analysis",
+                        List.of(
+                                new HelpOverlay.Entry("", "Uses bytecode analysis to compare what is declared"),
+                                new HelpOverlay.Entry("", "in the POM against what is actually used in code."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Declared view: dependencies in the POM that are not"),
+                                new HelpOverlay.Entry("", "referenced in compiled bytecode. These may be safe"),
+                                new HelpOverlay.Entry("", "to remove (but check for runtime/reflection use)."),
+                                new HelpOverlay.Entry("", ""),
+                                new HelpOverlay.Entry("", "Transitive view: classes used in your code that come"),
+                                new HelpOverlay.Entry("", "from transitive dependencies. These should be declared"),
+                                new HelpOverlay.Entry("", "explicitly to avoid breakage when transitives change."))),
+                new HelpOverlay.Section(
+                        "Table Columns",
+                        List.of(
+                                new HelpOverlay.Entry("status", "unused (declared) or undeclared (transitive)"),
+                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
+                                new HelpOverlay.Entry("scope", "Maven scope (compile, test, runtime, provided)"),
+                                new HelpOverlay.Entry("classifier", "Artifact classifier (e.g. test-fixtures)"))),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("yellow", "Issue flag — unused or undeclared dependency"),
+                                new HelpOverlay.Entry("cyan", "Header and view tab indicators"),
+                                new HelpOverlay.Entry("dim", "Informational / secondary text"))),
+                new HelpOverlay.Section(
+                        "Dependencies Actions",
+                        List.of(
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("← / →", "Switch Declared / Transitive view"),
+                                new HelpOverlay.Entry("x / Enter", "Remove selected (Declared view)"),
+                                new HelpOverlay.Entry("a / Enter", "Add to POM (Transitive view)"),
+                                new HelpOverlay.Entry("c", "Cycle scope (compile → test → runtime → ...)"),
+                                new HelpOverlay.Entry("s / S", "Sort by column / reverse direction"),
+                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
+    }
+
+    @Override
+    public boolean isDirty() {
+        return dirty;
+    }
+
+    @Override
+    public boolean save() {
+        return doSave();
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
     }
 
     private List<DepEntry> currentList() {
         return view == View.DECLARED ? declared : transitive;
+    }
+
+    private int sortColumnCount() {
+        int count = 3; // ga, version, scope
+        if (bytecodeAnalyzed) count++; // icon column
+        if (view == View.TRANSITIVE) count++; // pulled by column
+        return count;
+    }
+
+    private List<Function<DepEntry, String>> sortExtractors() {
+        List<Function<DepEntry, String>> extractors = new ArrayList<>();
+        if (bytecodeAnalyzed) {
+            extractors.add(this::usageIcon);
+        }
+        extractors.add(DepEntry::ga);
+        extractors.add(dep -> dep.version);
+        extractors.add(dep -> dep.scope);
+        if (view == View.TRANSITIVE) {
+            extractors.add(dep -> dep.pulledBy != null ? dep.pulledBy : "");
+        }
+        return extractors;
+    }
+
+    @Override
+    protected void onSortChanged() {
+        sortState.sort(currentList(), sortExtractors());
+    }
+
+    @Override
+    protected void updateSearchMatches() {
+        String query = searchBuffer.toString().toLowerCase();
+        if (query.isEmpty()) {
+            searchMatches = List.of();
+            searchMatchIndex = -1;
+            return;
+        }
+        var deps = currentList();
+        searchMatches = new ArrayList<>();
+        for (int i = 0; i < deps.size(); i++) {
+            if (depMatchesSearch(deps.get(i), query)) {
+                searchMatches.add(i);
+            }
+        }
+        if (!searchMatches.isEmpty()) {
+            searchMatchIndex = 0;
+            selectSearchMatch(0);
+        } else {
+            searchMatchIndex = -1;
+        }
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        tableState.select(searchMatches.get(matchIndex));
+    }
+
+    private boolean depMatchesSearch(DepEntry dep, String query) {
+        String searchable = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
+        if (dep.scope != null) searchable += ":" + dep.scope;
+        return searchable.toLowerCase().contains(query);
     }
 
     /**
@@ -501,14 +745,14 @@ class DependenciesTui {
         if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
             return "?";
         }
-        return isOk(dep) ? "\u2713" : "\u2717";
+        return isOk(dep) ? "✓" : "✗";
     }
 
     private Style usageRowStyle(DepEntry dep) {
         if (dep.usageStatus == null || dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
-            return Style.create().fg(dep.usageStatus == null ? null : Color.DARK_GRAY);
+            return dep.usageStatus == null ? Style.create() : theme.usageUndetermined();
         }
-        return isOk(dep) ? Style.create() : Style.create().fg(Color.YELLOW);
+        return isOk(dep) ? Style.create() : theme.usageIssue();
     }
 
     /**
@@ -580,69 +824,42 @@ class DependenciesTui {
         }
     }
 
-    private void saveAndQuit() {
+    private boolean doSave() {
         try {
             String currentOnDisk = Files.readString(Path.of(pomPath));
             if (!currentOnDisk.equals(originalPomContent)) {
-                pendingQuit = false;
-                status = "POM modified externally \u2014 save aborted";
-                return;
+                status = "POM modified externally — save aborted";
+                return false;
             }
             Files.writeString(Path.of(pomPath), editor.toXml());
-            runner.quit();
+            dirty = false;
+            status = "Saved";
+            return true;
         } catch (Exception e) {
-            pendingQuit = false;
             status = "Failed to save: " + e.getMessage();
+            return false;
         }
     }
 
-    private List<HelpOverlay.Section> buildHelp() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Dependency Analysis",
-                        List.of(
-                                new HelpOverlay.Entry("", "Uses bytecode analysis to compare what is declared"),
-                                new HelpOverlay.Entry("", "in the POM against what is actually used in code."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Declared view: dependencies in the POM that are not"),
-                                new HelpOverlay.Entry("", "referenced in compiled bytecode. These may be safe"),
-                                new HelpOverlay.Entry("", "to remove (but check for runtime/reflection use)."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Transitive view: classes used in your code that come"),
-                                new HelpOverlay.Entry("", "from transitive dependencies. These should be declared"),
-                                new HelpOverlay.Entry("", "explicitly to avoid breakage when transitives change."))),
-                new HelpOverlay.Section(
-                        "Table Columns",
-                        List.of(
-                                new HelpOverlay.Entry("status", "unused (declared) or undeclared (transitive)"),
-                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
-                                new HelpOverlay.Entry("scope", "Maven scope (compile, test, runtime, provided)"),
-                                new HelpOverlay.Entry("classifier", "Artifact classifier (e.g. test-fixtures)"))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("yellow", "Issue flag \u2014 unused or undeclared dependency"),
-                                new HelpOverlay.Entry("cyan", "Header and view tab indicators"),
-                                new HelpOverlay.Entry("dim", "Informational / secondary text"))),
-                new HelpOverlay.Section(
-                        "Declared View Actions",
-                        List.of(
-                                new HelpOverlay.Entry("x / Enter", "Remove the selected unused dependency"),
-                                new HelpOverlay.Entry(
-                                        "s", "Cycle scope (compile \u2192 test \u2192 runtime \u2192 ...)"))),
-                new HelpOverlay.Section(
-                        "Transitive View Actions",
-                        List.of(
-                                new HelpOverlay.Entry("a / Enter", "Add the dependency to the POM"),
-                                new HelpOverlay.Entry("s", "Cycle scope before adding"))),
-                new HelpOverlay.Section(
-                        "General",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+    private void saveAndQuit() {
+        if (doSave()) {
+            runner.quit();
+        } else {
+            pendingQuit = false;
+        }
+    }
+
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.add(new HelpOverlay.Section(
+                "General",
+                List.of(
+                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
+                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
+                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        return sections;
     }
 
     private void toggleDiffView() {
@@ -697,7 +914,7 @@ class DependenciesTui {
 
     // -- Rendering --
 
-    void render(Frame frame) {
+    void renderStandalone(Frame frame) {
         boolean detailsVisible = !helpOverlay.isActive() && !diffOverlay.isActive();
         var zones = Layout.vertical()
                 .constraints(
@@ -708,25 +925,20 @@ class DependenciesTui {
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        lastContentHeight = zones.get(1).height();
-        if (helpOverlay.isActive()) {
-            helpOverlay.render(frame, zones.get(1));
-        } else if (diffOverlay.isActive()) {
-            diffOverlay.render(frame, zones.get(1), " POM Changes ");
-        } else {
-            renderTable(frame, zones.get(1));
-            renderDetails(frame, zones.get(2));
+        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
+        if (contentArea != null) {
+            lastContentHeight = contentArea.height();
+            if (diffOverlay.isActive()) {
+                diffOverlay.render(frame, contentArea, " POM Changes ");
+            } else {
+                renderTable(frame, contentArea);
+                renderDetails(frame, zones.get(2));
+            }
         }
         renderInfoBar(frame, zones.get(3));
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        Block block = Block.builder()
-                .title(" Pilot \u2014 Dependency Overview ")
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         spans.add(Span.raw("  "));
@@ -740,8 +952,13 @@ class DependenciesTui {
                 declaredLabel += " (" + unused + " unused)";
             }
         }
-        spans.add(Span.raw("[" + (view == View.DECLARED ? HIGHLIGHT_SYMBOL : "  ") + declaredLabel + "]")
-                .fg(view == View.DECLARED ? Color.YELLOW : Color.DARK_GRAY));
+        if (view == View.DECLARED) {
+            spans.add(Span.raw("[" + HIGHLIGHT_SYMBOL + declaredLabel + "]")
+                    .bold()
+                    .cyan());
+        } else {
+            spans.add(Span.raw("[  " + declaredLabel + "]"));
+        }
         spans.add(Span.raw("  "));
 
         String transitiveLabel = "Transitive: " + transitive.size();
@@ -753,36 +970,44 @@ class DependenciesTui {
                 transitiveLabel += " (" + used + " used)";
             }
         }
-        spans.add(Span.raw("[" + (view == View.TRANSITIVE ? HIGHLIGHT_SYMBOL : "  ") + transitiveLabel + "]")
-                .fg(view == View.TRANSITIVE ? Color.YELLOW : Color.DARK_GRAY));
+        if (view == View.TRANSITIVE) {
+            spans.add(Span.raw("[" + HIGHLIGHT_SYMBOL + transitiveLabel + "]")
+                    .bold()
+                    .cyan());
+        } else {
+            spans.add(Span.raw("[  " + transitiveLabel + "]"));
+        }
 
         if (dirty) {
-            spans.add(Span.raw("  [modified]").fg(Color.YELLOW));
+            spans.add(theme.dirtyIndicator());
         }
 
         if (!bytecodeAnalyzed) {
             spans.add(Span.raw("  ⚠ Not compiled — run 'mvn compile' for usage analysis")
-                    .fg(Color.YELLOW)
+                    .fg(theme.statusWarningColor())
                     .bold());
         }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+        renderStandaloneHeader(frame, area, "Dependency Overview", Line.from(spans));
     }
 
     private void renderTable(Frame frame, Rect area) {
-        String title = view == View.DECLARED
-                ? " Declared Dependencies (" + declared.size() + ") "
-                : " Transitive Dependencies (" + transitive.size() + ") ";
+        renderTable(
+                frame,
+                area,
+                Title.from(
+                        view == View.DECLARED
+                                ? " Declared Dependencies (" + declared.size() + ") "
+                                : " Transitive Dependencies (" + transitive.size() + ") "));
+    }
 
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
-                .build();
+    private void renderTable(Frame frame, Rect area, Title title) {
+
+        Block.Builder blockBuilder =
+                Block.builder().borderType(BorderType.ROUNDED).borderStyle(borderStyle());
+        if (title != null) {
+            blockBuilder.title(title);
+        }
+        Block block = blockBuilder.build();
 
         var deps = currentList();
         if (deps.isEmpty()) {
@@ -796,33 +1021,32 @@ class DependenciesTui {
         }
 
         List<Row> rows = new ArrayList<>();
-        for (var dep : deps) {
-            rows.add(buildRow(dep));
+        for (int i = 0; i < deps.size(); i++) {
+            Row row = isSearchMatch(i) ? buildSearchRow(deps.get(i)) : buildRow(deps.get(i));
+            rows.add(row);
         }
 
         Table table = Table.builder()
                 .header(buildTableHeader())
                 .rows(rows)
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol(HIGHLIGHT_SYMBOL)
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .widths(getTableWidths())
                 .build();
 
+        lastTableArea = area;
         frame.renderStatefulWidget(table, area, tableState);
     }
 
     private Row buildTableHeader() {
-        boolean showTransitiveCol = view == View.TRANSITIVE;
-        Style headerStyle = Style.create().bold().yellow();
-        if (bytecodeAnalyzed) {
-            return showTransitiveCol
-                    ? Row.from("", COL_GA, COL_VERSION, COL_SCOPE, "pulled by").style(headerStyle)
-                    : Row.from("", COL_GA, COL_VERSION, COL_SCOPE).style(headerStyle);
-        }
-        return showTransitiveCol
-                ? Row.from(COL_GA, COL_VERSION, COL_SCOPE, "pulled by").style(headerStyle)
-                : Row.from(COL_GA, COL_VERSION, COL_SCOPE).style(headerStyle);
+        List<String> headers = new ArrayList<>();
+        if (bytecodeAnalyzed) headers.add("");
+        headers.add(COL_GA);
+        headers.add(COL_VERSION);
+        headers.add(COL_SCOPE);
+        if (view == View.TRANSITIVE) headers.add("pulled by");
+        return sortState.decorateHeader(headers, theme.tableHeader());
     }
 
     private Row buildRow(DepEntry dep) {
@@ -837,6 +1061,21 @@ class DependenciesTui {
         return (view == View.DECLARED)
                 ? Row.from(dep.ga(), dep.version, dep.scope)
                 : Row.from(dep.ga(), dep.version, dep.scope, via);
+    }
+
+    private Row buildSearchRow(DepEntry dep) {
+        String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
+        if (bytecodeAnalyzed) {
+            String icon = usageIcon(dep);
+            Row row = (view == View.DECLARED)
+                    ? Row.from(icon, dep.ga(), dep.version, dep.scope)
+                    : Row.from(icon, dep.ga(), dep.version, dep.scope, via);
+            return row.style(usageRowStyle(dep).bg(theme.searchHighlightBg()));
+        }
+        Style highlight = theme.searchHighlight();
+        return (view == View.DECLARED)
+                ? Row.from(dep.ga(), dep.version, dep.scope).style(highlight)
+                : Row.from(dep.ga(), dep.version, dep.scope, via).style(highlight);
     }
 
     private Constraint[] getTableWidths() {
@@ -875,7 +1114,7 @@ class DependenciesTui {
         Block block = Block.builder()
                 .title(" " + dep.gav() + " ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(theme.unfocusedBorder())
                 .build();
 
         List<Span> spans = new ArrayList<>();
@@ -883,13 +1122,13 @@ class DependenciesTui {
         spans.add(Span.raw(dep.scope));
 
         if (dep.pulledBy != null) {
-            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
             spans.add(Span.raw("Pulled by: ").bold());
             spans.add(Span.raw(dep.pulledBy).dim());
         }
 
         if (dep.hasClassifier()) {
-            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
             spans.add(Span.raw("Classifier: ").bold());
             spans.add(Span.raw(dep.classifier));
         }
@@ -897,7 +1136,7 @@ class DependenciesTui {
         boolean hasSpi = dep.spiServices != null && !dep.spiServices.isEmpty();
 
         if (bytecodeAnalyzed && dep.usageStatus != null) {
-            spans.add(Span.raw("  \u2502 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
             spans.add(Span.raw("Usage: ").bold());
             int used = dep.usedMembers != null ? dep.usedMembers.size() : 0;
             String usageText;
@@ -917,9 +1156,9 @@ class DependenciesTui {
             }
             Color usageColor =
                     switch (dep.usageStatus) {
-                        case USED -> dep.declared ? Color.GREEN : Color.YELLOW;
-                        case UNUSED -> dep.declared ? Color.YELLOW : Color.GREEN;
-                        case UNDETERMINED -> Color.DARK_GRAY;
+                        case USED -> dep.declared ? theme.usageUsedColor() : theme.usageIssueColor();
+                        case UNUSED -> dep.declared ? theme.usageIssueColor() : theme.usageUsedColor();
+                        case UNDETERMINED -> theme.usageUndeterminedColor();
                     };
             spans.add(Span.raw(usageText).fg(usageColor));
         }
@@ -944,18 +1183,18 @@ class DependenciesTui {
 
                 List<Span> classSpans = new ArrayList<>();
                 classSpans.add(Span.raw(" "));
-                classSpans.add(Span.raw(pkg + ".").fg(Color.DARK_GRAY));
+                classSpans.add(Span.raw(pkg + ".").fg(theme.detailSeparatorColor()));
                 classSpans.add(Span.raw(shortName).cyan().bold());
                 if (!members.isEmpty()) {
-                    classSpans.add(Span.raw(": ").fg(Color.DARK_GRAY));
+                    classSpans.add(Span.raw(": ").fg(theme.detailSeparatorColor()));
                     int maxMembers = Math.min(members.size(), 6);
                     for (int i = 0; i < maxMembers; i++) {
-                        if (i > 0) classSpans.add(Span.raw(", ").fg(Color.DARK_GRAY));
+                        if (i > 0) classSpans.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
                         classSpans.add(Span.raw(members.get(i)).dim());
                     }
                     if (members.size() > maxMembers) {
                         classSpans.add(Span.raw(" +" + (members.size() - maxMembers) + " more")
-                                .fg(Color.DARK_GRAY));
+                                .fg(theme.detailSeparatorColor()));
                     }
                 }
                 lines.add(Line.from(classSpans));
@@ -970,24 +1209,22 @@ class DependenciesTui {
 
         if (hasSpi && lineCount < maxLines) {
             List<Span> spiHeader = new ArrayList<>();
-            spiHeader.add(Span.raw(" SPI services: ").bold().fg(Color.MAGENTA));
+            spiHeader.add(Span.raw(" SPI services: ").bold().fg(theme.spiColor()));
             for (int i = 0; i < dep.spiServices.size(); i++) {
                 if (lineCount >= maxLines) break;
-                if (i > 0) spiHeader.add(Span.raw(", ").fg(Color.DARK_GRAY));
+                if (i > 0) spiHeader.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
                 String svc = dep.spiServices.get(i);
                 int lastDot = svc.lastIndexOf('.');
                 String shortName = lastDot >= 0 ? svc.substring(lastDot + 1) : svc;
                 String pkg = lastDot >= 0 ? svc.substring(0, lastDot) : "";
-                spiHeader.add(Span.raw(pkg + ".").fg(Color.DARK_GRAY));
-                spiHeader.add(Span.raw(shortName).fg(Color.MAGENTA));
+                spiHeader.add(Span.raw(pkg + ".").fg(theme.detailSeparatorColor()));
+                spiHeader.add(Span.raw(shortName).fg(theme.spiColor()));
             }
             lines.add(Line.from(spiHeader));
         }
 
-        Paragraph details = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(lines))
-                .block(block)
-                .build();
+        Paragraph details =
+                Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(details, area);
     }
 
@@ -998,7 +1235,8 @@ class DependenciesTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(pendingQuit ? Color.YELLOW : Color.GREEN));
+        statusSpans.add(
+                Span.raw(" " + status).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
@@ -1012,14 +1250,14 @@ class DependenciesTui {
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Cancel"));
         } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
             spans.add(Span.raw(":Close  "));
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Tab").bold());
             spans.add(Span.raw(":Switch view  "));

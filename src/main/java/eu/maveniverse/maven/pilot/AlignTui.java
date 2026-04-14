@@ -21,7 +21,6 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -30,6 +29,8 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -44,7 +45,6 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,7 +57,7 @@ import java.util.Map;
  * are managed by a parent POM in the reactor, the MANAGED version style moves
  * managed dep entries to the parent POM and strips versions from the child POM.</p>
  */
-class AlignTui {
+class AlignTui extends ToolPanel {
 
     enum Phase {
         SELECT,
@@ -91,7 +91,6 @@ class AlignTui {
 
     // Preview state
     private final DiffOverlay diffOverlay = new DiffOverlay();
-    private final HelpOverlay helpOverlay = new HelpOverlay();
     private String alignedPomContent;
     private Map<Path, String> alignedPomContents; // cross-POM mode
 
@@ -143,20 +142,6 @@ class AlignTui {
         return parentInfo != null && selectedStyle == AlignOptions.VersionStyle.MANAGED;
     }
 
-    void run() throws Exception {
-        var configured = TuiRunner.builder()
-                .eventHandler(this::handleEvent)
-                .renderer(this::render)
-                .tickRate(Duration.ofMillis(100))
-                .build();
-        try {
-            runner = configured.runner();
-            configured.run();
-        } finally {
-            configured.close();
-        }
-    }
-
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
@@ -171,23 +156,49 @@ class AlignTui {
             return false;
         }
 
-        if (key.isCtrlC() || key.isCharIgnoreCase('q')) {
+        if (key.isCtrlC()) {
             runner.quit();
             return true;
         }
 
-        if (phase == Phase.PREVIEW) {
-            return handlePreviewEvent(key);
-        }
-        return handleSelectEvent(key);
-    }
+        // Delegate to handleKeyEvent for tool-specific keys
+        if (handleKeyEvent(key)) return true;
 
-    private boolean handleSelectEvent(KeyEvent key) {
+        // Standalone-specific keys
+        if (key.isCharIgnoreCase('q')) {
+            runner.quit();
+            return true;
+        }
         if (key.isKey(KeyCode.ESCAPE)) {
             runner.quit();
             return true;
         }
 
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        if (phase == Phase.PREVIEW) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                phase = Phase.SELECT;
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase('w')) {
+                writeAlignedPom();
+                return true;
+            }
+            return true; // consume all keys during preview
+        }
+
+        // SELECT phase
         if (key.isUp()) {
             tableState.selectPrevious();
             return true;
@@ -213,28 +224,6 @@ class AlignTui {
 
         if (key.isCharIgnoreCase('w')) {
             applyAlignment();
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(buildHelp());
-            return true;
-        }
-
-        return false;
-    }
-
-    private boolean handlePreviewEvent(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE)) {
-            phase = Phase.SELECT;
-            diffOverlay.close();
-            return true;
-        }
-
-        if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-
-        if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase('w')) {
-            writeAlignedPom();
             return true;
         }
 
@@ -310,7 +299,7 @@ class AlignTui {
             long changes = diffOverlay.open(currentPom, alignedPomContent);
 
             if (changes == 0) {
-                status = count + " dependency(ies) processed \u2014 no POM changes";
+                status = count + " dependency(ies) processed — no POM changes";
                 return;
             }
 
@@ -338,7 +327,7 @@ class AlignTui {
             String aligned = editor.toXml();
 
             if (currentPom.equals(aligned)) {
-                status = count + " dependency(ies) processed \u2014 no POM changes";
+                status = count + " dependency(ies) processed — no POM changes";
             } else {
                 Files.writeString(Path.of(pomPath), aligned);
                 status = "Aligned POM";
@@ -407,7 +396,7 @@ class AlignTui {
             }
 
             if (fileDiffs.isEmpty()) {
-                status = totalCount + " dependency(ies) processed \u2014 no POM changes";
+                status = totalCount + " dependency(ies) processed — no POM changes";
                 alignedPomContents = null;
                 return;
             }
@@ -446,7 +435,7 @@ class AlignTui {
             }
 
             if (filesChanged == 0) {
-                status = totalCount + " dependency(ies) processed \u2014 no POM changes";
+                status = totalCount + " dependency(ies) processed — no POM changes";
             } else {
                 status = "Aligned " + totalCount + " dependency(ies) across " + filesChanged + " POM(s)";
             }
@@ -486,7 +475,7 @@ class AlignTui {
             }
 
             if (fileDiffs.isEmpty()) {
-                status = "No changes needed \u2014 POM already aligned";
+                status = "No changes needed — POM already aligned";
                 alignedPomContents = null;
                 return;
             }
@@ -575,16 +564,17 @@ class AlignTui {
 
     // -- Help --
 
-    private List<HelpOverlay.Section> buildHelp() {
+    @Override
+    public List<HelpOverlay.Section> helpSections() {
         List<HelpOverlay.Entry> descEntries = new ArrayList<>();
         descEntries.add(new HelpOverlay.Entry("", "Restructures dependency declarations to follow a"));
         descEntries.add(new HelpOverlay.Entry("", "consistent convention. Configure three options:"));
         descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Version Style: how versions are expressed \u2014 inline"));
+        descEntries.add(new HelpOverlay.Entry("", "Version Style: how versions are expressed — inline"));
         descEntries.add(new HelpOverlay.Entry("", "in <version> tags, via <properties>, or managed"));
         descEntries.add(new HelpOverlay.Entry("", "through <dependencyManagement>."));
         descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Version Source: where version values come from \u2014"));
+        descEntries.add(new HelpOverlay.Entry("", "Version Source: where version values come from —"));
         descEntries.add(new HelpOverlay.Entry("", "keep current versions, import from a BOM, etc."));
         descEntries.add(new HelpOverlay.Entry("", ""));
         descEntries.add(new HelpOverlay.Entry("", "Property Naming: convention for property names"));
@@ -603,21 +593,103 @@ class AlignTui {
         return List.of(
                 new HelpOverlay.Section("BOM Alignment", descEntries),
                 new HelpOverlay.Section(
+                        "Alignment Actions",
+                        List.of(
+                                new HelpOverlay.Entry("↑ / ↓", "Move between options"),
+                                new HelpOverlay.Entry("← / → / Enter", "Cycle through option values"),
+                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
+                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"))));
+    }
+
+    private List<HelpOverlay.Section> buildHelpStandalone() {
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.set(
+                sections.size() - 1,
+                new HelpOverlay.Section(
                         "Keys",
                         List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move between options"),
-                                new HelpOverlay.Entry("\u2190 / \u2192 / Enter", "Cycle through option values"),
+                                new HelpOverlay.Entry("↑ / ↓", "Move between options"),
+                                new HelpOverlay.Entry("← / → / Enter", "Cycle through option values"),
                                 new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
                                 new HelpOverlay.Entry("w", "Apply alignment and write to POM"),
                                 new HelpOverlay.Entry("h", "Toggle this help screen"),
                                 new HelpOverlay.Entry("q / Esc", "Quit"))));
+        return sections;
+    }
+
+    // ── ToolPanel interface ─────────────────────────────────────────────────
+
+    @Override
+    public String toolName() {
+        return "Align";
+    }
+
+    @Override
+    public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (mouse.isScroll()) {
+            int sel = tableState.selected();
+            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                tableState.selectPrevious();
+            } else {
+                tableState.selectNext(ROW_COUNT);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String status() {
+        return status;
+    }
+
+    @Override
+    public List<Span> keyHints() {
+        List<Span> spans = new ArrayList<>();
+        if (phase == Phase.PREVIEW) {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Scroll  "));
+            spans.add(Span.raw("PgUp/PgDn").bold());
+            spans.add(Span.raw(":Page  "));
+            spans.add(Span.raw("Enter/w").bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("Esc").bold());
+            spans.add(Span.raw(":Back"));
+        } else {
+            spans.add(Span.raw("↑↓").bold());
+            spans.add(Span.raw(":Navigate  "));
+            spans.add(Span.raw("←→/Enter").bold());
+            spans.add(Span.raw(":Cycle  "));
+            spans.add(Span.raw("p").bold());
+            spans.add(Span.raw(":Preview  "));
+            spans.add(Span.raw("w").bold());
+            spans.add(Span.raw(":Apply"));
+        }
+        return spans;
+    }
+
+    @Override
+    public void setRunner(TuiRunner runner) {
+        this.runner = runner;
     }
 
     // -- Rendering --
 
     private int lastContentHeight;
 
-    void render(Frame frame) {
+    @Override
+    public void render(Frame frame, Rect area) {
+        lastContentHeight = area.height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, area);
+        } else if (phase == Phase.PREVIEW && diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes Preview ");
+        } else {
+            renderConventionTable(frame, area);
+        }
+    }
+
+    void renderStandalone(Frame frame) {
         var zones = Layout.vertical()
                 .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
                 .split(frame.area());
@@ -637,33 +709,21 @@ class AlignTui {
     }
 
     private void renderHeader(Frame frame, Rect area) {
-        String title =
-                phase == Phase.PREVIEW ? " Pilot \u2014 Alignment Preview " : " Pilot \u2014 Convention Alignment ";
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().cyan())
-                .build();
-
+        String title = phase == Phase.PREVIEW ? "Alignment Preview" : "Convention Alignment";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         if (isCrossPomMode()) {
-            spans.add(Span.raw("  managed \u2192 ").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("  managed → ").fg(theme.separatorColor()));
             spans.add(Span.raw(parentInfo.gav()).yellow());
         }
-
-        Paragraph header = Paragraph.builder()
-                .text(dev.tamboui.text.Text.from(Line.from(spans)))
-                .block(block)
-                .build();
-        frame.renderWidget(header, area);
+        renderStandaloneHeader(frame, area, title, Line.from(spans));
     }
 
     private void renderConventionTable(Frame frame, Rect area) {
         Block block = Block.builder()
                 .title(" Dependency Conventions ")
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(Style.create().fg(Color.DARK_GRAY))
+                .borderStyle(borderStyle())
                 .build();
 
         Row header = Row.from("Convention", "Detected", "Selected")
@@ -691,7 +751,7 @@ class AlignTui {
                 .rows(rows)
                 .widths(Constraint.percentage(30), Constraint.percentage(35), Constraint.percentage(35))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("\u25B8 ")
+                .highlightSymbol("▸ ")
                 .block(block)
                 .build();
 
@@ -699,8 +759,8 @@ class AlignTui {
     }
 
     private Row createConventionRow(String name, String detected, String selected, boolean changed) {
-        Style style = changed ? Style.create().fg(Color.YELLOW) : Style.create();
-        String selectedDisplay = changed ? selected + " \u2190" : selected;
+        Style style = changed ? theme.changedValue() : Style.create();
+        String selectedDisplay = changed ? selected + " ←" : selected;
         return Row.from(name, detected, selectedDisplay).style(style);
     }
 
@@ -711,14 +771,14 @@ class AlignTui {
 
         // Status
         List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(Color.GREEN));
+        statusSpans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
         if (phase == Phase.PREVIEW) {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("PgUp/PgDn").bold());
             spans.add(Span.raw(":Page  "));
@@ -729,9 +789,9 @@ class AlignTui {
             spans.add(Span.raw("q").bold());
             spans.add(Span.raw(":Quit"));
         } else {
-            spans.add(Span.raw("\u2191\u2193").bold());
+            spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("\u2190\u2192/Enter").bold());
+            spans.add(Span.raw("←→/Enter").bold());
             spans.add(Span.raw(":Cycle  "));
             spans.add(Span.raw("p").bold());
             spans.add(Span.raw(":Preview  "));
