@@ -1,0 +1,241 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package eu.maveniverse.maven.pilot;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Tree data model with expand/collapse state and conflict detection.
+ */
+public class DependencyTreeModel {
+
+    public static class TreeNode {
+        final String groupId;
+        final String artifactId;
+        final String classifier;
+        final String version;
+        final String scope;
+        final boolean optional;
+        final int depth;
+        public final List<TreeNode> children;
+        boolean expanded;
+        public String requestedVersion; // non-null if conflict
+        String managedFrom; // who pulled this in as transitive
+
+        public TreeNode(String groupId, String artifactId, String version, String scope, boolean optional, int depth) {
+            this(groupId, artifactId, "", version, scope, optional, depth);
+        }
+
+        public TreeNode(
+                String groupId,
+                String artifactId,
+                String classifier,
+                String version,
+                String scope,
+                boolean optional,
+                int depth) {
+            this.groupId = groupId;
+            this.artifactId = artifactId;
+            this.classifier = classifier;
+            this.version = version;
+            this.scope = scope != null ? scope : SCOPE_COMPILE;
+            this.optional = optional;
+            this.depth = depth;
+            this.children = new ArrayList<>();
+            this.expanded = depth < 2; // expand top 2 levels by default
+        }
+
+        public String ga() {
+            return groupId + ":" + artifactId;
+        }
+
+        public String gav() {
+            return groupId + ":" + artifactId + ":" + version;
+        }
+
+        boolean hasChildren() {
+            return !children.isEmpty();
+        }
+
+        boolean isConflict() {
+            return requestedVersion != null && !requestedVersion.equals(version);
+        }
+    }
+
+    public final TreeNode root;
+    final List<TreeNode> conflicts;
+    final int totalNodes;
+
+    public DependencyTreeModel(TreeNode root, List<TreeNode> conflicts, int totalNodes) {
+        this.root = root;
+        this.conflicts = conflicts;
+        this.totalNodes = totalNodes;
+    }
+
+    /**
+     * Scopes included for each resolution scope, following Maven Resolver conventions.
+     */
+    private static final String SCOPE_COMPILE = "compile";
+
+    private static final String SCOPE_RUNTIME = "runtime";
+    private static final String SCOPE_TEST = "test";
+    private static final String SCOPE_PROVIDED = "provided";
+    private static final String SCOPE_SYSTEM = "system";
+
+    private static final Map<String, Set<String>> SCOPE_INCLUSIONS = Map.of(
+            SCOPE_COMPILE, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, ""),
+            SCOPE_RUNTIME, Set.of(SCOPE_COMPILE, SCOPE_RUNTIME, ""),
+            SCOPE_TEST, Set.of(SCOPE_COMPILE, SCOPE_PROVIDED, SCOPE_SYSTEM, SCOPE_RUNTIME, SCOPE_TEST, ""));
+
+    /**
+     * Returns the flattened list of visible nodes (respecting expand/collapse state).
+     */
+    List<TreeNode> visibleNodes() {
+        List<TreeNode> visible = new ArrayList<>();
+        collectVisible(root, visible);
+        return visible;
+    }
+
+    private void collectVisible(TreeNode node, List<TreeNode> visible) {
+        visible.add(node);
+        if (node.expanded) {
+            for (TreeNode child : node.children) {
+                collectVisible(child, visible);
+            }
+        }
+    }
+
+    /**
+     * Returns the path from root to the given node.
+     */
+    List<TreeNode> pathToRoot(TreeNode target) {
+        List<TreeNode> path = new ArrayList<>();
+        findPath(root, target, path);
+        return path;
+    }
+
+    private boolean findPath(TreeNode current, TreeNode target, List<TreeNode> path) {
+        path.add(current);
+        if (current == target) {
+            return true;
+        }
+        for (TreeNode child : current.children) {
+            if (findPath(child, target, path)) {
+                return true;
+            }
+        }
+        path.remove(path.size() - 1);
+        return false;
+    }
+
+    /**
+     * Find the first node matching the given groupId:artifactId.
+     */
+    TreeNode findByGA(String ga) {
+        return findByGA(root, ga);
+    }
+
+    private TreeNode findByGA(TreeNode node, String ga) {
+        if (node.ga().equals(ga)) return node;
+        for (TreeNode child : node.children) {
+            TreeNode found = findByGA(child, ga);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /**
+     * Filter visible nodes by artifact coordinate substring.
+     */
+    List<TreeNode> filter(String query) {
+        List<TreeNode> result = new ArrayList<>();
+        filterNode(root, query.toLowerCase(), result);
+        return result;
+    }
+
+    private void filterNode(TreeNode node, String query, List<TreeNode> result) {
+        if (node.gav().toLowerCase().contains(query)) {
+            result.add(node);
+        }
+        for (TreeNode child : node.children) {
+            filterNode(child, query, result);
+        }
+    }
+
+    /**
+     * Create a new DependencyTreeModel filtered to only include the given scope.
+     */
+    DependencyTreeModel filterByScope(String scope) {
+        if (scope == null) {
+            return this;
+        }
+        String normalized = scope.toLowerCase(Locale.ROOT);
+        Set<String> includedScopes = SCOPE_INCLUSIONS.get(normalized);
+        if (includedScopes == null) {
+            throw new IllegalArgumentException(
+                    "Unsupported scope '" + scope + "'. Supported values: " + SCOPE_INCLUSIONS.keySet());
+        }
+        int[] counter = {0};
+        List<TreeNode> filteredConflicts = new ArrayList<>();
+        TreeNode filteredRoot = filterNodeByScope(root, 0, counter, new HashSet<>(), filteredConflicts, includedScopes);
+        return new DependencyTreeModel(filteredRoot, filteredConflicts, counter[0]);
+    }
+
+    private static TreeNode filterNodeByScope(
+            TreeNode source,
+            int depth,
+            int[] counter,
+            Set<String> visited,
+            List<TreeNode> conflicts,
+            Set<String> includedScopes) {
+        counter[0]++;
+        TreeNode copy = new TreeNode(
+                source.groupId,
+                source.artifactId,
+                source.classifier,
+                source.version,
+                source.scope,
+                source.optional,
+                depth);
+        copy.requestedVersion = source.requestedVersion;
+        copy.managedFrom = source.managedFrom;
+        if (copy.isConflict()) {
+            conflicts.add(copy);
+        }
+
+        String nodeKey = copy.ga() + ":" + copy.version;
+        if (!visited.add(nodeKey)) {
+            return copy;
+        }
+
+        for (TreeNode child : source.children) {
+            if (child.scope != null && !includedScopes.contains(child.scope)) {
+                continue;
+            }
+            copy.children.add(filterNodeByScope(child, depth + 1, counter, visited, conflicts, includedScopes));
+        }
+        visited.remove(nodeKey);
+        return copy;
+    }
+}

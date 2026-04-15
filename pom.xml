@@ -29,7 +29,7 @@ under the License.
   <groupId>eu.maveniverse.maven.plugins</groupId>
   <artifactId>pilot</artifactId>
   <version>${nisse.jgit.dynamicVersion}</version>
-  <packaging>maven-plugin</packaging>
+  <packaging>pom</packaging>
 
   <name>Pilot</name>
   <description>Interactive TUI for Maven — search, browse, and manage dependencies from the terminal.</description>
@@ -42,9 +42,11 @@ under the License.
     </license>
   </licenses>
 
-  <prerequisites>
-    <maven>3.6.3</maven>
-  </prerequisites>
+  <modules>
+    <module>pilot-core</module>
+    <module>pilot-plugin</module>
+    <module>pilot-cli</module>
+  </modules>
 
   <scm>
     <connection>scm:git:git@github.com:maveniverse/pilot.git</connection>
@@ -56,6 +58,7 @@ under the License.
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <mavenVersion>3.9.14</mavenVersion>
+    <maven4Version>4.0.0-rc-5</maven4Version>
     <tamboui.version>0.1.0</tamboui.version>
     <domtrip.version>1.3.0</domtrip.version>
 
@@ -66,104 +69,122 @@ under the License.
     <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
   </properties>
 
-  <dependencies>
-    <!-- Maven -->
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-plugin-api</artifactId>
-      <version>${mavenVersion}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-core</artifactId>
-      <version>${mavenVersion}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven.plugin-tools</groupId>
-      <artifactId>maven-plugin-annotations</artifactId>
-      <version>${version.maven-plugin-tools}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>javax.inject</groupId>
-      <artifactId>javax.inject</artifactId>
-      <version>1</version>
-      <scope>provided</scope>
-    </dependency>
+  <dependencyManagement>
+    <dependencies>
+      <!-- Internal -->
+      <dependency>
+        <groupId>eu.maveniverse.maven.plugins</groupId>
+        <artifactId>pilot-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
 
-    <!-- TamboUI TUI framework -->
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-core</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-tui</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-widgets</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-jline3-backend</artifactId>
-      <version>${tamboui.version}</version>
-    </dependency>
+      <!-- TamboUI -->
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-core</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-tui</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-widgets</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-jline3-backend</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-core</artifactId>
+        <version>${tamboui.version}</version>
+        <classifier>test-fixtures</classifier>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-tui</artifactId>
+        <version>${tamboui.version}</version>
+        <classifier>test-fixtures</classifier>
+      </dependency>
 
-    <!-- DomTrip for POM editing -->
-    <dependency>
-      <groupId>eu.maveniverse.maven.domtrip</groupId>
-      <artifactId>domtrip-maven</artifactId>
-      <version>${domtrip.version}</version>
-    </dependency>
+      <!-- DomTrip -->
+      <dependency>
+        <groupId>eu.maveniverse.maven.domtrip</groupId>
+        <artifactId>domtrip-maven</artifactId>
+        <version>${domtrip.version}</version>
+      </dependency>
 
-    <!-- Bytecode analysis -->
-    <dependency>
-      <groupId>org.ow2.asm</groupId>
-      <artifactId>asm</artifactId>
-      <version>9.7.1</version>
-    </dependency>
+      <!-- ASM -->
+      <dependency>
+        <groupId>org.ow2.asm</groupId>
+        <artifactId>asm</artifactId>
+        <version>9.7.1</version>
+      </dependency>
 
-    <!-- JSON -->
-    <dependency>
-      <groupId>org.glassfish</groupId>
-      <artifactId>jakarta.json</artifactId>
-      <version>2.0.1</version>
-    </dependency>
+      <!-- JSON -->
+      <dependency>
+        <groupId>org.glassfish</groupId>
+        <artifactId>jakarta.json</artifactId>
+        <version>2.0.1</version>
+      </dependency>
 
-    <!-- Test -->
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>6.0.3</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <version>3.27.7</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-core</artifactId>
-      <version>${tamboui.version}</version>
-      <classifier>test-fixtures</classifier>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>dev.tamboui</groupId>
-      <artifactId>tamboui-tui</artifactId>
-      <version>${tamboui.version}</version>
-      <classifier>test-fixtures</classifier>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
+      <!-- Maven 3 -->
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-plugin-api</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-core</artifactId>
+        <version>${mavenVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.plugin-tools</groupId>
+        <artifactId>maven-plugin-annotations</artifactId>
+        <version>${version.maven-plugin-tools}</version>
+      </dependency>
+      <dependency>
+        <groupId>javax.inject</groupId>
+        <artifactId>javax.inject</artifactId>
+        <version>1</version>
+      </dependency>
+
+      <!-- Maven 4 -->
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-api-core</artifactId>
+        <version>${maven4Version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-impl</artifactId>
+        <version>${maven4Version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-embedder</artifactId>
+        <version>${maven4Version}</version>
+      </dependency>
+
+      <!-- Test -->
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>6.0.3</version>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>3.27.7</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <repositories>
     <repository>
@@ -182,13 +203,6 @@ under the License.
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-plugin-plugin</artifactId>
-        <configuration>
-          <goalPrefix>pilot</goalPrefix>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
         <executions>
           <execution>
@@ -200,25 +214,6 @@ under the License.
                 </requireJavaVersion>
               </rules>
             </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.jacoco</groupId>
-        <artifactId>jacoco-maven-plugin</artifactId>
-        <version>0.8.14</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>prepare-agent</goal>
-            </goals>
-          </execution>
-          <execution>
-            <id>report</id>
-            <goals>
-              <goal>report</goal>
-            </goals>
-            <phase>test</phase>
           </execution>
         </executions>
       </plugin>
