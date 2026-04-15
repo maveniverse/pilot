@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -34,6 +35,7 @@ import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -43,8 +45,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
@@ -72,7 +76,7 @@ public class ReactorUpdatesTui extends ToolPanel {
         MAJOR
     }
 
-    private static class ReactorRow {
+    static class ReactorRow {
         final ReactorCollector.PropertyGroup propertyGroup;
         final ReactorCollector.AggregatedDependency dependency;
 
@@ -103,9 +107,13 @@ public class ReactorUpdatesTui extends ToolPanel {
     private final ExecutorService httpPool = PilotUtil.newHttpPool();
 
     private View view = View.DEPENDENCIES;
-    private List<ReactorRow> displayRows = new ArrayList<>();
+    List<ReactorRow> displayRows = new ArrayList<>();
+    Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final HelpOverlay helpOverlay = new HelpOverlay();
+    private final TableState detailTableState = new TableState();
+    boolean showDetails = true;
     private int lastContentHeight;
     String status = "Loading updates…";
     boolean loading = true;
@@ -167,30 +175,32 @@ public class ReactorUpdatesTui extends ToolPanel {
         }
     }
 
-    private void updateStatusIfDone() {
-        if (loadedCount >= reactorResult.allDependencies.size()) {
-            loading = false;
-            for (var group : reactorResult.propertyGroups) {
-                for (var dep : group.dependencies) {
-                    if (dep.hasUpdate()) {
-                        if (group.newestVersion == null
-                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion)) {
-                            // Pick the most conservative (smallest) version available for all deps
-                            group.newestVersion = dep.newestVersion;
-                            group.updateType = dep.updateType;
-                        }
-                    }
+    void updateStatusIfDone() {
+        if (loadedCount < reactorResult.allDependencies.size()) {
+            return;
+        }
+        loading = false;
+        computePropertyGroupVersions();
+        updateReactorCounts();
+        buildDisplayRows();
+        long updates = reactorResult.allDependencies.stream()
+                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
+                .count();
+        status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
+        if (failedCount > 0) {
+            status += "; " + failedCount + " lookup(s) failed";
+        }
+    }
+
+    private void computePropertyGroupVersions() {
+        for (var group : reactorResult.propertyGroups) {
+            for (var dep : group.dependencies) {
+                if (dep.hasUpdate()
+                        && (group.newestVersion == null
+                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion))) {
+                    group.newestVersion = dep.newestVersion;
+                    group.updateType = dep.updateType;
                 }
-            }
-            updateReactorCounts();
-            buildDisplayRows();
-            onSortChanged();
-            long updates = reactorResult.allDependencies.stream()
-                    .filter(ReactorCollector.AggregatedDependency::hasUpdate)
-                    .count();
-            status = updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
-            if (failedCount > 0) {
-                status += "; " + failedCount + " lookup(s) failed";
             }
         }
     }
@@ -212,8 +222,24 @@ public class ReactorUpdatesTui extends ToolPanel {
         reactorModel.recomputeCounts();
     }
 
-    private void buildDisplayRows() {
+    private static Set<String> computeDuplicatePropertyNames(List<ReactorCollector.PropertyGroup> propertyGroups) {
+        Map<String, Integer> propertyCounts = new LinkedHashMap<>();
+        for (var group : propertyGroups) {
+            propertyCounts.merge(group.propertyName, 1, Integer::sum);
+        }
+        Set<String> duplicates = new LinkedHashSet<>();
+        for (var entry : propertyCounts.entrySet()) {
+            if (entry.getValue() > 1) {
+                duplicates.add(entry.getKey());
+            }
+        }
+        return duplicates;
+    }
+
+    void buildDisplayRows() {
         displayRows = new ArrayList<>();
+        duplicatePropertyNames = computeDuplicatePropertyNames(reactorResult.propertyGroups);
+
         for (var group : reactorResult.propertyGroups) {
             boolean groupHasUpdate = group.hasUpdate()
                     || group.dependencies.stream().anyMatch(ReactorCollector.AggregatedDependency::hasUpdate);
@@ -370,6 +396,11 @@ public class ReactorUpdatesTui extends ToolPanel {
             return true;
         }
 
+        if (key.isKey(KeyCode.TAB)) {
+            view = TabBar.next(view, View.values());
+            return true;
+        }
+
         if (view == View.DEPENDENCIES) {
             if (handleKeyEvent(key)) return true;
         } else {
@@ -413,6 +444,9 @@ public class ReactorUpdatesTui extends ToolPanel {
             tableState.selectNext(displayRows.size());
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
+            return true;
+        }
         if (key.isCharIgnoreCase(' ')) {
             toggleSelection();
             return true;
@@ -444,6 +478,10 @@ public class ReactorUpdatesTui extends ToolPanel {
             buildDisplayRows();
             return true;
         }
+        if (key.isCharIgnoreCase('i')) {
+            showDetails = !showDetails;
+            return true;
+        }
 
         return false;
     }
@@ -457,6 +495,9 @@ public class ReactorUpdatesTui extends ToolPanel {
         }
         if (key.isDown()) {
             moduleTableState.selectNext(visible.size());
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, moduleTableState, visible.size(), lastContentHeight)) {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
@@ -754,29 +795,41 @@ public class ReactorUpdatesTui extends ToolPanel {
     }
 
     void renderStandalone(Frame frame) {
+        boolean detailsVisible =
+                showDetails && view == View.DEPENDENCIES && !diffOverlay.isActive() && !helpOverlay.isActive();
         var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(4))
+                .constraints(
+                        Constraint.length(3),
+                        Constraint.fill(),
+                        detailsVisible ? Constraint.percentage(30) : Constraint.length(0),
+                        Constraint.length(3))
                 .split(frame.area());
 
         renderHeader(frame, zones.get(0));
-        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
-        if (contentArea != null) {
-            lastContentHeight = contentArea.height();
-            if (diffOverlay.isActive()) {
-                diffOverlay.render(frame, contentArea, " POM Changes ");
-            } else if (view == View.DEPENDENCIES) {
-                renderDepsTable(frame, contentArea);
-            } else {
-                renderModulesTable(frame, contentArea);
+        lastContentHeight = zones.get(1).height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else if (view == View.DEPENDENCIES) {
+            renderDepsTable(frame, zones.get(1));
+            if (detailsVisible) {
+                renderDetailPane(frame, zones.get(2));
             }
+        } else {
+            renderModulesTable(frame, zones.get(1));
         }
-        renderInfoBar(frame, zones.get(2));
+        renderInfoBar(frame, zones.get(3));
     }
 
     private void renderHeader(Frame frame, Rect area) {
         String title = loading ? "Checking Updates…" : "Reactor Updates";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case DEPENDENCIES -> "Dependencies";
+            case MODULES -> "Modules";
+        }));
         spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)").dim());
         if (loading) {
             spans.add(Span.raw("  Checking " + loadedCount + "/" + reactorResult.allDependencies.size() + "…")
@@ -831,6 +884,9 @@ public class ReactorUpdatesTui extends ToolPanel {
             var group = row.propertyGroup;
             String check = group.selected ? "[✓]" : "[ ]";
             String name = "${" + group.propertyName + "}";
+            if (duplicatePropertyNames.contains(group.propertyName)) {
+                name += " (" + group.origin.artifactId + ")";
+            }
             String current = group.resolvedVersion != null ? group.resolvedVersion : "";
             String arrow = group.hasUpdate() ? "→" : "";
             String available = group.hasUpdate() ? group.newestVersion : "";
@@ -865,6 +921,139 @@ public class ReactorUpdatesTui extends ToolPanel {
 
             return Row.from(check, ga, current, arrow, available, info).style(style);
         }
+    }
+
+    private void renderDetailPane(Frame frame, Rect area) {
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= displayRows.size()) return;
+
+        var row = displayRows.get(sel);
+        String title;
+        List<Row> rows;
+
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            title = " " + group.rawExpression + " \u2014 Details ";
+            rows = buildGroupDetailRows(group);
+        } else if (row.dependency != null) {
+            var dep = row.dependency;
+            title = " " + dep.ga() + " \u2014 Details ";
+            rows = buildDependencyDetailRows(dep);
+        } else {
+            return;
+        }
+
+        Block block = Block.builder()
+                .title(title)
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().cyan())
+                .build();
+
+        Table table = Table.builder()
+                .rows(rows)
+                .widths(Constraint.fill())
+                .block(block)
+                .build();
+
+        frame.renderStatefulWidget(table, area, detailTableState);
+    }
+
+    private List<Row> buildGroupDetailRows(ReactorCollector.PropertyGroup group) {
+        List<Row> rows = new ArrayList<>();
+
+        // Origin POM path (relative to reactor root)
+        Path originPath = group.origin.pomPath;
+        Path rootPath = reactorModel.root.project.basedir;
+        String relativePom = rootPath.relativize(originPath).toString();
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Origin:    ").bold(), Span.raw(relativePom).fg(Color.DARK_GRAY))))));
+
+        // Current → available version
+        String value = group.resolvedVersion != null ? group.resolvedVersion : "?";
+        if (group.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Version:   ").bold(),
+                    Span.raw(value),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(group.newestVersion).fg(Color.GREEN))))));
+        } else {
+            rows.add(
+                    Row.from(Cell.from(Line.from(List.of(Span.raw("Version:   ").bold(), Span.raw(value))))));
+        }
+
+        // Managed artifacts
+        List<Span> artSpans = new ArrayList<>();
+        artSpans.add(Span.raw("Artifacts: ").bold());
+        for (int i = 0; i < group.dependencies.size(); i++) {
+            if (i > 0) artSpans.add(Span.raw(", ").dim());
+            artSpans.add(Span.raw(group.dependencies.get(i).artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(artSpans))));
+
+        // Module count
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
+
+        return rows;
+    }
+
+    private List<Row> buildDependencyDetailRows(ReactorCollector.AggregatedDependency dep) {
+        List<Row> rows = new ArrayList<>();
+
+        // Full GAV
+        String version = dep.primaryVersion != null ? dep.primaryVersion : "?";
+        rows.add(Row.from(Cell.from(Line.from(List.of(
+                Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
+
+        // Scope(s) in use (default to "compile" when omitted)
+        Set<String> scopes = new LinkedHashSet<>();
+        for (var u : dep.usages) {
+            scopes.add(u.scope != null && !u.scope.isEmpty() ? u.scope : "compile");
+        }
+        rows.add(Row.from(
+                Cell.from(Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
+
+        // Managed vs direct
+        boolean anyManaged = dep.usages.stream().anyMatch(u -> u.managed);
+        boolean allManaged = dep.usages.stream().allMatch(u -> u.managed);
+        String management;
+        if (allManaged) {
+            management = "yes";
+        } else if (anyManaged) {
+            management = "mixed";
+        } else {
+            management = "no";
+        }
+        rows.add(Row.from(Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(management))))));
+
+        // Update info
+        if (dep.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Update:    ").bold(),
+                    Span.raw(dep.primaryVersion),
+                    Span.raw(" \u2192 ").dim(),
+                    Span.raw(dep.newestVersion).fg(Color.GREEN))))));
+        }
+
+        // Which modules use this dependency
+        List<Span> modSpans = new ArrayList<>();
+        modSpans.add(Span.raw("Modules:   ").bold());
+        for (int i = 0; i < dep.usages.size(); i++) {
+            if (i > 0) modSpans.add(Span.raw(", ").dim());
+            modSpans.add(Span.raw(dep.usages.get(i).project.artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(modSpans))));
+
+        // Property origin (if property-managed)
+        if (dep.isPropertyManaged()) {
+            String propOrigin = dep.propertyOrigin != null ? dep.propertyOrigin.artifactId : "?";
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Property:  ").bold(),
+                    Span.raw(dep.rawVersionExpr).fg(Color.CYAN),
+                    Span.raw(" (" + propOrigin + ")").dim())))));
+        }
+
+        return rows;
     }
 
     private void renderModulesTable(Frame frame, Rect area) {
@@ -936,22 +1125,8 @@ public class ReactorUpdatesTui extends ToolPanel {
 
     private void renderInfoBar(Frame frame, Rect area) {
         var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.length(1))
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
                 .split(area);
-
-        // View indicator
-        List<Span> viewSpans = new ArrayList<>();
-        viewSpans.add(Span.raw(" "));
-        viewSpans.add(
-                view == View.DEPENDENCIES
-                        ? Span.raw("[Dependencies]").bold().cyan()
-                        : Span.raw(" Dependencies ").dim());
-        viewSpans.add(Span.raw(" "));
-        viewSpans.add(
-                view == View.MODULES
-                        ? Span.raw("[Modules]").bold().cyan()
-                        : Span.raw(" Modules ").dim());
-        frame.renderWidget(Paragraph.from(Line.from(viewSpans)), rows.get(0));
 
         // Status
         frame.renderWidget(
@@ -995,6 +1170,8 @@ public class ReactorUpdatesTui extends ToolPanel {
                 spans.add(Span.raw(":Apply  "));
                 spans.add(Span.raw("f").bold());
                 spans.add(Span.raw(":Filter  "));
+                spans.add(Span.raw("i").bold());
+                spans.add(Span.raw(":Details  "));
                 spans.add(Span.raw("h").bold());
                 spans.add(Span.raw(":Help  "));
             } else {
@@ -1009,7 +1186,7 @@ public class ReactorUpdatesTui extends ToolPanel {
             spans.add(Span.raw(":Quit"));
         }
 
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(3));
+        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
     }
 
     // -- ToolPanel methods --
@@ -1145,11 +1322,14 @@ public class ReactorUpdatesTui extends ToolPanel {
                         "Reactor Updates Actions",
                         List.of(
                                 new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
                                 new HelpOverlay.Entry("a / n", "Select all / deselect all"),
                                 new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
                                 new HelpOverlay.Entry("f / F", "Cycle filter: all → patch → minor → major"),
-                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"))));
+                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"),
+                                new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))));
     }
 
     @Override
@@ -1174,6 +1354,8 @@ public class ReactorUpdatesTui extends ToolPanel {
                 List.of(
                         new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
                         new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                        new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                         new HelpOverlay.Entry("← / →", "Collapse / expand module tree"))));
         sections.add(new HelpOverlay.Section(
                 "General",

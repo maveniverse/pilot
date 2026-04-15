@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -35,6 +36,7 @@ import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -48,6 +50,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -63,7 +66,7 @@ public class AuditTui extends ToolPanel {
         final String artifactId;
         final String version;
         final String scope;
-        final List<String> modules = new ArrayList<>();
+        public final List<String> modules = new ArrayList<>();
         String license;
         String licenseUrl;
         List<OsvClient.Vulnerability> vulnerabilities;
@@ -89,6 +92,8 @@ public class AuditTui extends ToolPanel {
             return vulnerabilities != null && !vulnerabilities.isEmpty();
         }
     }
+
+    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
 
     private enum View {
         LICENSES,
@@ -135,6 +140,9 @@ public class AuditTui extends ToolPanel {
     private final ExecutorService httpPool = PilotUtil.newHttpPool();
     private final OsvClient osvClient = new OsvClient();
 
+    private static final String COL_SCOPE = "scope";
+    private static final String LABEL_SCOPE = "  scope: ";
+    private static final List<String> SCOPE_FILTERS = List.of("compile", "runtime", "test", "provided");
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private final TableState vulnTableState = new TableState();
     private final TableState byLicenseTableState = new TableState();
@@ -147,6 +155,9 @@ public class AuditTui extends ToolPanel {
     private boolean dirty;
     private boolean pendingQuit;
     private int lastContentHeight;
+    private int lastTableHeight;
+    private String scopeFilter; // null = show all
+    private List<AuditEntry> filteredEntries;
     private List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
@@ -157,6 +168,7 @@ public class AuditTui extends ToolPanel {
 
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
         this.entries = entries;
+        this.filteredEntries = entries;
         this.projectGav = projectGav;
         this.treeModel = treeModel;
         this.pomPath = pomPath;
@@ -215,18 +227,51 @@ public class AuditTui extends ToolPanel {
         }
     }
 
-    private void rebuildVulnRows() {
+    void rebuildVulnRows() {
         vulnRows = new ArrayList<>();
         for (var entry : entries) {
             if (entry.hasVulnerabilities()) {
+                if (scopeFilter != null && !scopeFilter.equalsIgnoreCase(entry.scope)) continue;
                 for (var vuln : entry.vulnerabilities) {
                     vulnRows.add(new VulnRow(entry, vuln));
                 }
             }
         }
-        if (!vulnRows.isEmpty() && vulnTableState.selected() == null) {
+        if (vulnRows.isEmpty()) {
+            vulnTableState.clearSelection();
+        } else if (vulnTableState.selected() == null || vulnTableState.selected() >= vulnRows.size()) {
             vulnTableState.select(0);
         }
+    }
+
+    private void rebuildFilteredEntries() {
+        if (scopeFilter == null) {
+            filteredEntries = entries;
+        } else {
+            filteredEntries = new ArrayList<>();
+            for (var entry : entries) {
+                if (scopeFilter.equalsIgnoreCase(entry.scope)) {
+                    filteredEntries.add(entry);
+                }
+            }
+        }
+        if (filteredEntries.isEmpty()) {
+            tableState.clearSelection();
+        } else if (tableState.selected() != null && tableState.selected() >= filteredEntries.size()) {
+            tableState.select(0);
+        }
+    }
+
+    private void cycleScope() {
+        if (scopeFilter == null) {
+            scopeFilter = SCOPE_FILTERS.get(0);
+        } else {
+            int idx = SCOPE_FILTERS.indexOf(scopeFilter);
+            scopeFilter = (idx + 1 >= SCOPE_FILTERS.size()) ? null : SCOPE_FILTERS.get(idx + 1);
+        }
+        rebuildFilteredEntries();
+        rebuildVulnRows();
+        rebuildByLicenseRows();
     }
 
     private void rebuildByLicenseRows() {
@@ -241,6 +286,7 @@ public class AuditTui extends ToolPanel {
         var urls = new HashMap<String, String>();
         for (var entry : entries) {
             if (!entry.licenseLoaded) continue;
+            if (scopeFilter != null && !scopeFilter.equalsIgnoreCase(entry.scope)) continue;
             String key = entry.license != null ? normalizeLicense(entry.license, entry.licenseUrl) : "(not specified)";
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(entry);
             if (entry.licenseUrl != null && !urls.containsKey(key)) {
@@ -266,7 +312,9 @@ public class AuditTui extends ToolPanel {
             }
         }
 
-        if (!byLicenseRows.isEmpty() && byLicenseTableState.selected() == null) {
+        if (byLicenseRows.isEmpty()) {
+            byLicenseTableState.clearSelection();
+        } else if (byLicenseTableState.selected() == null || byLicenseTableState.selected() >= byLicenseRows.size()) {
             byLicenseTableState.select(0);
         }
     }
@@ -412,16 +460,20 @@ public class AuditTui extends ToolPanel {
             return true;
         }
 
-        // Delegate tool-specific keys
+        // Delegate tool-specific keys (up/down, sort, search, expand/collapse, m, d)
         if (handleKeyEvent(key)) return true;
+        if (TableNavigation.handlePageKeys(key, activeTableState(), activeRowCount(), lastTableHeight)) {
+            return true;
+        }
 
         // Standalone: Tab switches views
         if (key.isKey(KeyCode.TAB)) {
-            view = switch (view) {
-                case LICENSES -> View.BY_LICENSE;
-                case BY_LICENSE -> View.VULNERABILITIES;
-                case VULNERABILITIES -> View.LICENSES;
-            };
+            view = TabBar.next(view, View.values());
+            return true;
+        }
+
+        if (key.isChar('s')) {
+            cycleScope();
             return true;
         }
 
@@ -442,7 +494,7 @@ public class AuditTui extends ToolPanel {
         return switch (view) {
             case LICENSES -> {
                 int idx = tableState.selected() != null ? tableState.selected() : -1;
-                yield (idx >= 0 && idx < entries.size()) ? entries.get(idx) : null;
+                yield (idx >= 0 && idx < filteredEntries.size()) ? filteredEntries.get(idx) : null;
             }
             case VULNERABILITIES -> {
                 int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
@@ -560,19 +612,15 @@ public class AuditTui extends ToolPanel {
         if (dirty) {
             spans.add(theme.dirtyIndicator());
         }
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.LICENSES ? "▸ " : "  ") + "Licenses]")
-                .fg(view == View.LICENSES ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.BY_LICENSE ? "▸ " : "  ") + "By License]")
-                .fg(view == View.BY_LICENSE ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.VULNERABILITIES ? "▸ " : "  ") + "Vulnerabilities"
-                        + (vulnCount > 0 ? " (" + vulnCount + ")" : "") + "]")
-                .fg(
-                        view == View.VULNERABILITIES
-                                ? (vulnCount > 0 ? theme.vulnTabActiveColor() : theme.activeViewTabColor())
-                                : theme.inactiveViewTabColor()));
+        spans.addAll(TabBar.render(
+                view,
+                View.values(),
+                v -> switch (v) {
+                    case LICENSES -> "Licenses";
+                    case BY_LICENSE -> "By License";
+                    case VULNERABILITIES -> "Vulnerabilities" + (vulnCount > 0 ? " (" + vulnCount + ")" : "");
+                },
+                v -> v == View.VULNERABILITIES && vulnCount > 0 ? Color.RED : Color.YELLOW));
         renderStandaloneHeader(frame, area, "License & Security Audit", Line.from(spans));
     }
 
@@ -580,18 +628,20 @@ public class AuditTui extends ToolPanel {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
+        String filterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
         Block block = Block.builder()
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(borderStyle())
                 .build();
 
         Row header = sortState.decorateHeader(
-                List.of("groupId:artifactId", "version", "license", "scope"), theme.tableHeader());
+                List.of("groupId:artifactId", "version", "license", COL_SCOPE), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
-        for (int i = 0; i < entries.size(); i++) {
-            var entry = entries.get(i);
+        for (int i = 0; i < filteredEntries.size(); i++) {
+            var entry = filteredEntries.get(i);
             String license = entry.license != null
                     ? normalizeLicense(entry.license, entry.licenseUrl)
                     : (entry.licenseLoaded ? "-" : "…");
@@ -609,7 +659,7 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(40), Constraint.percentage(15),
                         Constraint.percentage(30), Constraint.percentage(15))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -628,16 +678,16 @@ public class AuditTui extends ToolPanel {
                 .build();
 
         int idx = tableState.selected() != null ? tableState.selected() : -1;
-        if (idx < 0 || idx >= entries.size()) {
+        if (idx < 0 || idx >= filteredEntries.size()) {
             frame.renderWidget(Paragraph.builder().text("").block(block).build(), area);
             return;
         }
 
-        AuditEntry entry = entries.get(idx);
+        AuditEntry entry = filteredEntries.get(idx);
         List<Span> spans = new ArrayList<>();
         String centralUrl = centralUrl(entry.groupId, entry.artifactId);
         spans.add(Span.raw(entry.gav()).bold().cyan().hyperlink(centralUrl));
-        spans.add(Span.raw("  scope: ").fg(theme.detailSeparatorColor()));
+        spans.add(Span.raw(LABEL_SCOPE).fg(theme.detailSeparatorColor()));
         spans.add(Span.raw(entry.scope));
         spans.add(Span.raw("  ↗ ").fg(theme.detailSeparatorColor()));
         spans.add(Span.raw(centralUrl).fg(theme.linkColor()).hyperlink(centralUrl));
@@ -720,7 +770,7 @@ public class AuditTui extends ToolPanel {
         return switch (view) {
             case VULNERABILITIES -> vulnRows.size();
             case BY_LICENSE -> byLicenseRows.size();
-            default -> entries.size();
+            default -> filteredEntries.size();
         };
     }
 
@@ -800,7 +850,7 @@ public class AuditTui extends ToolPanel {
     void setActiveSubView(int index) {
         view = View.values()[index];
         clearSearch();
-        sortState = new SortState(4);
+        sortState = new SortState(view == View.VULNERABILITIES ? 5 : 4);
     }
 
     @Override
@@ -821,6 +871,7 @@ public class AuditTui extends ToolPanel {
                 vr -> vr.entry().ga() + ":" + vr.entry().version,
                 vr -> vr.vuln().id,
                 vr -> normalizeSeverity(vr.vuln().severity),
+                vr -> vr.entry().scope,
                 vr -> vr.vuln().summary);
     }
 
@@ -859,6 +910,7 @@ public class AuditTui extends ToolPanel {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(6))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
         Block block = Block.builder()
                 .borderType(BorderType.ROUNDED)
@@ -870,7 +922,7 @@ public class AuditTui extends ToolPanel {
             var row = byLicenseRows.get(i);
             boolean highlight = view == View.BY_LICENSE && isSearchMatch(i);
             if (row.isGroup()) {
-                String arrow = row.expanded ? "▾ " : "▸ ";
+                String arrow = row.expanded ? "▾ " : HIGHLIGHT_SYMBOL;
                 String label = arrow + row.licenseName + " (" + row.deps.size() + ")";
                 Style style = getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
                         .bold();
@@ -885,7 +937,7 @@ public class AuditTui extends ToolPanel {
         }
 
         Row header =
-                sortState.decorateHeader(List.of("license / artifact", "version", "scope", ""), theme.tableHeader());
+                sortState.decorateHeader(List.of("license / artifact", "version", COL_SCOPE, ""), theme.tableHeader());
 
         Table table = Table.builder()
                 .header(header)
@@ -894,7 +946,7 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(55), Constraint.percentage(20),
                         Constraint.percentage(15), Constraint.percentage(10))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -940,7 +992,7 @@ public class AuditTui extends ToolPanel {
             String centralUrl = centralUrl(row.entry.groupId, row.entry.artifactId);
             lines.add(Line.from(
                     Span.raw(row.entry.gav()).bold().cyan().hyperlink(centralUrl),
-                    Span.raw("  scope: ").fg(theme.detailSeparatorColor()),
+                    Span.raw(LABEL_SCOPE).fg(theme.detailSeparatorColor()),
                     Span.raw(row.entry.scope),
                     Span.raw("  ↗ ").fg(theme.detailSeparatorColor()),
                     Span.raw(centralUrl).fg(theme.linkColor()).hyperlink(centralUrl)));
@@ -970,13 +1022,19 @@ public class AuditTui extends ToolPanel {
 
     private void renderVulnerabilities(Frame frame, Rect area) {
         if (vulnRows.isEmpty()) {
+            String filterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
             Block block = Block.builder()
                     .borderType(BorderType.ROUNDED)
                     .borderStyle(borderStyle())
                     .build();
-            String msg = (vulnsLoaded >= entries.size())
-                    ? "No known vulnerabilities found ✓"
-                    : "Checking vulnerabilities… " + vulnsLoaded + "/" + entries.size();
+            String msg;
+            if (vulnsLoaded < entries.size()) {
+                msg = "Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size();
+            } else if (scopeFilter != null) {
+                msg = "No known vulnerabilities in " + scopeFilter + " scope";
+            } else {
+                msg = "No known vulnerabilities found \u2713";
+            }
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
@@ -987,8 +1045,10 @@ public class AuditTui extends ToolPanel {
         var zones = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(8))
                 .split(area);
+        lastTableHeight = zones.get(0).height();
 
         // -- Vulnerability table --
+        String vFilterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
         Block block = Block.builder()
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(borderStyle())
@@ -1004,21 +1064,28 @@ public class AuditTui extends ToolPanel {
             if (view == View.VULNERABILITIES && isSearchMatch(i)) {
                 style = style.bg(theme.searchHighlightBg());
             }
-            rows.add(Row.from(vr.entry().ga() + ":" + vr.entry().version, vr.vuln().id, severity, summary)
-                    .style(style));
+            rows.add(Row.from(
+                    Cell.from(vr.entry().ga() + ":" + vr.entry().version).style(style),
+                    Cell.from(vr.vuln().id).style(style),
+                    Cell.from(severity).style(style),
+                    Cell.from(vr.entry().scope).style(getScopeStyle(vr.entry().scope)),
+                    Cell.from(summary).style(style)));
         }
 
-        Row header =
-                sortState.decorateHeader(List.of("artifact", "CVE/ID", "severity", "summary"), theme.tableHeader());
+        Row header = sortState.decorateHeader(
+                List.of("artifact", "CVE/ID", "severity", COL_SCOPE, "summary"), theme.tableHeader());
 
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
                 .widths(
-                        Constraint.percentage(30), Constraint.percentage(18),
-                        Constraint.percentage(10), Constraint.percentage(42))
+                        Constraint.percentage(28),
+                        Constraint.percentage(17),
+                        Constraint.percentage(10),
+                        Constraint.percentage(8),
+                        Constraint.percentage(37))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
                 .build();
 
@@ -1052,6 +1119,8 @@ public class AuditTui extends ToolPanel {
                 Span.raw(vuln.id).bold().cyan().hyperlink(url),
                 Span.raw("  "),
                 Span.raw(severity).style(getSeverityStyle(severity).bold()),
+                Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY),
+                Span.raw(vr.entry.scope).style(getScopeStyle(vr.entry.scope)),
                 Span.raw("  "),
                 Span.raw(vr.entry.ga() + ":" + vr.entry.version)
                         .fg(theme.detailSeparatorColor())
@@ -1098,7 +1167,9 @@ public class AuditTui extends ToolPanel {
 
     private static String normalizeSeverity(String severity) {
         if (severity == null) return "UNKNOWN";
-        return severity.toUpperCase();
+        String upper = severity.toUpperCase();
+        if ("MODERATE".equals(upper)) return "MEDIUM";
+        return upper;
     }
 
     private Style getSeverityStyle(String severity) {
@@ -1114,6 +1185,16 @@ public class AuditTui extends ToolPanel {
                 }
                 yield theme.severityUnknown();
             }
+        };
+    }
+
+    static Style getScopeStyle(String scope) {
+        if (scope == null) return Style.create();
+        return switch (scope.trim().toLowerCase(Locale.ROOT)) {
+            case "test" -> Style.create().fg(Color.DARK_GRAY);
+            case "provided" -> Style.create().fg(Color.DARK_GRAY);
+            case "runtime" -> Style.create().fg(Color.YELLOW);
+            default -> Style.create();
         };
     }
 
@@ -1312,7 +1393,12 @@ public class AuditTui extends ToolPanel {
                         "Audit Actions",
                         List.of(
                                 new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("← / →", "Switch view / collapse / expand"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
+                                new HelpOverlay.Entry("← / →", "Collapse / expand (By License view)"),
+                                new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
+                                new HelpOverlay.Entry(
+                                        "s", "Cycle scope filter: all → compile → runtime → test → provided"),
                                 new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
                                 new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
     }
@@ -1362,6 +1448,8 @@ public class AuditTui extends ToolPanel {
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Tab").bold());
             spans.add(Span.raw(":Licenses/Vulns  "));
+            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw(":Scope" + (scopeFilter != null ? "=" + scopeFilter : "") + "  "));
             spans.add(Span.raw("m").bold());
             spans.add(Span.raw(":Manage dep  "));
             spans.add(Span.raw("d").bold());
@@ -1416,8 +1504,11 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(15), Constraint.percentage(10));
             case VULNERABILITIES ->
                 List.of(
-                        Constraint.percentage(30), Constraint.percentage(18),
-                        Constraint.percentage(10), Constraint.percentage(42));
+                        Constraint.percentage(28),
+                        Constraint.percentage(17),
+                        Constraint.percentage(10),
+                        Constraint.percentage(8),
+                        Constraint.percentage(37));
         };
     }
 

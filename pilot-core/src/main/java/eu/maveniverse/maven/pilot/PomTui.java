@@ -81,6 +81,7 @@ public class PomTui extends ToolPanel {
     private final TableState tableState = new TableState();
 
     private TuiRunner runner;
+    private int lastContentHeight;
 
     /**
      * Get the currently selected table row index.
@@ -246,6 +247,10 @@ public class PomTui extends ToolPanel {
             tableState.selectNext(visible.size());
             return true;
         }
+        if (TableNavigation.handlePageKeys(
+                key, tableState, visible.size(), lastContentHeight, TableNavigation.BORDERED_NO_HEADER)) {
+            return true;
+        }
 
         int sel = selectedIndex();
         if (sel >= 0 && sel < visible.size()) {
@@ -369,8 +374,10 @@ public class PomTui extends ToolPanel {
                 new HelpOverlay.Section(
                         "Navigation",
                         List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("← / →", "Collapse / expand tree node"),
+                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
+                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
                                 new HelpOverlay.Entry("e", "Expand all nodes"),
                                 new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"),
                                 new HelpOverlay.Entry("Tab", "Switch Raw POM / Effective POM"))),
@@ -513,6 +520,7 @@ public class PomTui extends ToolPanel {
 
         int idx = 0;
         renderHeader(frame, zones.get(idx++));
+        lastContentHeight = zones.get(1).height();
         Rect treeArea = renderStandaloneHelp(frame, zones.get(idx));
         if (treeArea != null) {
             renderXmlTree(frame, treeArea, showDetail ? snippet : null);
@@ -527,14 +535,10 @@ public class PomTui extends ToolPanel {
 
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-
-        // View tabs
-        spans.add(Span.raw("[" + (view == View.RAW ? "▸ " : "  ") + "Raw POM]")
-                .fg(view == View.RAW ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
-        spans.add(Span.raw("  "));
-        spans.add(Span.raw("[" + (view == View.EFFECTIVE ? "▸ " : "  ") + "Effective POM]")
-                .fg(view == View.EFFECTIVE ? theme.activeViewTabColor() : theme.inactiveViewTabColor()));
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case RAW -> "Raw POM";
+            case EFFECTIVE -> "Effective POM";
+        }));
 
         if (searchMode) {
             spans.add(Span.raw("   Search: ").fg(theme.searchBarLabelColor()));

@@ -295,6 +295,9 @@ public class ConflictsTui extends ToolPanel {
             tableState.selectNext(displayedConflicts().size());
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, tableState, displayedConflicts().size(), lastContentHeight)) {
+            return true;
+        }
 
         if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase(' ')) {
             showDetails = !showDetails;
@@ -526,6 +529,8 @@ public class ConflictsTui extends ToolPanel {
                         "Keys",
                         List.of(
                                 new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
                                 new HelpOverlay.Entry("a", "Toggle between conflicts only / all groups"),
                                 new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),

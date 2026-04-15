@@ -396,6 +396,15 @@ public class DependenciesTui extends ToolPanel {
             tableState.selectNext(currentList().size());
             return true;
         }
+        if (TableNavigation.handlePageKeys(key, tableState, currentList().size(), lastContentHeight)) {
+            return true;
+        }
+
+        if (key.isKey(KeyCode.TAB)) {
+            view = TabBar.next(view, View.values());
+            tableState.select(0);
+            return true;
+        }
 
         if (key.isKey(KeyCode.ENTER)) {
             fixSelected();
@@ -845,6 +854,8 @@ public class DependenciesTui extends ToolPanel {
                 "General",
                 List.of(
                         new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                        new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                        new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                         new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
                         new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
                         new HelpOverlay.Entry("h", "Toggle this help screen"),
@@ -931,42 +942,22 @@ public class DependenciesTui extends ToolPanel {
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        spans.add(Span.raw("  "));
-
-        String declaredLabel = "Declared: " + declared.size();
-        if (bytecodeAnalyzed) {
-            long unused = declared.stream()
-                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
-                    .count();
-            if (unused > 0) {
-                declaredLabel += " (" + unused + " unused)";
-            }
-        }
-        if (view == View.DECLARED) {
-            spans.add(Span.raw("[" + HIGHLIGHT_SYMBOL + declaredLabel + "]")
-                    .bold()
-                    .cyan());
-        } else {
-            spans.add(Span.raw("[  " + declaredLabel + "]"));
-        }
-        spans.add(Span.raw("  "));
-
-        String transitiveLabel = "Transitive: " + transitive.size();
-        if (bytecodeAnalyzed) {
-            long used = transitive.stream()
-                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
-                    .count();
-            if (used > 0) {
-                transitiveLabel += " (" + used + " used)";
-            }
-        }
-        if (view == View.TRANSITIVE) {
-            spans.add(Span.raw("[" + HIGHLIGHT_SYMBOL + transitiveLabel + "]")
-                    .bold()
-                    .cyan());
-        } else {
-            spans.add(Span.raw("[  " + transitiveLabel + "]"));
-        }
+        long unused = bytecodeAnalyzed
+                ? declared.stream()
+                        .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
+                        .count()
+                : 0;
+        long used = bytecodeAnalyzed
+                ? transitive.stream()
+                        .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
+                        .count()
+                : 0;
+        String declaredLabel = "Declared: " + declared.size() + (unused > 0 ? " (" + unused + " unused)" : "");
+        String transitiveLabel = "Transitive: " + transitive.size() + (used > 0 ? " (" + used + " used)" : "");
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case DECLARED -> declaredLabel;
+            case TRANSITIVE -> transitiveLabel;
+        }));
 
         if (dirty) {
             spans.add(theme.dirtyIndicator());

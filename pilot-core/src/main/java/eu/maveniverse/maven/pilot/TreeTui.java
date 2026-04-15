@@ -70,6 +70,7 @@ public class TreeTui extends ToolPanel {
     private boolean showReversePath;
 
     private TuiRunner runner;
+    private int lastContentHeight;
 
     public TreeTui(DependencyTreeModel fullModel, String scope, String projectGav) {
         this.fullModel = fullModel;
@@ -272,6 +273,11 @@ public class TreeTui extends ToolPanel {
             fetchPomInfoIfNeeded();
             return true;
         }
+        if (TableNavigation.handlePageKeys(
+                key, tableState, displayNodes.size(), lastContentHeight, TableNavigation.BORDERED_NO_HEADER)) {
+            fetchPomInfoIfNeeded();
+            return true;
+        }
 
         if (key.isRight()) {
             int sel = selectedIndex();
@@ -427,6 +433,12 @@ public class TreeTui extends ToolPanel {
         }
     }
 
+    /**
+     * Refreshes the list of nodes shown in the UI from the model and preserves a valid selection.
+     *
+     * Saves the current selected index, replaces {@code displayNodes} with {@code model.visibleNodes()},
+     * and if the previous selection is now out of range selects the last available row (or 0 if the list is empty).
+     */
     private void refreshDisplay() {
         int selBefore = selectedIndex();
         displayNodes = model.visibleNodes();
