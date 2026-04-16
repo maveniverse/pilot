@@ -59,7 +59,7 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledIfSystemProperty(named = "pilot.recordings", matches = "true")
 class RecordingDemoTest {
 
-    private static final Path OUTPUT_DIR = Path.of("docs/recordings");
+    private static final Path OUTPUT_DIR = Path.of(System.getProperty("pilot.output.dir", "../docs/recordings"));
     private static final int WIDTH = 120;
     private static final int HEIGHT = 30;
 

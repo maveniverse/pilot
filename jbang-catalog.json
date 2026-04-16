@@ -1,0 +1,8 @@
+{
+  "aliases": {
+    "pilot": {
+      "script-ref": "GAV:eu.maveniverse.maven.plugins:pilot-cli:RELEASE",
+      "description": "Interactive TUI for Maven -- search, browse, and manage dependencies"
+    }
+  }
+}

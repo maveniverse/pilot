@@ -2,7 +2,7 @@
 
 **Interactive TUI for Maven** -- search, browse, and manage dependencies from the terminal.
 
-Pilot is a Maven plugin that replaces hard-to-read CLI output with interactive, keyboard-driven terminal interfaces. Navigate dependency trees, check for updates, resolve conflicts, and edit your POM -- all without leaving the terminal.
+Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI output with interactive, keyboard-driven terminal interfaces. Navigate dependency trees, check for updates, resolve conflicts, and edit your POM -- all without leaving the terminal.
 
 ## Goals
 
@@ -19,6 +19,8 @@ Pilot is a Maven plugin that replaces hard-to-read CLI output with interactive, 
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
 
 ## Quick Start
+
+### As a Maven plugin
 
 > **Tip:** To use the short `mvn pilot:tree` syntax instead of the full `mvn eu.maveniverse.maven.plugins:pilot:tree`, add the plugin group to your `~/.m2/settings.xml`:
 > ```xml
@@ -56,17 +58,35 @@ mvn pilot:audit
 mvn pilot:align
 ```
 
+### Standalone CLI
+
+Pilot also ships as a standalone executable that works without a Maven build. The quickest way to try it is with [JBang](https://www.jbang.dev/):
+
+```bash
+jbang pilot@maveniverse/pilot              # uses ./pom.xml
+jbang pilot@maveniverse/pilot path/to/pom.xml
+```
+
+Or run the JAR directly:
+
+```bash
+java -jar pilot-cli.jar              # uses ./pom.xml
+java -jar pilot-cli.jar path/to/pom.xml
+```
+
+The CLI embeds a Maven 4 resolver, so it resolves dependencies, builds the reactor tree, and launches the same unified shell -- no `mvn` required.
+
 ## Multi-Module Reactor Support
 
-In multi-module builds, Pilot automatically detects the reactor and shows a **module picker** -- an interactive tree view mirroring the Maven reactor hierarchy. Select a module, then choose a tool. Your selection is preserved when returning from a tool.
+In multi-module builds, Pilot automatically detects the reactor and shows a **module tree** in a persistent left panel, mirroring the Maven reactor hierarchy. Select a module from the tree, then switch between tools using the tab bar -- your module selection is preserved across tool switches.
 
-Some tools operate reactor-wide (updates, conflicts, audit), analyzing all modules at once. Others are per-module (tree, dependencies, pom). When selecting a parent/aggregator module, the tool picker filters out tools that don't apply (e.g., bytecode analysis). For **align**, selecting a parent module automatically aligns all child modules in one go.
+Some tools operate reactor-wide (updates, conflicts, audit), analyzing all modules at once. Others are per-module (tree, dependencies, pom). When selecting a parent/aggregator module, tools that don't apply (e.g., bytecode analysis) are filtered out. For **align**, selecting a parent module automatically aligns all child modules in one go.
 
 ## Features
 
 ### Pilot Launcher (`pilot:pilot`)
 
-The main entry point. In a reactor, shows the module picker first, then the tool picker. In a single-module project, goes directly to the tool picker. All tools below are accessible from here, including search.
+The main entry point. Opens a unified IDE-like shell with a persistent module tree on the left and tool tabs across the top. Select a module from the tree, then switch between tools using tabs or `Alt+letter` shortcuts. In single-module projects the tree is hidden and tools are shown directly. A slide-up help panel (`h`) shows contextual keyboard shortcuts for the active tool.
 
 ### Search (`pilot:search`)
 
@@ -82,7 +102,7 @@ Interactive collapsible tree view of all resolved dependencies. Conflicts are hi
 
 [![pilot:tree](docs/images/tree.svg)](https://maveniverse.github.io/pilot/player/dependency-tree.html)
 
-**Keys:** `<>` -- expand/collapse, `jk` -- navigate, `/` -- filter, `c` -- next conflict, `r` -- reverse path, `s` -- cycle scope, `e/w` -- expand/collapse all
+**Keys:** `<>` -- expand/collapse, `jk` -- navigate, `/` -- filter, `c` -- next conflict, `r` -- reverse path, `s` -- cycle scope, `e/w` -- expand/collapse all, `PgUp/PgDn/Home/End` -- page navigation
 
 ### POM Viewer (`pilot:pom`)
 
@@ -96,13 +116,13 @@ Syntax-highlighted XML viewer with two switchable modes: **Raw POM** shows your 
 
 Two views: **Declared** dependencies and **Transitive** dependencies. Uses ASM bytecode analysis to determine which dependencies are actually referenced in code, with member-level detail (method calls, field accesses). Detects SPI/ServiceLoader usage -- dependencies providing `META-INF/services` are recognized even without direct class references.
 
-A details pane shows per-class member references and SPI service interfaces. Promote transitive dependencies to declared, remove unused ones, or change scope -- all with single keypresses that edit your POM via DomTrip.
+Each dependency is marked with a usage indicator: `✓` for used, `✗` for unused. Tab headers show counts (e.g., `Declared: 4 (2 unused)`). A details pane shows per-class member references and SPI service interfaces. Promote transitive dependencies to declared, remove unused ones, or change scope -- all with single keypresses that edit your POM via DomTrip.
 
 Run `mvn compile` before this goal for full bytecode analysis. A warning banner appears when classes are not compiled.
 
 [![pilot:dependencies](docs/images/dependencies.svg)](https://maveniverse.github.io/pilot/player/dependencies.html)
 
-**Keys:** `Tab` -- switch Declared/Transitive, `d` -- remove declared, `a` -- add transitive, `s` -- change scope, `h` -- help
+**Keys:** `Tab` -- switch Declared/Transitive, `x` -- remove declared, `a` -- add transitive, `s` -- change scope, `d` -- show diff, `h` -- help
 
 ### Dependency Updates (`pilot:updates`)
 
@@ -122,15 +142,19 @@ Groups dependencies by `groupId:artifactId` and shows where different versions a
 
 ### License & Security Audit (`pilot:audit`)
 
-Two views: **Licenses** shows all transitive dependencies with their licenses (color-coded by permissiveness), **Vulnerabilities** queries OSV.dev for known CVEs. Data loads asynchronously.
+Three views: **Licenses** shows all transitive dependencies with their licenses (color-coded by permissiveness), **By License** groups dependencies under each license type, and **Vulnerabilities** queries OSV.dev for known CVEs with severity-coded rows (CRITICAL/HIGH/MEDIUM/LOW). Data loads asynchronously. Filter by scope (`s`) to focus on compile, runtime, or test dependencies. In reactor builds, tracks which modules use each dependency.
 
 [![pilot:audit](docs/images/audit.svg)](https://maveniverse.github.io/pilot/player/audit.html)
 
-**Keys:** `Tab` -- switch view, `jk` -- navigate
+[![pilot:audit vulnerabilities](docs/images/audit-vulns.svg)](https://maveniverse.github.io/pilot/player/audit.html)
+
+**Keys:** `Tab` -- switch view, `s` -- cycle scope filter, `m` -- manage dependency, `d` -- show diff, `h` -- help
 
 ### Convention Alignment (`pilot:align`)
 
 Detects the project's current dependency conventions (inline vs managed versions, literal vs property references, property naming patterns) and lets you choose a target convention. Preview the diff before applying. In reactor builds, understands the parent POM hierarchy -- managed dependencies are written to the correct parent POM while child modules get version-less references. Selecting a parent module automatically applies alignment across all child modules in one go.
+
+![pilot:align](docs/images/align.svg)
 
 **Keys:** `jk` -- navigate options, `<>/Enter` -- cycle values, `p` -- preview diff, `w` -- apply, `h` -- help
 
@@ -147,8 +171,16 @@ Pilot uses [DomTrip](https://maveniverse.github.io/domtrip) for all POM modifica
 ## Building
 
 ```bash
-mvn install
+./mvnw install
 ```
+
+The project is a multi-module Maven build:
+
+| Module | Description |
+|--------|-------------|
+| `pilot-core` | Shared TUI views and engine (no Maven dependency) |
+| `pilot-plugin` | Maven plugin wrapping the core (Maven 3.x) |
+| `pilot-cli` | Standalone shaded JAR with embedded Maven 4 resolver |
 
 ## Technology
 

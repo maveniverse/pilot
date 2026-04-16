@@ -25,6 +25,7 @@ import dev.tamboui.terminal.TestBackend;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
+import eu.maveniverse.domtrip.maven.AlignOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -40,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledIfSystemProperty(named = "pilot.screenshots", matches = "true")
 class ScreenshotTest {
 
-    private static final Path OUTPUT_DIR = Path.of("docs/images");
+    private static final Path OUTPUT_DIR = Path.of(System.getProperty("pilot.output.dir", "../docs/images"));
     private static final int WIDTH = 120;
     private static final int HEIGHT = 30;
 
@@ -280,6 +281,231 @@ class ScreenshotTest {
         }
 
         saveSvg("conflicts", renderToSvg(tui::renderStandalone, "pilot:conflicts"));
+    }
+
+    @Test
+    void search() throws Exception {
+        SearchTui.SearchClient mockClient = (q, rows, start) -> {
+            throw new UnsupportedOperationException("demo");
+        };
+
+        List<String[]> results = new ArrayList<>();
+        results.add(new String[] {"com.google.guava", "guava", "33.4.0-jre", "jar", "127", "2024-10-15"});
+        results.add(new String[] {"com.google.code.gson", "gson", "2.11.0", "jar", "89", "2024-05-20"});
+        results.add(new String[] {"com.google.inject", "guice", "7.0.0", "jar", "42", "2024-01-15"});
+        results.add(new String[] {"com.google.protobuf", "protobuf-java", "4.28.3", "jar", "156", "2024-11-01"});
+        results.add(new String[] {"com.google.auto.value", "auto-value", "1.11.0", "jar", "34", "2024-06-10"});
+
+        SearchTui tui = new SearchTui(mockClient, "google", results, 5);
+        tui.cachePomInfo(
+                "com.google.guava",
+                "guava",
+                "33.4.0-jre",
+                new SearchTui.PomInfo(
+                        "Guava: Google Core Libraries for Java",
+                        "Guava is a suite of core and expanded libraries for Java.",
+                        "https://github.com/google/guava",
+                        "Google LLC",
+                        "Apache-2.0",
+                        null,
+                        "2024-10-15"));
+        tui.cachePomInfo(
+                "com.google.code.gson",
+                "gson",
+                "2.11.0",
+                new SearchTui.PomInfo(
+                        "Gson",
+                        "A Java serialization/deserialization library.",
+                        null,
+                        "Google, Inc.",
+                        "Apache-2.0",
+                        null,
+                        "2024-05-20"));
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
+            Pilot pilot = testRunner.pilot();
+            pilot.press(KeyCode.DOWN);
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
+
+        saveSvg("search", renderToSvg(tui::renderStandalone, "pilot:search"));
+    }
+
+    @Test
+    void licenseAudit(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = new ArrayList<>();
+
+        var e1 = new AuditTui.AuditEntry("com.google.guava", "guava", "33.0.0-jre", "compile");
+        e1.license = "Apache License, Version 2.0";
+        e1.licenseUrl = "http://www.apache.org/licenses/LICENSE-2.0";
+        e1.licenseLoaded = true;
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities = List.of();
+        entries.add(e1);
+
+        var e2 = new AuditTui.AuditEntry("org.slf4j", "slf4j-api", "2.0.9", "compile");
+        e2.license = "MIT License";
+        e2.licenseUrl = "https://opensource.org/licenses/MIT";
+        e2.licenseLoaded = true;
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities = List.of();
+        entries.add(e2);
+
+        var e3 = new AuditTui.AuditEntry("commons-io", "commons-io", "2.15.1", "compile");
+        e3.license = "Apache License, Version 2.0";
+        e3.licenseUrl = "http://www.apache.org/licenses/LICENSE-2.0";
+        e3.licenseLoaded = true;
+        e3.vulnsLoaded = true;
+        e3.vulnerabilities = List.of();
+        entries.add(e3);
+
+        var e4 = new AuditTui.AuditEntry("ch.qos.logback", "logback-classic", "1.4.14", "compile");
+        e4.license = "Eclipse Public License - v 1.0";
+        e4.licenseUrl = "https://www.eclipse.org/legal/epl-v10.html";
+        e4.licenseLoaded = true;
+        e4.vulnsLoaded = true;
+        e4.vulnerabilities = List.of();
+        entries.add(e4);
+
+        var e5 = new AuditTui.AuditEntry("org.eclipse.jgit", "org.eclipse.jgit", "6.8.0", "compile");
+        e5.license = "Eclipse Distribution License v1.0";
+        e5.licenseUrl = "https://www.eclipse.org/org/documents/edl-v10.html";
+        e5.licenseLoaded = true;
+        e5.vulnsLoaded = true;
+        e5.vulnerabilities = List.of();
+        entries.add(e5);
+
+        var e6 = new AuditTui.AuditEntry("org.apache.commons", "commons-text", "1.10.0", "compile");
+        e6.license = "Apache License, Version 2.0";
+        e6.licenseUrl = "http://www.apache.org/licenses/LICENSE-2.0";
+        e6.licenseLoaded = true;
+        e6.vulnsLoaded = true;
+        e6.vulnerabilities = List.of();
+        entries.add(e6);
+
+        var e7 = new AuditTui.AuditEntry("org.junit.jupiter", "junit-jupiter", "5.11.4", "test");
+        e7.license = "Eclipse Public License v2.0";
+        e7.licenseUrl = "https://www.eclipse.org/legal/epl-v20.html";
+        e7.licenseLoaded = true;
+        e7.vulnsLoaded = true;
+        e7.vulnerabilities = List.of();
+        entries.add(e7);
+
+        AuditTui tui = new AuditTui(entries, "com.example:demo-app:1.0.0", null, pomPath);
+        tui.initFromEntries();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
+            Pilot pilot = testRunner.pilot();
+            pilot.press(KeyCode.DOWN);
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
+
+        saveSvg("audit", renderToSvg(tui::renderStandalone, "pilot:audit"));
+    }
+
+    @Test
+    void vulnerabilityAudit(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = new ArrayList<>();
+
+        var e1 = new AuditTui.AuditEntry("org.apache.logging.log4j", "log4j-core", "2.14.1", "compile");
+        e1.license = "Apache License, Version 2.0";
+        e1.licenseLoaded = true;
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities = List.of(new OsvClient.Vulnerability(
+                "CVE-2021-44228",
+                "Log4Shell RCE via JNDI lookup in log messages",
+                "CRITICAL",
+                "2021-12-10",
+                List.of("GHSA-jfh8-c2jp-5v3q")));
+        entries.add(e1);
+
+        var e2 = new AuditTui.AuditEntry("com.fasterxml.jackson.core", "jackson-databind", "2.13.0", "compile");
+        e2.license = "Apache License, Version 2.0";
+        e2.licenseLoaded = true;
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities = List.of(new OsvClient.Vulnerability(
+                "CVE-2022-42003", "Deep nesting DoS in jackson-databind", "HIGH", "2022-10-02", List.of()));
+        entries.add(e2);
+
+        var e3 = new AuditTui.AuditEntry("commons-io", "commons-io", "2.11.0", "compile");
+        e3.license = "Apache License, Version 2.0";
+        e3.licenseLoaded = true;
+        e3.vulnsLoaded = true;
+        e3.vulnerabilities = List.of(new OsvClient.Vulnerability(
+                "CVE-2024-47554", "Possible denial of service in Commons IO", "MEDIUM", "2024-10-03", List.of()));
+        entries.add(e3);
+
+        var e4 = new AuditTui.AuditEntry("org.yaml", "snakeyaml", "1.33", "compile");
+        e4.license = "Apache License, Version 2.0";
+        e4.licenseLoaded = true;
+        e4.vulnsLoaded = true;
+        e4.vulnerabilities = List.of(new OsvClient.Vulnerability(
+                "CVE-2022-1471", "Arbitrary code execution via SnakeYaml Constructor", "LOW", "2022-12-01", List.of()));
+        entries.add(e4);
+
+        AuditTui tui = new AuditTui(entries, "com.example:demo-app:1.0.0", null, pomPath);
+        tui.initFromEntries();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
+            Pilot pilot = testRunner.pilot();
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.pause();
+        }
+
+        saveSvg("audit-vulns", renderToSvg(tui::renderStandalone, "pilot:audit"));
+    }
+
+    @Test
+    void conventionAlignment(@TempDir Path tempDir) throws Exception {
+        String pom = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>demo-app</artifactId>
+                  <version>1.0.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.google.guava</groupId>
+                      <artifactId>guava</artifactId>
+                      <version>33.0.0-jre</version>
+                    </dependency>
+                    <dependency>
+                      <groupId>org.slf4j</groupId>
+                      <artifactId>slf4j-api</artifactId>
+                      <version>2.0.9</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        String pomPath = Files.writeString(tempDir.resolve("pom.xml"), pom).toString();
+
+        AlignOptions detected = AlignOptions.builder()
+                .versionStyle(AlignOptions.VersionStyle.INLINE)
+                .versionSource(AlignOptions.VersionSource.LITERAL)
+                .namingConvention(AlignOptions.PropertyNamingConvention.DOT_SUFFIX)
+                .build();
+
+        AlignTui tui = new AlignTui(pomPath, "com.example:demo-app:1.0.0", detected, null);
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
+            Pilot pilot = testRunner.pilot();
+            // Cycle Version Source to PROPERTY to show a changed value
+            pilot.press(KeyCode.DOWN);
+            pilot.press(KeyCode.RIGHT);
+            pilot.pause();
+        }
+
+        saveSvg("align", renderToSvg(tui::renderStandalone, "pilot:align"));
     }
 
     private void saveSvg(String name, String svg) throws Exception {
