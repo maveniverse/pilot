@@ -1373,61 +1373,54 @@ public class AuditTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "License & Security Audit",
-                        List.of(
-                                new HelpOverlay.Entry("", "Audits all resolved dependencies for license"),
-                                new HelpOverlay.Entry("", "compliance and known security vulnerabilities."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Licenses view: shows each dependency's license"),
-                                new HelpOverlay.Entry("", "(from POM metadata). Review for compatibility"),
-                                new HelpOverlay.Entry("", "with your project's licensing requirements."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Vulnerabilities view: queries for known CVEs"),
-                                new HelpOverlay.Entry("", "affecting your dependencies. Shows severity,"),
-                                new HelpOverlay.Entry("", "CVE identifier, and affected version range."))),
-                new HelpOverlay.Section(
-                        "License Colors",
-                        List.of(
-                                new HelpOverlay.Entry("default", "Permissive license (Apache, MIT, BSD)"),
-                                new HelpOverlay.Entry("yellow", "Weak copyleft (LGPL, MPL, EPL, CDDL)"),
-                                new HelpOverlay.Entry("red", "Strong copyleft (GPL, AGPL)"),
-                                new HelpOverlay.Entry("dim", "Unknown or not yet loaded"))),
-                new HelpOverlay.Section(
-                        "Vulnerability Colors",
-                        List.of(
-                                new HelpOverlay.Entry("red bold", "Critical severity"),
-                                new HelpOverlay.Entry("yellow", "High severity"),
-                                new HelpOverlay.Entry("yellow", "Medium severity"),
-                                new HelpOverlay.Entry("default", "Low severity"),
-                                new HelpOverlay.Entry("dim", "Unknown severity"))),
-                new HelpOverlay.Section(
-                        "Audit Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                                new HelpOverlay.Entry("← / →", "Collapse / expand (By License view)"),
-                                new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
-                                new HelpOverlay.Entry(
-                                        "s", "Cycle scope filter: all → compile → runtime → test → provided"),
-                                new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
+        return HelpOverlay.parse("""
+                ## License & Security Audit
+                Audits all resolved dependencies for license
+                compliance and known security vulnerabilities.
+                Licenses view: shows each dependency's license
+                (from POM metadata). Review for compatibility
+                with your project's licensing requirements.
+                Vulnerabilities view: queries for known CVEs
+                affecting your dependencies. Shows severity,
+                CVE identifier, and affected version range.
+
+                ## License Colors
+                default         Permissive license (Apache, MIT, BSD)
+                yellow          Weak copyleft (LGPL, MPL, EPL, CDDL)
+                red             Strong copyleft (GPL, AGPL)
+                dim             Unknown or not yet loaded
+
+                ## Vulnerability Colors
+                red bold        Critical severity
+                yellow          High severity
+                yellow          Medium severity
+                default         Low severity
+                dim             Unknown severity
+
+                ## Audit Actions
+                ↑ / ↓           Move selection up / down
+                PgUp / PgDn     Move selection up / down by one page
+                Home / End      Jump to first / last row
+                ← / →           Collapse / expand (By License view)
+                Tab             Switch between Licenses / By License / Vulns
+                s               Cycle scope filter: all → compile → runtime → test → provided
+                m               Add selected dep to dependencyManagement
+                d               Preview POM changes as unified diff
+                """);
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "Keys",
-                List.of(
-                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                        new HelpOverlay.Entry("← / →", "Collapse / expand (By License view)"),
-                        new HelpOverlay.Entry("Tab", "Switch between Licenses / By License / Vulns"),
-                        new HelpOverlay.Entry("m", "Add selected dep to dependencyManagement"),
-                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        sections.addAll(HelpOverlay.parse("""
+                ## Keys
+                ↑ / ↓           Move selection up / down
+                ← / →           Collapse / expand (By License view)
+                Tab             Switch between Licenses / By License / Vulns
+                m               Add selected dep to dependencyManagement
+                d               Preview POM changes as a unified diff
+                h               Toggle this help screen
+                q / Esc         Quit (prompts to save if modified)
+                """));
         return sections;
     }
 

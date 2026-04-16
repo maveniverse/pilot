@@ -1295,41 +1295,36 @@ public class ReactorUpdatesTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Reactor Dependency Updates",
-                        List.of(
-                                new HelpOverlay.Entry("", "Aggregates dependency updates across all reactor"),
-                                new HelpOverlay.Entry("", "modules. Dependencies managed via properties (e.g."),
-                                new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"),
-                                new HelpOverlay.Entry("", "the group header toggles all dependencies in it."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "The 'N mod' column shows how many reactor modules"),
-                                new HelpOverlay.Entry("", "use each dependency. 'M' indicates a managed"),
-                                new HelpOverlay.Entry("", "dependency (from dependencyManagement)."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "When you apply updates, property-based deps edit"),
-                                new HelpOverlay.Entry("", "the <properties> in the POM that defines them;"),
-                                new HelpOverlay.Entry("", "direct deps edit the module's own POM."))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("green", "Patch update — bug fixes, safe to apply"),
-                                new HelpOverlay.Entry("yellow", "Minor update — new features, usually compatible"),
-                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"),
-                                new HelpOverlay.Entry("cyan", "Property group header (${property.name})"))),
-                new HelpOverlay.Section(
-                        "Reactor Updates Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                                new HelpOverlay.Entry("Space", "Toggle selection (group or individual)"),
-                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
-                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM files"),
-                                new HelpOverlay.Entry("f / F", "Cycle filter: all → patch → minor → major"),
-                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"),
-                                new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))));
+        return HelpOverlay.parse("""
+                ## Reactor Dependency Updates
+                Aggregates dependency updates across all reactor
+                modules. Dependencies managed via properties (e.g.
+                ${jackson.version}) are grouped together — selecting
+                the group header toggles all dependencies in it.
+                The 'N mod' column shows how many reactor modules
+                use each dependency. 'M' indicates a managed
+                dependency (from dependencyManagement).
+                When you apply updates, property-based deps edit
+                the <properties> in the POM that defines them;
+                direct deps edit the module's own POM.
+
+                ## Colors
+                green           Patch update — bug fixes, safe to apply
+                yellow          Minor update — new features, usually compatible
+                red             Major update — breaking changes possible
+                cyan            Property group header (${property.name})
+
+                ## Reactor Updates Actions
+                ↑ / ↓           Move selection up / down
+                PgUp / PgDn     Move selection up / down by one page
+                Home / End      Jump to first / last row
+                Space           Toggle selection (group or individual)
+                a / n           Select all / deselect all
+                Enter           Apply selected updates to POM files
+                f / F           Cycle filter: all → patch → minor → major
+                d               Preview changes as a multi-file diff
+                i               Toggle detail pane for selected row
+                """);
     }
 
     @Override
@@ -1349,20 +1344,19 @@ public class ReactorUpdatesTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "Modules View",
-                List.of(
-                        new HelpOverlay.Entry("", "Shows the reactor module tree with update counts."),
-                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                        new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                        new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                        new HelpOverlay.Entry("← / →", "Collapse / expand module tree"))));
-        sections.add(new HelpOverlay.Section(
-                "General",
-                List.of(
-                        new HelpOverlay.Entry("Tab", "Switch Dependencies / Modules view"),
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        sections.addAll(HelpOverlay.parse("""
+                ## Modules View
+                Shows the reactor module tree with update counts.
+                ↑ / ↓           Move selection up / down
+                PgUp / PgDn     Move selection up / down by one page
+                Home / End      Jump to first / last row
+                ← / →           Collapse / expand module tree
+
+                ## General
+                Tab             Switch Dependencies / Modules view
+                h               Toggle this help screen
+                q / Esc         Quit
+                """));
         return sections;
     }
 }

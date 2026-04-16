@@ -331,26 +331,23 @@ public class SearchTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Maven Central Search",
-                        List.of(
-                                new HelpOverlay.Entry("", "Search for artifacts on Maven Central."),
-                                new HelpOverlay.Entry("", "Type to search, use arrows to navigate."))),
-                new HelpOverlay.Section(
-                        "Search Syntax",
-                        List.of(
-                                new HelpOverlay.Entry("free text", "Full-text search"),
-                                new HelpOverlay.Entry("g:groupId", "Search by groupId"),
-                                new HelpOverlay.Entry("a:artifactId", "Search by artifactId"),
-                                new HelpOverlay.Entry("g:... AND a:...", "Combined search"))),
-                new HelpOverlay.Section(
-                        "Search Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Navigate results"),
-                                new HelpOverlay.Entry("← / →", "Cycle through versions"),
-                                new HelpOverlay.Entry("Enter", "Select artifact / confirm search"),
-                                new HelpOverlay.Entry("Esc", "Back to search / quit"))));
+        return HelpOverlay.parse("""
+                ## Maven Central Search
+                Search for artifacts on Maven Central.
+                Type to search, use arrows to navigate.
+
+                ## Search Syntax
+                free text       Full-text search
+                g:groupId       Search by groupId
+                a:artifactId    Search by artifactId
+                g:... AND a:...  Combined search
+
+                ## Search Actions
+                ↑ / ↓           Navigate results
+                ← / →           Cycle through versions
+                Enter           Select artifact / confirm search
+                Esc             Back to search / quit
+                """);
     }
 
     @Override

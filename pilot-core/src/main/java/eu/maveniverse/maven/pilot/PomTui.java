@@ -349,44 +349,32 @@ public class PomTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "POM Browser",
-                        List.of(
-                                new HelpOverlay.Entry("", "Browse the project's POM as an expandable XML tree."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Raw POM: the actual pom.xml file content as written."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Effective POM: the fully resolved POM after parent"),
-                                new HelpOverlay.Entry("", "inheritance, profile activation, and property"),
-                                new HelpOverlay.Entry("", "interpolation. Shows what Maven actually uses."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "The detail pane (bottom) shows origin info: which"),
-                                new HelpOverlay.Entry("", "POM file defines the selected element (useful for"),
-                                new HelpOverlay.Entry("", "understanding inherited configuration)."))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("cyan", "XML element names"),
-                                new HelpOverlay.Entry("yellow", "Attribute values and search highlights"),
-                                new HelpOverlay.Entry("green", "Search match count indicator"),
-                                new HelpOverlay.Entry("dim", "XML structure characters, metadata"))),
-                new HelpOverlay.Section(
-                        "Navigation",
-                        List.of(
-                                new HelpOverlay.Entry("\u2191 / \u2193", "Move selection up / down"),
-                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                                new HelpOverlay.Entry("\u2190 / \u2192", "Collapse / expand tree node"),
-                                new HelpOverlay.Entry("e", "Expand all nodes"),
-                                new HelpOverlay.Entry("w", "Collapse all (keeps root expanded)"),
-                                new HelpOverlay.Entry("Tab", "Switch Raw POM / Effective POM"))),
-                new HelpOverlay.Section(
-                        "Search",
-                        List.of(
-                                new HelpOverlay.Entry("/", "Enter search mode — type to search"),
-                                new HelpOverlay.Entry("n / N", "Next / previous search match"),
-                                new HelpOverlay.Entry("Esc", "Clear search or quit"))));
+        return HelpOverlay.parse("""
+                ## POM Browser
+                Browse the project's POM as an expandable XML tree.
+                Raw POM: the actual pom.xml file content as written.
+                Effective POM: the fully resolved POM after parent
+                inheritance, profile activation, and property
+                interpolation. Shows what Maven actually uses.
+                The detail pane (bottom) shows origin info: which
+                POM file defines the selected element (useful for
+                understanding inherited configuration).
+
+                ## Colors
+                cyan            XML element names
+                yellow          Attribute values and search highlights
+                green           Search match count indicator
+                dim             XML structure characters, metadata
+
+                ## Navigation
+                \u2191 / \u2193           Move selection up / down
+                PgUp / PgDn     Move selection up / down by one page
+                Home / End      Jump to first / last row
+                \u2190 / \u2192           Collapse / expand tree node
+                e               Expand all nodes
+                w               Collapse all (keeps root expanded)
+                Tab             Switch Raw POM / Effective POM
+                """ + SEARCH_HELP);
     }
 
     @Override
@@ -417,11 +405,7 @@ public class PomTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "General",
-                List.of(
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        sections.addAll(HelpOverlay.parse(GENERAL_STANDALONE_HELP));
         return sections;
     }
 

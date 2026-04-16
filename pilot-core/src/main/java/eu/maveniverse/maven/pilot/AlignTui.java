@@ -566,54 +566,48 @@ public class AlignTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        List<HelpOverlay.Entry> descEntries = new ArrayList<>();
-        descEntries.add(new HelpOverlay.Entry("", "Restructures dependency declarations to follow a"));
-        descEntries.add(new HelpOverlay.Entry("", "consistent convention. Configure three options:"));
-        descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Version Style: how versions are expressed — inline"));
-        descEntries.add(new HelpOverlay.Entry("", "in <version> tags, via <properties>, or managed"));
-        descEntries.add(new HelpOverlay.Entry("", "through <dependencyManagement>."));
-        descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Version Source: where version values come from —"));
-        descEntries.add(new HelpOverlay.Entry("", "keep current versions, import from a BOM, etc."));
-        descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Property Naming: convention for property names"));
-        descEntries.add(new HelpOverlay.Entry("", "(e.g. groupId.artifactId.version or artifact.version)."));
-        descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "Preview the diff before applying to verify changes."));
-
+        String desc = """
+                ## BOM Alignment
+                Restructures dependency declarations to follow a
+                consistent convention. Configure three options:
+                Version Style: how versions are expressed — inline
+                in <version> tags, via <properties>, or managed
+                through <dependencyManagement>.
+                Version Source: where version values come from —
+                keep current versions, import from a BOM, etc.
+                Property Naming: convention for property names
+                (e.g. groupId.artifactId.version or artifact.version).
+                Preview the diff before applying to verify changes.
+                """;
         if (parentInfo != null) {
-            descEntries.add(new HelpOverlay.Entry("", ""));
-            descEntries.add(new HelpOverlay.Entry("", "Cross-POM mode: when MANAGED style is selected,"));
-            descEntries.add(new HelpOverlay.Entry("", "managed deps are written to the parent POM and"));
-            descEntries.add(new HelpOverlay.Entry("", "child deps become version-less."));
-            descEntries.add(new HelpOverlay.Entry("", "Parent: " + parentInfo.gav()));
+            desc += """
+                    Cross-POM mode: when MANAGED style is selected,
+                    managed deps are written to the parent POM and
+                    child deps become version-less.
+                    Parent:\u0020""" + parentInfo.gav() + "\n";
         }
+        desc += """
 
-        return List.of(
-                new HelpOverlay.Section("BOM Alignment", descEntries),
-                new HelpOverlay.Section(
-                        "Alignment Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move between options"),
-                                new HelpOverlay.Entry("← / → / Enter", "Cycle through option values"),
-                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
-                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"))));
+                ## Alignment Actions
+                ↑ / ↓           Move between options
+                ← / → / Enter  Cycle through option values
+                p               Preview the POM changes as a diff
+                w               Apply alignment and write to POM
+                """;
+        return HelpOverlay.parse(desc);
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.set(
-                sections.size() - 1,
-                new HelpOverlay.Section(
-                        "Keys",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move between options"),
-                                new HelpOverlay.Entry("← / → / Enter", "Cycle through option values"),
-                                new HelpOverlay.Entry("p", "Preview the POM changes as a diff"),
-                                new HelpOverlay.Entry("w", "Apply alignment and write to POM"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit"))));
+        sections.set(sections.size() - 1, HelpOverlay.parse("""
+                ## Keys
+                ↑ / ↓           Move between options
+                ← / → / Enter  Cycle through option values
+                p               Preview the POM changes as a diff
+                w               Apply alignment and write to POM
+                h               Toggle this help screen
+                q / Esc         Quit
+                """).get(0));
         return sections;
     }
 

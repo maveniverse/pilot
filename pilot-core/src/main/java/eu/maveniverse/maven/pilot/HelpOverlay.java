@@ -48,6 +48,36 @@ class HelpOverlay {
 
     record Section(String title, List<Entry> entries) {}
 
+    static List<Section> parse(String text) {
+        List<Section> sections = new ArrayList<>();
+        String currentTitle = null;
+        List<Entry> currentEntries = null;
+        for (String line : text.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (trimmed.startsWith("## ")) {
+                if (currentTitle != null) {
+                    sections.add(new Section(currentTitle, currentEntries));
+                }
+                currentTitle = trimmed.substring(3).trim();
+                currentEntries = new ArrayList<>();
+            } else if (currentEntries != null) {
+                String[] parts = trimmed.split(" {2,}", 2);
+                if (parts.length == 2) {
+                    currentEntries.add(new Entry(parts[0], parts[1]));
+                } else {
+                    currentEntries.add(new Entry("", trimmed));
+                }
+            }
+        }
+        if (currentTitle != null) {
+            sections.add(new Section(currentTitle, currentEntries));
+        }
+        return sections;
+    }
+
     private List<Line> lines;
     private int scroll;
     private int currentHeight;
