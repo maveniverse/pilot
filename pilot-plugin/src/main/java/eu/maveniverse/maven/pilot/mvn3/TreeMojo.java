@@ -69,7 +69,10 @@ public class TreeMojo extends AbstractMojo {
     }
 
     private void executeForProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        CollectResult result = ResolutionProgress.resolve(
+                "Collecting Dependencies",
+                repoSession,
+                ps -> repoSystem.collectDependencies(ps, MojoHelper.buildCollectRequest(proj)));
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         DependencyTreeModel treeModel = MojoHelper.fromDependencyNode(result.getRoot());
         TreeTui tui = new TreeTui(treeModel, scope, gav);

@@ -76,7 +76,10 @@ public class AuditMojo extends AbstractMojo {
     }
 
     private void executeSingleProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        CollectResult result = ResolutionProgress.resolve(
+                "Collecting Dependencies",
+                repoSession,
+                ps -> repoSystem.collectDependencies(ps, MojoHelper.buildCollectRequest(proj)));
         DependencyTreeModel treeModel = MojoHelper.fromDependencyNode(result.getRoot());
         Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
         collectEntries(result.getRoot(), entryMap, null, true);
@@ -89,13 +92,20 @@ public class AuditMojo extends AbstractMojo {
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
         MavenProject root = projects.get(0);
-        CollectResult rootResult = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
-        DependencyTreeModel treeModel = MojoHelper.fromDependencyNode(rootResult.getRoot());
+        List<CollectResult> collectResults = ResolutionProgress.resolve("Collecting Dependencies", repoSession, ps -> {
+            List<CollectResult> results = new ArrayList<>();
+            for (MavenProject proj : projects) {
+                results.add(repoSystem.collectDependencies(ps, MojoHelper.buildCollectRequest(proj)));
+            }
+            return results;
+        });
+        DependencyTreeModel treeModel =
+                MojoHelper.fromDependencyNode(collectResults.get(0).getRoot());
 
         Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-        for (MavenProject proj : projects) {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-            collectEntries(result.getRoot(), entryMap, proj.getArtifactId(), true);
+        for (int i = 0; i < projects.size(); i++) {
+            collectEntries(
+                    collectResults.get(i).getRoot(), entryMap, projects.get(i).getArtifactId(), true);
         }
         List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
 

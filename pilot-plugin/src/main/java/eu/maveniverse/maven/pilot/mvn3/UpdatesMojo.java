@@ -30,12 +30,14 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResolutionException;
 import org.eclipse.aether.resolution.VersionRangeResult;
+import org.eclipse.aether.transfer.AbstractTransferListener;
 
 /**
  * Interactive TUI showing which dependencies have newer versions available.
@@ -127,12 +129,14 @@ public class UpdatesMojo extends AbstractMojo {
     }
 
     private UpdatesTui.VersionResolver createVersionResolver() {
+        DefaultRepositorySystemSession quietSession = new DefaultRepositorySystemSession(repoSession);
+        quietSession.setTransferListener(new AbstractTransferListener() {});
         return (groupId, artifactId) -> {
             try {
                 VersionRangeRequest request = new VersionRangeRequest();
                 request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
                 request.setRepositories(project.getRemoteProjectRepositories());
-                VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
+                VersionRangeResult result = repoSystem.resolveVersionRange(quietSession, request);
                 return UpdatesTui.versionsNewestFirst(result.getVersions());
             } catch (VersionRangeResolutionException e) {
                 throw new IllegalStateException("Failed to resolve versions for " + groupId + ":" + artifactId, e);

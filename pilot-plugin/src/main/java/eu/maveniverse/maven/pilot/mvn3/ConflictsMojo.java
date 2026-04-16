@@ -77,7 +77,8 @@ public class ConflictsMojo extends AbstractMojo {
     }
 
     private void executeSingleProject(MavenProject proj) throws Exception {
-        List<ConflictsTui.ConflictGroup> conflicts = collectConflictsForProject(proj);
+        List<ConflictsTui.ConflictGroup> conflicts = ResolutionProgress.resolve(
+                "Collecting Dependencies", repoSession, ps -> collectConflictsForProject(proj, ps));
         String pomPath = proj.getFile().getAbsolutePath();
         String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
         ConflictsTui tui = new ConflictsTui(conflicts, pomPath, gav);
@@ -86,11 +87,15 @@ public class ConflictsMojo extends AbstractMojo {
 
     private void executeReactor(List<MavenProject> projects) throws Exception {
         // Aggregate conflicts across all modules
-        Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
-        for (MavenProject proj : projects) {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-            collectConflicts(result.getRoot(), mergedMap, new ArrayList<>(), proj.getArtifactId());
-        }
+        Map<String, List<ConflictsTui.ConflictEntry>> mergedMap =
+                ResolutionProgress.resolve("Collecting Dependencies", repoSession, ps -> {
+                    Map<String, List<ConflictsTui.ConflictEntry>> map = new HashMap<>();
+                    for (MavenProject proj : projects) {
+                        CollectResult result = repoSystem.collectDependencies(ps, MojoHelper.buildCollectRequest(proj));
+                        collectConflicts(result.getRoot(), map, new ArrayList<>(), proj.getArtifactId());
+                    }
+                    return map;
+                });
 
         List<ConflictsTui.ConflictGroup> conflicts = mergedMap.entrySet().stream()
                 .filter(e -> e.getValue().size() > 1
@@ -107,8 +112,9 @@ public class ConflictsMojo extends AbstractMojo {
         tui.runStandalone();
     }
 
-    private List<ConflictsTui.ConflictGroup> collectConflictsForProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+    private List<ConflictsTui.ConflictGroup> collectConflictsForProject(
+            MavenProject proj, RepositorySystemSession session) throws Exception {
+        CollectResult result = repoSystem.collectDependencies(session, MojoHelper.buildCollectRequest(proj));
         Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
         collectConflicts(result.getRoot(), conflictMap, new ArrayList<>());
         return conflictMap.entrySet().stream()

@@ -106,7 +106,8 @@ public class DependenciesMojo extends AbstractMojo {
 
         // Resolve full transitive tree and artifact files
         DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(proj), null);
-        DependencyResult depResult = repoSystem.resolveDependencies(repoSession, depRequest);
+        DependencyResult depResult = ResolutionProgress.resolve(
+                "Resolving Dependencies", repoSession, ps -> repoSystem.resolveDependencies(ps, depRequest));
 
         // Find transitive (undeclared) dependencies
         DependencyTreeModel depTree = MojoHelper.fromDependencyNode(depResult.getRoot());
