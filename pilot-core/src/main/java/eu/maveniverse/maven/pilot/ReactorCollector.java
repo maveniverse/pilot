@@ -18,6 +18,7 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -64,6 +65,9 @@ public class ReactorCollector {
         String newestVersion;
         VersionComparator.UpdateType updateType;
         boolean selected;
+        LocalDate currentReleaseDate;
+        LocalDate newestReleaseDate;
+        float libYears = -1;
 
         AggregatedDependency(String groupId, String artifactId) {
             this.groupId = groupId;
@@ -98,6 +102,7 @@ public class ReactorCollector {
         VersionComparator.UpdateType updateType;
         boolean selected;
         boolean expanded = true;
+        float libYears = -1;
 
         PropertyGroup(String propertyName, String rawExpression, String resolvedVersion, PilotProject origin) {
             this.propertyName = propertyName;
