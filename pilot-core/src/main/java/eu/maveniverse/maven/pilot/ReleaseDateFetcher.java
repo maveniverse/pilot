@@ -20,7 +20,6 @@ package eu.maveniverse.maven.pilot;
 
 import java.net.HttpURLConnection;
 import java.net.URI;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -28,9 +27,6 @@ import java.time.ZoneId;
 class ReleaseDateFetcher {
 
     static LocalDate fetchReleaseDate(String groupId, String artifactId, String version) {
-        LocalDate local = fetchFromLocal(groupId, artifactId, version);
-        if (local != null) return local;
-
         try {
             String path = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-"
                     + version + ".pom";
@@ -56,28 +52,6 @@ class ReleaseDateFetcher {
             } finally {
                 conn.disconnect();
             }
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static LocalDate fetchFromLocal(String groupId, String artifactId, String version) {
-        try {
-            String localRepo = System.getProperty("maven.repo.local");
-            if (localRepo == null) {
-                localRepo = System.getProperty("user.home") + "/.m2/repository";
-            }
-            Path pomFile = Path.of(
-                    localRepo, groupId.replace('.', '/'), artifactId, version, artifactId + "-" + version + ".pom");
-            if (!pomFile.toFile().isFile()) return null;
-
-            long lastModified = pomFile.toFile().lastModified();
-            if (lastModified > 0) {
-                return Instant.ofEpochMilli(lastModified)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDate();
-            }
-            return null;
         } catch (Exception e) {
             return null;
         }

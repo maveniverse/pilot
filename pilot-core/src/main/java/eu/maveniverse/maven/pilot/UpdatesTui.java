@@ -308,6 +308,7 @@ public class UpdatesTui extends ToolPanel {
         datesLoading = false;
         propagateLibYearsToGroups();
         status = buildStatusMessage();
+        onSortChanged();
     }
 
     private String buildStatusMessage() {
@@ -490,7 +491,8 @@ public class UpdatesTui extends ToolPanel {
         } else {
             ly = row.dependency.libYears;
         }
-        return ly < 0 ? "" : String.valueOf(ly);
+        if (ly < 0) return "";
+        return String.format(java.util.Locale.US, "%010.3f", ly);
     }
 
     private String extractModuleCount(ReactorRow row) {
