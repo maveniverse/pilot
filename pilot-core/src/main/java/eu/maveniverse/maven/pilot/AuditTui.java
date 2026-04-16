@@ -1398,9 +1398,7 @@ public class AuditTui extends ToolPanel {
                 dim             Unknown severity
 
                 ## Audit Actions
-                ↑ / ↓           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
+                """ + NAV_KEYS + """
                 ← / →           Collapse / expand (By License view)
                 Tab             Switch between Licenses / By License / Vulns
                 s               Cycle scope filter: all → compile → runtime → test → provided

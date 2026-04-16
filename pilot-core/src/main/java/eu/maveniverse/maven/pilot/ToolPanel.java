@@ -56,6 +56,13 @@ public abstract class ToolPanel {
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 
+    /** Navigation key entries shared across multiple TUI help screens. No section header. */
+    protected static final String NAV_KEYS = """
+            ↑ / ↓           Move selection up / down
+            PgUp / PgDn     Move selection up / down by one page
+            Home / End      Jump to first / last row
+            """;
+
     protected static final String SEARCH_HELP = """
             ## Search
             /               Enter search mode — type to search

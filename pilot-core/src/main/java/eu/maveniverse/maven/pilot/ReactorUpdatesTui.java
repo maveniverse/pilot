@@ -1315,9 +1315,7 @@ public class ReactorUpdatesTui extends ToolPanel {
                 cyan            Property group header (${property.name})
 
                 ## Reactor Updates Actions
-                ↑ / ↓           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
+                """ + NAV_KEYS + """
                 Space           Toggle selection (group or individual)
                 a / n           Select all / deselect all
                 Enter           Apply selected updates to POM files
@@ -1347,9 +1345,7 @@ public class ReactorUpdatesTui extends ToolPanel {
         sections.addAll(HelpOverlay.parse("""
                 ## Modules View
                 Shows the reactor module tree with update counts.
-                ↑ / ↓           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
+                """ + NAV_KEYS + """
                 ← / →           Collapse / expand module tree
 
                 ## General

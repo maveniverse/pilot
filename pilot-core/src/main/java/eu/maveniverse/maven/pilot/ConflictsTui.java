@@ -517,11 +517,10 @@ public class ConflictsTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.set(sections.size() - 1, HelpOverlay.parse("""
+        sections.set(
+                sections.size() - 1, HelpOverlay.parse("""
                 ## Keys
-                ↑ / ↓           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
+                """ + NAV_KEYS + """
                 Enter / Space   Toggle dependency path details
                 a               Toggle between conflicts only / all groups
                 p               Pin resolved version in dependencyManagement

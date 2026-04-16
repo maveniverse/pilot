@@ -367,10 +367,8 @@ public class PomTui extends ToolPanel {
                 dim             XML structure characters, metadata
 
                 ## Navigation
-                \u2191 / \u2193           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
-                \u2190 / \u2192           Collapse / expand tree node
+                """ + NAV_KEYS + """
+                ← / →           Collapse / expand tree node
                 e               Expand all nodes
                 w               Collapse all (keeps root expanded)
                 Tab             Switch Raw POM / Effective POM

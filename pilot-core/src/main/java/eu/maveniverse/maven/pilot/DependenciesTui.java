@@ -846,9 +846,7 @@ public class DependenciesTui extends ToolPanel {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
         sections.addAll(HelpOverlay.parse("""
                 ## General
-                ↑ / ↓           Move selection up / down
-                PgUp / PgDn     Move selection up / down by one page
-                Home / End      Jump to first / last row
+                """ + NAV_KEYS + """
                 Tab             Switch between Declared and Transitive views
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen
