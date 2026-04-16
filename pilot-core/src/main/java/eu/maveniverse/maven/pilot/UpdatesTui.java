@@ -541,8 +541,6 @@ public class UpdatesTui extends ToolPanel {
                 Enter           Apply selected updates to POM
                 d               Preview POM changes as unified diff
                 s / S           Sort by column / reverse sort
-                /               Search dependencies by name
-                n / N           Next / previous search match
                 """);
     }
 

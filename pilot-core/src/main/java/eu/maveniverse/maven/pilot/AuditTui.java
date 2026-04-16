@@ -1414,6 +1414,7 @@ public class AuditTui extends ToolPanel {
                 ↑ / ↓           Move selection up / down
                 ← / →           Collapse / expand (By License view)
                 Tab             Switch between Licenses / By License / Vulns
+                s               Cycle scope filter: all → compile → runtime → test → provided
                 m               Add selected dep to dependencyManagement
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen

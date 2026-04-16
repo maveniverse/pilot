@@ -130,5 +130,6 @@ class HelpOverlayTest {
         assertThat(sections.get(0).entries().get(0).key()).isEqualTo("a / b");
         assertThat(sections.get(0).entries().get(0).description()).isEqualTo("Description with  internal  spaces");
         assertThat(sections.get(0).entries().get(1).key()).isEqualTo("single-word-key");
+        assertThat(sections.get(0).entries().get(1).description()).isEqualTo("value");
     }
 }
