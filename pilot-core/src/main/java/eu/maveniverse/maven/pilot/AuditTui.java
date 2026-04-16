@@ -40,10 +40,7 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
-import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.Coordinates;
-import eu.maveniverse.domtrip.maven.PomEditor;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -94,11 +91,15 @@ public class AuditTui extends ToolPanel {
     }
 
     private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
+    private static final String SEVERITY_CRITICAL = "CRITICAL";
+    private static final String SEVERITY_HIGH = "HIGH";
+    private static final String SEVERITY_MEDIUM = "MEDIUM";
+    private static final String SEVERITY_LOW = "LOW";
 
     private enum View {
+        VULNERABILITIES,
         LICENSES,
-        BY_LICENSE,
-        VULNERABILITIES
+        BY_LICENSE
     }
 
     /** Row in the by-license view: either a license group header or a dependency. */
@@ -133,9 +134,6 @@ public class AuditTui extends ToolPanel {
     private final List<AuditEntry> entries;
     private final String projectGav;
     private final DependencyTreeModel treeModel;
-    private final String pomPath;
-    private final String originalPomContent;
-    private final PomEditor editor;
     private final TableState tableState = new TableState();
     private final ExecutorService httpPool = PilotUtil.newHttpPool();
     private final OsvClient osvClient = new OsvClient();
@@ -152,7 +150,6 @@ public class AuditTui extends ToolPanel {
     private int vulnsLoaded = 0;
     private int vulnCount = 0;
     private String status;
-    private boolean dirty;
     private boolean pendingQuit;
     private int lastContentHeight;
     private int lastTableHeight;
@@ -166,20 +163,19 @@ public class AuditTui extends ToolPanel {
 
     private TuiRunner runner;
 
+    /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
+        this(entries, projectGav, treeModel, new PomEditSession(Path.of(pomPath)));
+    }
+
+    /** Panel-mode constructor — uses a shared PomEditSession from the shell. */
+    public AuditTui(
+            List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, PomEditSession session) {
+        this.editSession = session;
         this.entries = entries;
         this.filteredEntries = entries;
         this.projectGav = projectGav;
         this.treeModel = treeModel;
-        this.pomPath = pomPath;
-        String pom;
-        try {
-            pom = Files.readString(Path.of(pomPath));
-        } catch (Exception e) {
-            pom = "";
-        }
-        this.originalPomContent = pom;
-        this.editor = pom.isEmpty() ? null : new PomEditor(Document.of(pom));
         this.sortState = new SortState(4);
         this.status = "Loading license and vulnerability data…";
         if (!entries.isEmpty()) {
@@ -531,14 +527,20 @@ public class AuditTui extends ToolPanel {
 
     private void addManagedDependency() {
         AuditEntry entry = selectedEntry();
-        if (entry == null || editor == null) {
+        if (entry == null) {
             status = "No dependency selected";
             return;
         }
         try {
+            editSession.beforeMutation();
             var coords = Coordinates.of(entry.groupId, entry.artifactId, entry.version);
-            editor.dependencies().updateManagedDependency(true, coords);
-            dirty = true;
+            editSession.editor().dependencies().updateManagedDependency(true, coords);
+            editSession.recordChange(
+                    PomEditSession.ChangeType.ADD,
+                    "managed",
+                    entry.ga(),
+                    "added " + entry.version + " to dependencyManagement",
+                    "audit");
             status = "Added " + entry.ga() + ":" + entry.version + " to dependencyManagement";
         } catch (Exception e) {
             status = "Failed: " + e.getMessage();
@@ -546,7 +548,7 @@ public class AuditTui extends ToolPanel {
     }
 
     private void requestQuit() {
-        if (dirty) {
+        if (isDirty()) {
             pendingQuit = true;
             status = "Save changes to POM? (y/n/Esc)";
         } else {
@@ -554,32 +556,18 @@ public class AuditTui extends ToolPanel {
         }
     }
 
-    private boolean doSave() {
-        try {
-            String currentOnDisk = Files.readString(Path.of(pomPath));
-            if (!currentOnDisk.equals(originalPomContent)) {
-                status = "POM modified externally — save aborted";
-                return false;
-            }
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            return true;
-        } catch (Exception e) {
-            status = "Failed to save: " + e.getMessage();
-            return false;
-        }
-    }
-
     private void saveAndQuit() {
-        if (doSave()) {
+        PomEditSession.SaveResult result = editSession.save();
+        if (result.success()) {
             runner.quit();
         } else {
             pendingQuit = false;
+            status = result.message();
         }
     }
 
     private void toggleDiffView() {
-        if (editor == null) return;
-        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
@@ -627,7 +615,7 @@ public class AuditTui extends ToolPanel {
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        if (dirty) {
+        if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
         spans.addAll(TabBar.render(
@@ -873,7 +861,7 @@ public class AuditTui extends ToolPanel {
 
     @Override
     List<String> subViewNames() {
-        return List.of("Licenses", "By License", "Vulns");
+        return List.of("Vulns", "Licenses", "By License");
     }
 
     private List<Function<AuditEntry, String>> licensesExtractors() {
@@ -888,7 +876,7 @@ public class AuditTui extends ToolPanel {
         return List.of(
                 vr -> vr.entry().ga() + ":" + vr.entry().version,
                 vr -> vr.vuln().id,
-                vr -> normalizeSeverity(vr.vuln().severity),
+                vr -> severitySortKey(vr.vuln().severity),
                 vr -> vr.entry().scope,
                 vr -> vr.vuln().summary);
     }
@@ -1209,17 +1197,28 @@ public class AuditTui extends ToolPanel {
     private static String normalizeSeverity(String severity) {
         if (severity == null) return "UNKNOWN";
         String upper = severity.toUpperCase();
-        if ("MODERATE".equals(upper)) return "MEDIUM";
+        if ("MODERATE".equals(upper)) return SEVERITY_MEDIUM;
         return upper;
+    }
+
+    /** Return a sort key for severity so that sorting is semantic (CRITICAL > HIGH > MEDIUM > LOW) rather than alphabetic. */
+    private static String severitySortKey(String severity) {
+        return switch (normalizeSeverity(severity)) {
+            case SEVERITY_CRITICAL -> "0";
+            case SEVERITY_HIGH -> "1";
+            case SEVERITY_MEDIUM -> "2";
+            case SEVERITY_LOW -> "3";
+            default -> "4";
+        };
     }
 
     private Style getSeverityStyle(String severity) {
         if (severity == null) return theme.severityUnknown();
         return switch (severity.toUpperCase()) {
-            case "CRITICAL" -> theme.severityCritical();
-            case "HIGH" -> theme.severityHigh();
-            case "MEDIUM" -> theme.severityMedium();
-            case "LOW" -> theme.severityLow();
+            case SEVERITY_CRITICAL -> theme.severityCritical();
+            case SEVERITY_HIGH -> theme.severityHigh();
+            case SEVERITY_MEDIUM -> theme.severityMedium();
+            case SEVERITY_LOW -> theme.severityLow();
             default -> {
                 if (severity.toUpperCase().startsWith("CVSS")) {
                     yield theme.severityHigh();
@@ -1578,16 +1577,6 @@ public class AuditTui extends ToolPanel {
             spans.add(Span.raw(":Diff"));
         }
         return spans;
-    }
-
-    @Override
-    public boolean isDirty() {
-        return dirty;
-    }
-
-    @Override
-    public boolean save() {
-        return doSave();
     }
 
     @Override

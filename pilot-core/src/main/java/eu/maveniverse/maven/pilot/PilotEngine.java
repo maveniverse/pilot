@@ -57,18 +57,24 @@ public class PilotEngine {
     }
 
     public ToolPanel createPanel(String toolId, PilotProject proj, List<PilotProject> projects) throws Exception {
-        return createPanel(toolId, proj, projects, s -> {});
+        return createPanel(toolId, proj, projects, null, null, s -> {});
     }
 
     public ToolPanel createPanel(
-            String toolId, PilotProject proj, List<PilotProject> projects, Consumer<String> progress) throws Exception {
+            String toolId,
+            PilotProject proj,
+            List<PilotProject> projects,
+            PomEditSession session,
+            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Consumer<String> progress)
+            throws Exception {
         return switch (toolId) {
             case "tree" -> createTreePanel(proj);
-            case "dependencies" -> createDependenciesPanel(proj);
-            case "updates" -> createUpdatesPanel(proj, projects, progress);
-            case "conflicts" -> createConflictsPanel(proj, projects, progress);
+            case "dependencies" -> createDependenciesPanel(proj, session);
+            case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
+            case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
             case "align" -> createAlignPanel(proj, projects);
-            case "audit" -> createAuditPanel(proj, projects, progress);
+            case "audit" -> createAuditPanel(proj, projects, session, progress);
             case "pom" -> createPomPanel(proj);
             case "search" -> createSearchPanel();
             default -> null;
@@ -80,7 +86,7 @@ public class PilotEngine {
         return new TreeTui(treeModel, scope, proj.gav());
     }
 
-    private ToolPanel createDependenciesPanel(PilotProject proj) throws Exception {
+    private ToolPanel createDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (PilotProject.Dep dep : proj.dependencies) {
@@ -130,19 +136,32 @@ public class PilotEngine {
             }
         }
 
-        String pomPath = proj.pomPath.toString();
-        return new DependenciesTui(declared, transitive, pomPath, proj.gav(), bytecodeAnalyzed);
+        List<DependenciesTui.ManagedEntry> managed = buildManagedEntries(proj);
+
+        if (session != null) {
+            return new DependenciesTui(declared, transitive, managed, session, proj.gav(), bytecodeAnalyzed);
+        }
+        return new DependenciesTui(
+                declared, transitive, managed, new PomEditSession(proj.pomPath), proj.gav(), bytecodeAnalyzed);
     }
 
-    private ToolPanel createUpdatesPanel(PilotProject proj, List<PilotProject> projects, Consumer<String> progress) {
+    @SuppressWarnings("unused")
+    private ToolPanel createUpdatesPanel(
+            PilotProject proj,
+            List<PilotProject> projects,
+            PomEditSession session,
+            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Consumer<String> progress) {
         UpdatesTui.VersionResolver versionResolver = resolver::resolveVersions;
-        ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
-        ReactorModel reactorModel = ReactorModel.build(projects);
-        String reactorGav = projects.get(0).gav();
-        return new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
+        List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(targetProjects);
+        ReactorModel reactorModel = ReactorModel.build(targetProjects);
+        String gav = targetProjects.get(0).gav();
+        return new UpdatesTui(result, reactorModel, gav, versionResolver, sessionProvider);
     }
 
-    private ToolPanel createConflictsPanel(PilotProject proj, List<PilotProject> projects, Consumer<String> progress) {
+    private ToolPanel createConflictsPanel(
+            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         if (projects.size() > 1) {
             Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
             for (int i = 0; i < projects.size(); i++) {
@@ -157,16 +176,20 @@ public class PilotEngine {
             }
             List<ConflictsTui.ConflictGroup> conflicts = filterConflictGroups(mergedMap);
             PilotProject root = projects.get(0);
-            String pomPath = root.pomPath.toString();
             String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
-            return new ConflictsTui(conflicts, pomPath, gav);
+            if (session != null) {
+                return new ConflictsTui(conflicts, session, gav);
+            }
+            return new ConflictsTui(conflicts, root.pomPath.toString(), gav);
         } else {
             DependencyTreeModel tree = cachedCollectDependencies(proj);
             Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
             collectConflicts(tree.root, conflictMap, new ArrayList<>());
             List<ConflictsTui.ConflictGroup> conflicts = filterConflictGroups(conflictMap);
-            String pomPath = proj.pomPath.toString();
-            return new ConflictsTui(conflicts, pomPath, proj.gav());
+            if (session != null) {
+                return new ConflictsTui(conflicts, session, proj.gav());
+            }
+            return new ConflictsTui(conflicts, proj.pomPath.toString(), proj.gav());
         }
     }
 
@@ -192,7 +215,8 @@ public class PilotEngine {
         }
     }
 
-    private ToolPanel createAuditPanel(PilotProject proj, List<PilotProject> projects, Consumer<String> progress) {
+    private ToolPanel createAuditPanel(
+            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         if (projects.size() > 1) {
             PilotProject root = projects.get(0);
             DependencyTreeModel treeModel = cachedCollectDependencies(root);
@@ -214,15 +238,19 @@ public class PilotEngine {
                     + emptyTrees + " modules with empty trees");
             List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
             String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
-            String pomPath = root.pomPath.toString();
-            return new AuditTui(entries, gav, treeModel, pomPath);
+            if (session != null) {
+                return new AuditTui(entries, gav, treeModel, session);
+            }
+            return new AuditTui(entries, gav, treeModel, root.pomPath.toString());
         } else {
             DependencyTreeModel treeModel = cachedCollectDependencies(proj);
             Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
             collectAuditNode(treeModel.root, entryMap, null, true);
             List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-            String pomPath = proj.pomPath.toString();
-            return new AuditTui(entries, proj.gav(), treeModel, pomPath);
+            if (session != null) {
+                return new AuditTui(entries, proj.gav(), treeModel, session);
+            }
+            return new AuditTui(entries, proj.gav(), treeModel, proj.pomPath.toString());
         }
     }
 
@@ -264,36 +292,38 @@ public class PilotEngine {
         return new SearchTui(client, "", List.of(), 0);
     }
 
-    // ── Shared helpers ────────────────────────────────────────────────────
+    /**
+     * Build the list of managed dependency entries for the Managed tab.
+     * "own" entries come from originalManagedDependencies (declared in this POM),
+     * "inherited" entries come from effective managedDependencies not in the original set.
+     */
+    private static List<DependenciesTui.ManagedEntry> buildManagedEntries(PilotProject proj) {
+        List<DependenciesTui.ManagedEntry> managed = new ArrayList<>();
+        Set<String> ownGAs = new HashSet<>();
 
-    static void collectManagedDependencies(
-            List<PilotProject.Dep> originalMgmtDeps,
-            List<PilotProject.Dep> effectiveMgmtDeps,
-            List<UpdatesTui.DependencyInfo> dependencies) {
-        if (originalMgmtDeps == null) {
-            return;
-        }
-        Map<String, String> effectiveVersions = new HashMap<>();
-        if (effectiveMgmtDeps != null) {
-            for (PilotProject.Dep d : effectiveMgmtDeps) {
-                effectiveVersions.put(d.ga(), d.version());
+        // Own entries (declared in this POM's dependencyManagement)
+        if (proj.originalManagedDependencies != null) {
+            for (PilotProject.Dep dep : proj.originalManagedDependencies) {
+                ownGAs.add(dep.ga());
+                managed.add(new DependenciesTui.ManagedEntry(
+                        dep.groupId(), dep.artifactId(), dep.version(), dep.scope(), dep.type(), "own"));
             }
         }
-        for (PilotProject.Dep dep : originalMgmtDeps) {
-            if (dep.isBomImport()) {
-                continue;
-            }
-            boolean alreadyListed = dependencies.stream()
-                    .anyMatch(d -> d.groupId.equals(dep.groupId()) && d.artifactId.equals(dep.artifactId()));
-            if (!alreadyListed) {
-                String version = effectiveVersions.getOrDefault(dep.ga(), dep.version());
-                var info = new UpdatesTui.DependencyInfo(
-                        dep.groupId(), dep.artifactId(), version, dep.scope(), dep.type());
-                info.managed = true;
-                dependencies.add(info);
+
+        // Inherited entries (from parent/BOMs, not declared in this POM)
+        if (proj.managedDependencies != null) {
+            for (PilotProject.Dep dep : proj.managedDependencies) {
+                if (!ownGAs.contains(dep.ga())) {
+                    managed.add(new DependenciesTui.ManagedEntry(
+                            dep.groupId(), dep.artifactId(), dep.version(), dep.scope(), dep.type(), "inherited"));
+                }
             }
         }
+
+        return managed;
     }
+
+    // ── Shared helpers ────────────────────────────────────────────────────
 
     static PilotProject findManagementPom(List<PilotProject> projects) {
         Set<String> projectPaths = new HashSet<>();
@@ -363,12 +393,9 @@ public class PilotEngine {
             String moduleName,
             boolean isRoot) {
         if (!isRoot) {
-            String ga = node.ga();
-            AuditTui.AuditEntry entry = entryMap.get(ga);
-            if (entry == null) {
-                entry = new AuditTui.AuditEntry(node.groupId, node.artifactId, node.version, node.scope);
-                entryMap.put(ga, entry);
-            }
+            String gav = node.ga() + ":" + node.version;
+            AuditTui.AuditEntry entry = entryMap.computeIfAbsent(
+                    gav, k -> new AuditTui.AuditEntry(node.groupId, node.artifactId, node.version, node.scope));
             if (moduleName != null && !entry.modules.contains(moduleName)) {
                 entry.modules.add(moduleName);
             }

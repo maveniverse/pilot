@@ -64,7 +64,6 @@ class ModuleTreePane {
         this.onSelectionChanged = onSelectionChanged;
         if (!reactorModel.allModules.isEmpty()) {
             tableState.select(0);
-            onSelectionChanged.accept(reactorModel.allModules.get(0).project);
         }
     }
 
@@ -179,11 +178,11 @@ class ModuleTreePane {
             return true;
         }
 
-        if (key.isCharIgnoreCase('e')) {
+        if (key.isChar('E')) {
             expandAll(reactorModel.root);
             return true;
         }
-        if (key.isCharIgnoreCase('w')) {
+        if (key.isChar('W')) {
             Integer sel = tableState.selected();
             ReactorModel.ModuleNode selectedNode =
                     (sel != null && sel >= 0 && sel < visible.size()) ? visible.get(sel) : null;
@@ -528,7 +527,7 @@ class ModuleTreePane {
                         new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
                         new HelpOverlay.Entry("← / →", "Collapse / expand tree node"),
                         new HelpOverlay.Entry("Space", "Expand node or move down"),
-                        new HelpOverlay.Entry("e / w", "Expand all / collapse all"),
+                        new HelpOverlay.Entry("E / W", "Expand all / collapse all"),
                         new HelpOverlay.Entry("/", "Search modules by name or GA"),
                         new HelpOverlay.Entry("n / N", "Next / previous search match"),
                         new HelpOverlay.Entry("Enter", "Switch focus to content pane"))));

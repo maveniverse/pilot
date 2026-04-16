@@ -226,9 +226,9 @@ public class TreeTui extends ToolPanel {
             }
             spans.add(Span.raw("r").bold());
             spans.add(Span.raw(":Reverse  "));
-            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw("f").bold());
             spans.add(Span.raw(":Scope(" + scope + ")  "));
-            spans.add(Span.raw("e/w").bold());
+            spans.add(Span.raw("E/W").bold());
             spans.add(Span.raw(":All  "));
         }
         return spans;
@@ -241,11 +241,11 @@ public class TreeTui extends ToolPanel {
                 Shows the resolved dependency tree.
                 ↑ / ↓           Move selection up / down
                 ← / →           Collapse / expand tree node
-                e / w           Expand all / collapse all
+                E / W           Expand all / collapse all
                 /               Search by groupId or artifactId
                 c               Jump to next conflict
                 r               Reverse path (why was this pulled in?)
-                s               Cycle scope: compile → runtime → test
+                f               Cycle scope: compile → runtime → test
                 """);
     }
 
@@ -322,17 +322,17 @@ public class TreeTui extends ToolPanel {
             return true;
         }
 
-        if (key.isCharIgnoreCase('e')) {
+        if (key.isChar('E')) {
             expandAll();
             return true;
         }
 
-        if (key.isCharIgnoreCase('w')) {
+        if (key.isChar('W')) {
             collapseAll();
             return true;
         }
 
-        if (key.isCharIgnoreCase('s')) {
+        if (key.isCharIgnoreCase('f')) {
             cycleScope();
             return true;
         }
@@ -709,9 +709,9 @@ public class TreeTui extends ToolPanel {
             }
             spans.add(Span.raw("r").bold());
             spans.add(Span.raw(":Reverse  "));
-            spans.add(Span.raw("s").bold());
+            spans.add(Span.raw("f").bold());
             spans.add(Span.raw(":Scope(" + scope + ")  "));
-            spans.add(Span.raw("e/w").bold());
+            spans.add(Span.raw("E/W").bold());
             spans.add(Span.raw(":Expand/Collapse all  "));
             spans.add(Span.raw("h").bold());
             spans.add(Span.raw(":Help  "));

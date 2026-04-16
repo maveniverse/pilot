@@ -54,6 +54,9 @@ public abstract class ToolPanel {
     /** Theme for all color/style decisions. */
     protected final Theme theme = Theme.DEFAULT;
 
+    /** Shared POM edit session, or null for read-only tools. */
+    protected PomEditSession editSession;
+
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 
@@ -157,7 +160,7 @@ public abstract class ToolPanel {
 
     /** Whether this panel has unsaved changes. */
     boolean isDirty() {
-        return false;
+        return editSession != null && editSession.isDirty();
     }
 
     /**
@@ -166,7 +169,9 @@ public abstract class ToolPanel {
      * @return {@code true} on success
      */
     boolean save() {
-        return true;
+        if (editSession == null) return true;
+        PomEditSession.SaveResult result = editSession.save();
+        return result.success();
     }
 
     /** Called when the TuiRunner is available (for async operations). */
@@ -579,7 +584,7 @@ public abstract class ToolPanel {
         int mx = mouse.x() - lastTabBarArea.x();
         for (int i = 0; i < tabStarts.length; i++) {
             if (mx >= tabStarts[i] && mx < tabEnds[i]) {
-                if (i != activeSubView()) {
+                if (i != activeSubView() && isSubViewEnabled(i)) {
                     setActiveSubView(i);
                 }
                 return true;
@@ -589,9 +594,19 @@ public abstract class ToolPanel {
     }
 
     /**
+     * Whether a sub-view tab is enabled. Disabled tabs are rendered grayed out
+     * and cannot be selected via mouse or keyboard. Override to disable specific tabs.
+     */
+    @SuppressWarnings("unused")
+    boolean isSubViewEnabled(int index) {
+        return true;
+    }
+
+    /**
      * Builds a styled tab line from {@link #subViewNames()}, highlighting the active sub-view.
      * Active tab is cyan+bold when focused, white+bold when not.
      * Inactive tabs are white when focused, dark gray when not.
+     * Disabled tabs are always dark gray.
      * Appends a {@code [modified]} indicator if {@link #isDirty()} returns true.
      */
     protected Line buildSubViewTabLine() {
@@ -601,11 +616,16 @@ public abstract class ToolPanel {
         for (int i = 0; i < names.size(); i++) {
             if (i == active) {
                 spans.add(theme.activeTab(names.get(i), focused, i + 1));
+            } else if (!isSubViewEnabled(i)) {
+                spans.add(theme.inactiveTab(names.get(i), false, i + 1));
             } else {
                 spans.add(theme.inactiveTab(names.get(i), focused, i + 1));
             }
         }
-        if (isDirty()) {
+        if (editSession != null && editSession.isDirty()) {
+            spans.addAll(theme.changesSummary(
+                    (int) editSession.addCount(), (int) editSession.modifyCount(), (int) editSession.removeCount()));
+        } else if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
         return Line.from(spans);

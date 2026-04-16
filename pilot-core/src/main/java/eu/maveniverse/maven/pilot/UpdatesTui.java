@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
@@ -34,26 +35,38 @@ import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * Interactive TUI for viewing and applying dependency updates.
+ *
+ * <p>Works in both single-module and multi-module (reactor) mode. In reactor mode,
+ * provides two views switchable via Tab:</p>
+ * <ul>
+ *   <li><b>Dependencies</b> — aggregated list grouped by shared version property</li>
+ *   <li><b>Modules</b> — reactor tree with per-module update counts</li>
+ * </ul>
+ *
+ * <p>In single-module mode, the Modules tab is hidden.</p>
  */
 public class UpdatesTui extends ToolPanel {
 
@@ -71,33 +84,9 @@ public class UpdatesTui extends ToolPanel {
         return result;
     }
 
-    public static class DependencyInfo {
-        public final String groupId;
-        public final String artifactId;
-        String version;
-        final String scope;
-        final String type;
-        String newestVersion;
-        VersionComparator.UpdateType updateType;
-        boolean selected;
-        public boolean managed;
-        String versionProperty; // shared property name, e.g. "mavenVersion" from "${mavenVersion}"
-
-        public DependencyInfo(String groupId, String artifactId, String version, String scope, String type) {
-            this.groupId = groupId;
-            this.artifactId = artifactId;
-            this.version = version != null ? version : "";
-            this.scope = scope != null ? scope : "compile";
-            this.type = type != null ? type : "jar";
-        }
-
-        String ga() {
-            return groupId + ":" + artifactId;
-        }
-
-        boolean hasUpdate() {
-            return newestVersion != null && !newestVersion.equals(version) && !newestVersion.isEmpty();
-        }
+    private enum View {
+        DEPENDENCIES,
+        MODULES
     }
 
     private enum Filter {
@@ -107,197 +96,362 @@ public class UpdatesTui extends ToolPanel {
         MAJOR
     }
 
-    private final List<DependencyInfo> allDeps;
-    private List<DependencyInfo> displayDeps;
-    private final String pomPath;
-    private final String projectGav;
-    private final VersionResolver versionResolver;
-    private final TableState tableState = new TableState();
-    private final ExecutorService httpPool = PilotUtil.newHttpPool();
-    private final Map<String, SearchTui.PomInfo> pomInfoCache = new HashMap<>();
+    static class ReactorRow {
+        final ReactorCollector.PropertyGroup propertyGroup;
+        final ReactorCollector.AggregatedDependency dependency;
 
+        private ReactorRow(ReactorCollector.PropertyGroup pg, ReactorCollector.AggregatedDependency dep) {
+            this.propertyGroup = pg;
+            this.dependency = dep;
+        }
+
+        static ReactorRow group(ReactorCollector.PropertyGroup pg) {
+            return new ReactorRow(pg, null);
+        }
+
+        static ReactorRow dep(ReactorCollector.AggregatedDependency dep) {
+            return new ReactorRow(null, dep);
+        }
+
+        boolean isGroupHeader() {
+            return propertyGroup != null;
+        }
+    }
+
+    private static final String ARROW = " \u2192 ";
+    private static final String KEY_NAV = ":Nav  ";
+    private static final String KEY_SPACE = "Space";
+    private static final String KEY_ENTER = "Enter";
+
+    private final ReactorCollector.CollectionResult reactorResult;
+    private final ReactorModel reactorModel;
+    private final String projectGav;
+    private final boolean singleModule;
+    private final VersionResolver versionResolver;
+    private final Function<Path, PomEditSession> sessionProvider;
+    private final TableState tableState = new TableState();
+    private final TableState moduleTableState = new TableState();
+    private final ExecutorService httpPool = PilotUtil.newHttpPool();
+
+    private View view = View.DEPENDENCIES;
+    List<ReactorRow> displayRows = new ArrayList<>();
+    Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
+    private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final TableState detailTableState = new TableState();
+    boolean showDetails = true;
+    private int lastContentHeight;
     String status = "Loading updates…";
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
-    private final String originalPomContent;
-    private final PomEditor editor;
-    private boolean dirty;
-    private boolean pendingQuit;
-    private final DiffOverlay diffOverlay = new DiffOverlay();
-    private int lastContentHeight;
 
     private TuiRunner runner;
 
     /**
-     * Get the currently selected table row index, or -1 if none is selected.
-     *
-     * @return the selected row index, or -1 when no selection exists
+     * Standalone constructor — creates a local session cache.
      */
-    private int selectedIndex() {
-        Integer sel = tableState.selected();
-        return sel != null ? sel : -1;
+    public UpdatesTui(
+            ReactorCollector.CollectionResult result,
+            ReactorModel reactorModel,
+            String projectGav,
+            VersionResolver versionResolver) {
+        this(result, reactorModel, projectGav, versionResolver, null);
     }
 
     /**
-     * Creates a new UpdatesTui initialized with the given dependency list and target POM.
-     *
-     * Initializes internal display list as a copy of `dependencies`, stores the POM path and
-     * project GAV for display, and selects the first row if there are any dependencies.
-     *
-     * @param dependencies list of dependencies to show and manage
-     * @param pomPath path to the POM file that updates will be applied to
-     * @param projectGav human-readable project identifier shown in the UI
+     * Panel-mode constructor — receives a session provider from the shell.
      */
     public UpdatesTui(
-            List<DependencyInfo> dependencies, String pomPath, String projectGav, VersionResolver versionResolver) {
-        this.allDeps = dependencies;
-        this.displayDeps = new ArrayList<>(dependencies);
-        this.pomPath = pomPath;
+            ReactorCollector.CollectionResult result,
+            ReactorModel reactorModel,
+            String projectGav,
+            VersionResolver versionResolver,
+            Function<Path, PomEditSession> sessionProvider) {
+        this.reactorResult = result;
+        this.reactorModel = reactorModel;
         this.projectGav = projectGav;
+        this.singleModule = reactorModel.allModules.size() <= 1;
         this.versionResolver = versionResolver;
-        String pom;
-        try {
-            pom = Files.readString(Path.of(pomPath));
-        } catch (Exception e) {
-            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
-        }
-        this.originalPomContent = pom;
-        this.editor = new PomEditor(Document.of(pom));
-        this.sortState = new SortState(6); // "", ga, current, "", available, type
-        detectPropertyGroups();
-        if (!displayDeps.isEmpty()) {
-            tableState.select(0);
+        this.sessionProvider = sessionProvider != null ? sessionProvider : defaultSessionProvider();
+        this.sortState = new SortState(6);
+        if (!reactorModel.allModules.isEmpty()) {
+            moduleTableState.select(0);
         }
     }
 
-    private void detectPropertyGroups() {
-        try {
-            eu.maveniverse.domtrip.Element root = editor.document().root();
-            scanDependencyVersions(root.childElement("dependencies").orElse(null));
-            root.childElement("dependencyManagement")
-                    .flatMap(dm -> dm.childElement("dependencies"))
-                    .ifPresent(this::scanDependencyVersions);
-        } catch (Exception ignored) {
-            // best-effort
-        }
+    private static Function<Path, PomEditSession> defaultSessionProvider() {
+        Map<String, PomEditSession> localCache = new ConcurrentHashMap<>();
+        return path -> localCache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
     }
 
-    private void scanDependencyVersions(eu.maveniverse.domtrip.Element deps) {
-        if (deps == null) return;
-        deps.childElements("dependency").forEach(dep -> {
-            String gid = dep.childTextOr("groupId", "");
-            String aid = dep.childTextOr("artifactId", "");
-            String rawVersion = dep.childTextOr("version", null);
-            if (rawVersion != null && rawVersion.startsWith("${") && rawVersion.endsWith("}")) {
-                String prop = rawVersion.substring(2, rawVersion.length() - 1);
-                for (DependencyInfo di : allDeps) {
-                    if (di.groupId.equals(gid) && di.artifactId.equals(aid)) {
-                        di.versionProperty = prop;
-                    }
-                }
-            }
-        });
-    }
+    // -- Version resolution --
 
     private void fetchAllUpdates() {
-        fetchUpdates(runner::runOnRenderThread, httpPool);
-    }
-
-    CompletableFuture<Void> fetchUpdates(java.util.function.Consumer<Runnable> renderThread, ExecutorService executor) {
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (var dep : allDeps) {
-            var future = CompletableFuture.supplyAsync(
-                            () -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), executor)
-                    .thenAccept(versions -> renderThread.accept(() -> {
+        if (reactorResult.allDependencies.isEmpty()) {
+            updateStatusIfDone();
+            return;
+        }
+        for (var dep : reactorResult.allDependencies) {
+            CompletableFuture.supplyAsync(() -> versionResolver.resolveVersions(dep.groupId, dep.artifactId), httpPool)
+                    .thenAccept(versions -> runner.runOnRenderThread(() -> {
                         applyVersionResult(dep, versions);
+                        loadedCount++;
                         updateStatusIfDone();
                     }))
                     .exceptionally(ex -> {
-                        renderThread.accept(() -> {
+                        runner.runOnRenderThread(() -> {
                             loadedCount++;
                             failedCount++;
                             updateStatusIfDone();
                         });
                         return null;
                     });
-            futures.add(future);
         }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
-    /**
-     * Apply resolved versions to a dependency, selecting the newest non-preview version.
-     */
-    void applyVersionResult(DependencyInfo dep, List<String> versions) {
-        loadedCount++;
+    private void applyVersionResult(ReactorCollector.AggregatedDependency dep, List<String> versions) {
         String newest = null;
         for (String v : versions) {
             if (VersionComparator.isPreview(v)) continue;
-            if (dep.version.isEmpty() || VersionComparator.isNewer(dep.version, v)) {
+            if (dep.primaryVersion == null
+                    || dep.primaryVersion.isEmpty()
+                    || VersionComparator.isNewer(dep.primaryVersion, v)) {
                 newest = v;
-                break; // versions are newest-first
+                break;
             }
         }
         if (newest != null) {
             dep.newestVersion = newest;
-            dep.updateType = VersionComparator.classify(dep.version, newest);
+            dep.updateType = VersionComparator.classify(dep.primaryVersion, newest);
         }
     }
 
     void updateStatusIfDone() {
-        if (loadedCount >= allDeps.size()) {
-            loading = false;
-            applyFilter();
-            long updates = allDeps.stream().filter(DependencyInfo::hasUpdate).count();
-            status = updates + " update(s) available out of " + allDeps.size() + " dependencies";
-            if (failedCount > 0) {
-                status += "; " + failedCount + " lookup(s) failed";
+        if (loadedCount < reactorResult.allDependencies.size()) {
+            return;
+        }
+        loading = false;
+        computePropertyGroupVersions();
+        updateReactorCounts();
+        buildDisplayRows();
+        long updates = reactorResult.allDependencies.stream()
+                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
+                .count();
+        status = singleModule
+                ? updates + " update(s) available"
+                : updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
+        if (failedCount > 0) {
+            status += "; " + failedCount + " lookup(s) failed";
+        }
+    }
+
+    private void computePropertyGroupVersions() {
+        for (var group : reactorResult.propertyGroups) {
+            for (var dep : group.dependencies) {
+                if (dep.hasUpdate()
+                        && (group.newestVersion == null
+                                || VersionComparator.isNewer(dep.newestVersion, group.newestVersion))) {
+                    group.newestVersion = dep.newestVersion;
+                    group.updateType = dep.updateType;
+                }
             }
         }
     }
 
-    /**
-     * Handle keyboard input for the updates TUI and perform the mapped action.
-     *
-     * Supported key bindings:
-     * - Ctrl+C, Escape, or `q` : quit the UI
-     * - Up / Down             : move table selection
-     * - Space                 : toggle selection for the current row
-     * - `a`                   : select all visible updatable dependencies
-     * - `n`                   : deselect all visible dependencies
-     * - Enter                 : apply selected updates to the POM
-     * - `1` / `2` / `3` / `4` : set filter to ALL / PATCH / MINOR / MAJOR respectively
-     *
-     * @param event  the input event to handle; non-key events are ignored
-     * @param runner the TUI runner instance used to control the UI (e.g. to quit)
-     * @return       `true` if the event was handled and triggered an action, `false` otherwise
-     */
+    private void updateReactorCounts() {
+        Map<String, Integer> countsByModule = new LinkedHashMap<>();
+        for (var dep : reactorResult.allDependencies) {
+            if (dep.hasUpdate()) {
+                for (var usage : dep.usages) {
+                    String ga = usage.project.ga();
+                    countsByModule.merge(ga, 1, Integer::sum);
+                }
+            }
+        }
+        for (var node : reactorModel.allModules) {
+            Integer count = countsByModule.get(node.ga());
+            node.ownUpdateCount = count != null ? count : 0;
+        }
+        reactorModel.recomputeCounts();
+    }
+
+    private static Set<String> computeDuplicatePropertyNames(List<ReactorCollector.PropertyGroup> propertyGroups) {
+        Map<String, Integer> propertyCounts = new LinkedHashMap<>();
+        for (var group : propertyGroups) {
+            propertyCounts.merge(group.propertyName, 1, Integer::sum);
+        }
+        Set<String> duplicates = new LinkedHashSet<>();
+        for (var entry : propertyCounts.entrySet()) {
+            if (entry.getValue() > 1) {
+                duplicates.add(entry.getKey());
+            }
+        }
+        return duplicates;
+    }
+
+    void buildDisplayRows() {
+        displayRows = new ArrayList<>();
+        duplicatePropertyNames = computeDuplicatePropertyNames(reactorResult.propertyGroups);
+
+        for (var group : reactorResult.propertyGroups) {
+            boolean groupHasUpdate = group.hasUpdate()
+                    || group.dependencies.stream().anyMatch(ReactorCollector.AggregatedDependency::hasUpdate);
+            if (filter != Filter.ALL) {
+                groupHasUpdate = matchesFilter(group.updateType);
+            }
+            if (groupHasUpdate) {
+                displayRows.add(ReactorRow.group(group));
+                for (var dep : group.dependencies) {
+                    displayRows.add(ReactorRow.dep(dep));
+                }
+            }
+        }
+        for (var dep : reactorResult.ungroupedDependencies) {
+            boolean show =
+                    switch (filter) {
+                        case ALL -> dep.hasUpdate();
+                        case PATCH -> dep.updateType == VersionComparator.UpdateType.PATCH;
+                        case MINOR -> dep.updateType == VersionComparator.UpdateType.MINOR;
+                        case MAJOR -> dep.updateType == VersionComparator.UpdateType.MAJOR;
+                    };
+            if (show) {
+                displayRows.add(ReactorRow.dep(dep));
+            }
+        }
+        if (!displayRows.isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    private List<Function<ReactorRow, String>> depsSortExtractors() {
+        List<Function<ReactorRow, String>> extractors = new ArrayList<>();
+        extractors.add(this::extractCheckColumn);
+        extractors.add(this::extractIdColumn);
+        extractors.add(this::extractCurrentVersion);
+        extractors.add(this::extractArrow);
+        extractors.add(this::extractNewestVersion);
+        if (!singleModule) {
+            extractors.add(this::extractModuleCount);
+        }
+        return extractors;
+    }
+
+    private String extractCheckColumn(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return row.propertyGroup.selected ? "[✓]" : "[ ]";
+        }
+        return row.dependency.selected ? "[✓]" : "   ";
+    }
+
+    private String extractIdColumn(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return "${" + row.propertyGroup.propertyName + "}";
+        }
+        return row.dependency.artifactId;
+    }
+
+    private String extractCurrentVersion(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return row.propertyGroup.resolvedVersion != null ? row.propertyGroup.resolvedVersion : "";
+        }
+        if (row.dependency.isPropertyManaged()) {
+            return "";
+        }
+        return row.dependency.primaryVersion != null ? row.dependency.primaryVersion : "";
+    }
+
+    private String extractArrow(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return row.propertyGroup.hasUpdate() ? "→" : "";
+        }
+        return !row.dependency.isPropertyManaged() && row.dependency.hasUpdate() ? "→" : "";
+    }
+
+    private String extractNewestVersion(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return row.propertyGroup.hasUpdate() ? row.propertyGroup.newestVersion : "";
+        }
+        if (!row.dependency.isPropertyManaged() && row.dependency.hasUpdate()) {
+            return row.dependency.newestVersion;
+        }
+        return "";
+    }
+
+    private String extractModuleCount(ReactorRow row) {
+        if (row.isGroupHeader()) {
+            return String.valueOf(row.propertyGroup.totalModuleCount());
+        }
+        return String.valueOf(row.dependency.moduleCount());
+    }
+
+    @Override
+    protected void onSortChanged() {
+        if (view == View.DEPENDENCIES) {
+            sortState.sort(displayRows, depsSortExtractors());
+        }
+        // Modules view uses visibleNodes() which is tree-based; sorting not applied there.
+    }
+
+    @Override
+    protected void updateSearchMatches() {
+        String query = searchBuffer.toString().toLowerCase();
+        if (query.isEmpty()) {
+            searchMatches = List.of();
+            searchMatchIndex = -1;
+            return;
+        }
+        searchMatches = new ArrayList<>();
+        for (int i = 0; i < displayRows.size(); i++) {
+            if (reactorRowMatchesSearch(displayRows.get(i), query)) {
+                searchMatches.add(i);
+            }
+        }
+        if (!searchMatches.isEmpty()) {
+            searchMatchIndex = 0;
+            selectSearchMatch(0);
+        } else {
+            searchMatchIndex = -1;
+        }
+    }
+
+    @Override
+    protected void selectSearchMatch(int matchIndex) {
+        tableState.select(searchMatches.get(matchIndex));
+    }
+
+    private boolean reactorRowMatchesSearch(ReactorRow row, String query) {
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            String searchable = group.propertyName;
+            if (group.resolvedVersion != null) searchable += ":" + group.resolvedVersion;
+            if (group.newestVersion != null) searchable += ":" + group.newestVersion;
+            return searchable.toLowerCase().contains(query);
+        }
+        var dep = row.dependency;
+        String searchable = dep.groupId + ":" + dep.artifactId;
+        if (dep.primaryVersion != null) searchable += ":" + dep.primaryVersion;
+        if (dep.newestVersion != null) searchable += ":" + dep.newestVersion;
+        return searchable.toLowerCase().contains(query);
+    }
+
+    private boolean matchesFilter(VersionComparator.UpdateType type) {
+        return switch (filter) {
+            case ALL -> true;
+            case PATCH -> type == VersionComparator.UpdateType.PATCH;
+            case MINOR -> type == VersionComparator.UpdateType.MINOR;
+            case MAJOR -> type == VersionComparator.UpdateType.MAJOR;
+        };
+    }
+
+    // -- Event handling --
+
     boolean handleEvent(Event event, TuiRunner runner) {
         if (!(event instanceof KeyEvent key)) {
             return true;
         }
 
-        // Save prompt mode (standalone only)
-        if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                saveAndQuit();
-                return true;
-            }
-            if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-                return true;
-            }
-            if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                status = "Quit cancelled";
-                return true;
-            }
-            return false;
-        }
-
-        // Diff overlay mode (standalone — panel mode handles in handleKeyEvent)
+        // Diff overlay in standalone — allow q to quit
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
                 diffOverlay.close();
@@ -305,35 +459,44 @@ public class UpdatesTui extends ToolPanel {
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
-                requestQuit();
+                runner.quit();
                 return true;
             }
             return false;
         }
 
-        // Help overlay mode (standalone only)
+        // Help overlay mode
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
-                requestQuit();
+                runner.quit();
                 return true;
             }
             return false;
         }
 
         if (key.isCtrlC()) {
-            requestQuit();
+            runner.quit();
             return true;
         }
 
-        // Try panel-level handling first
-        if (handleKeyEvent(key)) return true;
-
-        // Standalone-only keys
-        if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q')) {
-            requestQuit();
+        if (key.isKey(KeyCode.TAB) && !singleModule) {
+            view = TabBar.next(view, View.values());
             return true;
         }
+
+        if (view == View.DEPENDENCIES) {
+            if (handleKeyEvent(key)) return true;
+        } else {
+            if (handleModulesEvent(key)) return true;
+        }
+
+        // Standalone-specific keys
+        if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            runner.quit();
+            return true;
+        }
+
         if (key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelpStandalone());
             return true;
@@ -342,7 +505,833 @@ public class UpdatesTui extends ToolPanel {
         return false;
     }
 
-    // ── ToolPanel interface ─────────────────────────────────────────────────
+    @Override
+    public boolean handleKeyEvent(KeyEvent key) {
+        // Diff overlay mode — consume all keys
+        if (diffOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE)) {
+                diffOverlay.close();
+                return true;
+            }
+            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
+            return true; // consume all
+        }
+
+        if (view == View.MODULES) {
+            return handleModulesPanelEvent(key);
+        }
+
+        if (handleSearchInput(key)) return true;
+        if (handleSortInput(key)) return true;
+
+        if (key.isUp()) {
+            tableState.selectPrevious();
+            return true;
+        }
+        if (key.isDown()) {
+            tableState.selectNext(displayRows.size());
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
+            return true;
+        }
+        if (key.isCharIgnoreCase(' ')) {
+            toggleSelection();
+            return true;
+        }
+        if (key.isCharIgnoreCase('a')) {
+            selectAll();
+            return true;
+        }
+        if (key.isCharIgnoreCase('n')) {
+            deselectAll();
+            return true;
+        }
+        if (key.isCharIgnoreCase('d')) {
+            toggleDiffView();
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            applyUpdates();
+            return true;
+        }
+        if (key.isChar('f')) {
+            filter = Filter.values()[(filter.ordinal() + 1) % Filter.values().length];
+            buildDisplayRows();
+            return true;
+        }
+        if (key.isChar('F')) {
+            int len = Filter.values().length;
+            filter = Filter.values()[(filter.ordinal() - 1 + len) % len];
+            buildDisplayRows();
+            return true;
+        }
+        if (key.isCharIgnoreCase('i')) {
+            showDetails = !showDetails;
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean handleModulesNavigation(KeyEvent key) {
+        List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
+        if (key.isUp()) {
+            moduleTableState.selectPrevious();
+            return true;
+        }
+        if (key.isDown()) {
+            moduleTableState.selectNext(visible.size());
+            return true;
+        }
+        if (TableNavigation.handlePageKeys(key, moduleTableState, visible.size(), lastContentHeight)) {
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
+            toggleModuleNode(visible);
+            return true;
+        }
+        if (key.isKey(KeyCode.LEFT)) {
+            collapseModuleNode(visible);
+            return true;
+        }
+        return false;
+    }
+
+    private void toggleModuleNode(List<ReactorModel.ModuleNode> visible) {
+        Integer sel = moduleTableState.selected();
+        if (sel != null && sel < visible.size()) {
+            var node = visible.get(sel);
+            if (node.hasChildren()) {
+                node.expanded = !node.expanded;
+            }
+        }
+    }
+
+    private void collapseModuleNode(List<ReactorModel.ModuleNode> visible) {
+        Integer sel = moduleTableState.selected();
+        if (sel != null && sel < visible.size()) {
+            var node = visible.get(sel);
+            if (node.expanded && node.hasChildren()) {
+                node.expanded = false;
+            }
+        }
+    }
+
+    private boolean handleModulesPanelEvent(KeyEvent key) {
+        return handleModulesNavigation(key);
+    }
+
+    private boolean handleModulesEvent(KeyEvent key) {
+        if (handleModulesNavigation(key)) return true;
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(buildHelpStandalone());
+            return true;
+        }
+        return false;
+    }
+
+    private void toggleSelection() {
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= displayRows.size()) return;
+
+        var row = displayRows.get(sel);
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            boolean newState = !group.selected;
+            group.selected = newState;
+            for (var dep : group.dependencies) {
+                dep.selected = newState;
+            }
+        } else if (row.dependency != null && row.dependency.hasUpdate()) {
+            var dep = row.dependency;
+            boolean newState = !dep.selected;
+            dep.selected = newState;
+            // If part of a property group, toggle the whole group
+            if (dep.isPropertyManaged()) {
+                for (var group : reactorResult.propertyGroups) {
+                    if (group.dependencies.contains(dep)) {
+                        group.selected = newState;
+                        for (var other : group.dependencies) {
+                            other.selected = newState;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void selectAll() {
+        for (var row : displayRows) {
+            if (row.isGroupHeader() && row.propertyGroup.hasUpdate()) {
+                row.propertyGroup.selected = true;
+                for (var dep : row.propertyGroup.dependencies) {
+                    dep.selected = true;
+                }
+            } else if (row.dependency != null && !row.dependency.isPropertyManaged() && row.dependency.hasUpdate()) {
+                row.dependency.selected = true;
+            }
+        }
+    }
+
+    private void deselectAll() {
+        for (var group : reactorResult.propertyGroups) {
+            group.selected = false;
+            for (var dep : group.dependencies) {
+                dep.selected = false;
+            }
+        }
+        for (var dep : reactorResult.ungroupedDependencies) {
+            dep.selected = false;
+        }
+    }
+
+    // -- Diff preview --
+
+    private void toggleDiffView() {
+        Map<String, Map.Entry<String, String>> fileDiffs = new LinkedHashMap<>();
+
+        // Build preview editors from session state (not disk)
+        Map<Path, PomEditor> previewEditors = new LinkedHashMap<>();
+
+        for (var group : reactorResult.propertyGroups) {
+            if (group.selected && group.hasUpdate()) {
+                Path pomPath = group.origin.pomPath;
+                PomEditor editor = previewEditors.computeIfAbsent(pomPath, p -> {
+                    PomEditSession session = sessionProvider.apply(p);
+                    return new PomEditor(Document.of(session.currentXml()));
+                });
+                editor.properties().updateProperty(true, group.propertyName, group.newestVersion);
+            }
+        }
+
+        for (var dep : reactorResult.ungroupedDependencies) {
+            if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
+                var loc = findUpdateLocation(dep);
+                PomEditor editor = previewEditors.computeIfAbsent(loc.pomPath, p -> {
+                    PomEditSession session = sessionProvider.apply(p);
+                    return new PomEditor(Document.of(session.currentXml()));
+                });
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (loc.managed) {
+                    editor.dependencies().updateManagedDependency(true, coords);
+                } else {
+                    editor.dependencies().updateDependency(true, coords);
+                }
+            }
+        }
+
+        if (previewEditors.isEmpty()) {
+            status = "No updates selected";
+            return;
+        }
+
+        for (var entry : previewEditors.entrySet()) {
+            PomEditSession session = sessionProvider.apply(entry.getKey());
+            String original = session.originalContent();
+            String modified = entry.getValue().toXml();
+            fileDiffs.put(entry.getKey().toString(), Map.entry(original, modified));
+        }
+
+        long changes = diffOverlay.openMulti(fileDiffs);
+        status = changes == 0
+                ? "No changes to show"
+                : changes + " line(s) changed across " + fileDiffs.size() + " file(s)";
+    }
+
+    // -- Apply --
+
+    private record UpdateLocation(Path pomPath, boolean managed) {}
+
+    private UpdateLocation findUpdateLocation(ReactorCollector.AggregatedDependency dep) {
+        var managedUsage = dep.usages.stream().filter(u -> u.managed).findFirst();
+        if (managedUsage.isPresent()) {
+            return new UpdateLocation(managedUsage.orElseThrow().project.pomPath, true);
+        }
+        return new UpdateLocation(dep.usages.get(0).project.pomPath, false);
+    }
+
+    private Map<Path, List<Map.Entry<String, String>>> collectPropertyUpdates() {
+        Map<Path, List<Map.Entry<String, String>>> updates = new LinkedHashMap<>();
+        for (var group : reactorResult.propertyGroups) {
+            if (group.selected && group.hasUpdate()) {
+                updates.computeIfAbsent(group.origin.pomPath, k -> new ArrayList<>())
+                        .add(Map.entry(group.propertyName, group.newestVersion));
+            }
+        }
+        return updates;
+    }
+
+    private Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> collectDependencyUpdates() {
+        Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> updates = new LinkedHashMap<>();
+        for (var dep : reactorResult.ungroupedDependencies) {
+            if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
+                var loc = findUpdateLocation(dep);
+                updates.computeIfAbsent(loc.pomPath, k -> new ArrayList<>()).add(Map.entry(dep, loc.managed));
+            }
+        }
+        return updates;
+    }
+
+    private int applyPropertyChanges(
+            Map<Path, List<Map.Entry<String, String>>> propertyUpdates, Map<Path, PomEditSession> sessions) {
+        int count = 0;
+        for (var entry : propertyUpdates.entrySet()) {
+            PomEditSession session = sessions.get(entry.getKey());
+            for (var propEntry : entry.getValue()) {
+                session.editor().properties().updateProperty(true, propEntry.getKey(), propEntry.getValue());
+                session.recordChange(
+                        PomEditSession.ChangeType.MODIFY,
+                        "property",
+                        propEntry.getKey(),
+                        propEntry.getValue(),
+                        "reactor-updates");
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private int applyDependencyChanges(
+            Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> depUpdates,
+            Map<Path, PomEditSession> sessions) {
+        int count = 0;
+        for (var entry : depUpdates.entrySet()) {
+            PomEditSession session = sessions.get(entry.getKey());
+            for (var depEntry : entry.getValue()) {
+                var dep = depEntry.getKey();
+                boolean managed = depEntry.getValue();
+                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+                if (managed) {
+                    session.editor().dependencies().updateManagedDependency(true, coords);
+                } else {
+                    session.editor().dependencies().updateDependency(true, coords);
+                }
+                session.recordChange(
+                        PomEditSession.ChangeType.MODIFY,
+                        managed ? "managed" : "dependency",
+                        dep.ga(),
+                        dep.primaryVersion + ARROW + dep.newestVersion,
+                        "reactor-updates");
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void clearAppliedUpdates() {
+        for (var group : reactorResult.propertyGroups) {
+            if (group.selected && group.hasUpdate()) {
+                group.resolvedVersion = group.newestVersion;
+                group.newestVersion = null;
+                group.selected = false;
+                group.updateType = null;
+                for (var dep : group.dependencies) {
+                    dep.primaryVersion = group.resolvedVersion;
+                    dep.newestVersion = null;
+                    dep.selected = false;
+                    dep.updateType = null;
+                }
+            }
+        }
+        for (var dep : reactorResult.ungroupedDependencies) {
+            if (dep.selected && dep.hasUpdate()) {
+                dep.primaryVersion = dep.newestVersion;
+                dep.newestVersion = null;
+                dep.selected = false;
+                dep.updateType = null;
+            }
+        }
+    }
+
+    private void applyUpdates() {
+        var propertyUpdates = collectPropertyUpdates();
+        var depUpdates = collectDependencyUpdates();
+
+        if (propertyUpdates.isEmpty() && depUpdates.isEmpty()) {
+            status = "No updates selected";
+            return;
+        }
+
+        try {
+            // Get sessions for all affected POMs and snapshot before mutations
+            Map<Path, PomEditSession> sessions = new LinkedHashMap<>();
+            for (Path p : propertyUpdates.keySet()) {
+                sessions.computeIfAbsent(p, sessionProvider);
+            }
+            for (Path p : depUpdates.keySet()) {
+                sessions.computeIfAbsent(p, sessionProvider);
+            }
+            for (PomEditSession session : sessions.values()) {
+                session.beforeMutation();
+            }
+
+            int totalUpdates = applyPropertyChanges(propertyUpdates, sessions);
+            totalUpdates += applyDependencyChanges(depUpdates, sessions);
+
+            // Save all modified sessions
+            int updatedFiles = 0;
+            for (PomEditSession session : sessions.values()) {
+                PomEditSession.SaveResult result = session.save();
+                if (result.success()) {
+                    updatedFiles++;
+                } else {
+                    status = result.message();
+                    return;
+                }
+            }
+
+            clearAppliedUpdates();
+            updateReactorCounts();
+            buildDisplayRows();
+            status = "Applied " + totalUpdates + " update(s) to " + updatedFiles + " POM file(s)";
+        } catch (Exception e) {
+            status = "Failed to apply: " + e.getMessage();
+        }
+    }
+
+    // -- Rendering --
+
+    @Override
+    public void render(Frame frame, Rect area) {
+        lastContentHeight = area.height();
+        if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, area, " POM Changes ");
+        } else {
+            Rect contentArea = renderTabBar(frame, area);
+            if (view == View.DEPENDENCIES) {
+                renderDepsTable(frame, contentArea);
+            } else {
+                renderModulesTable(frame, contentArea);
+            }
+        }
+    }
+
+    void renderStandalone(Frame frame) {
+        boolean detailsVisible =
+                showDetails && view == View.DEPENDENCIES && !diffOverlay.isActive() && !helpOverlay.isActive();
+        var zones = Layout.vertical()
+                .constraints(
+                        Constraint.length(3),
+                        Constraint.fill(),
+                        detailsVisible ? Constraint.percentage(30) : Constraint.length(0),
+                        Constraint.length(3))
+                .split(frame.area());
+
+        renderHeader(frame, zones.get(0));
+        lastContentHeight = zones.get(1).height();
+        if (helpOverlay.isActive()) {
+            helpOverlay.render(frame, zones.get(1));
+        } else if (diffOverlay.isActive()) {
+            diffOverlay.render(frame, zones.get(1), " POM Changes ");
+        } else if (view == View.DEPENDENCIES) {
+            renderDepsTable(frame, zones.get(1));
+            if (detailsVisible) {
+                renderDetailPane(frame, zones.get(2));
+            }
+        } else {
+            renderModulesTable(frame, zones.get(1));
+        }
+        renderInfoBar(frame, zones.get(3));
+    }
+
+    private void renderHeader(Frame frame, Rect area) {
+        String title = loading ? "Checking Updates…" : "Dependency Updates";
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" " + projectGav).bold().cyan());
+        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+            case DEPENDENCIES -> loading ? "Dependencies" : "Dependencies (" + updateCount() + ")";
+            case MODULES -> "Modules";
+        }));
+        if (!singleModule) {
+            spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)")
+                    .dim());
+        }
+        if (loading) {
+            spans.add(Span.raw("  Checking " + loadedCount + "/" + reactorResult.allDependencies.size() + "…")
+                    .dim());
+        } else if (filter != Filter.ALL) {
+            spans.add(Span.raw(" [" + filter + "]").fg(Color.YELLOW));
+        }
+        renderStandaloneHeader(frame, area, title, Line.from(spans));
+    }
+
+    private void renderDepsTable(Frame frame, Rect area) {
+        Block block = Block.builder()
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(borderStyle())
+                .build();
+
+        List<String> headers = List.of("", "dependency / property", "current", "", "available", "info");
+        Row header = sortState.decorateHeader(headers, theme.tableHeader());
+
+        List<Row> rows = new ArrayList<>();
+        if (displayRows.isEmpty()) {
+            String msg = loading ? "Checking versions…" : "No updates available";
+            int colCount = 6;
+            List<Cell> cells = new ArrayList<>();
+            cells.add(Cell.empty());
+            cells.add(Cell.from(msg));
+            for (int i = 2; i < colCount; i++) cells.add(Cell.empty());
+            rows.add(Row.from(cells).style(Style.create().dim()));
+        } else {
+            for (int i = 0; i < displayRows.size(); i++) {
+                rows.add(createReactorRow(displayRows.get(i), isSearchMatch(i)));
+            }
+        }
+
+        List<Constraint> widths = List.of(
+                Constraint.length(3),
+                Constraint.percentage(40),
+                Constraint.percentage(15),
+                Constraint.length(3),
+                Constraint.percentage(15),
+                Constraint.percentage(10));
+        Table table = Table.builder()
+                .header(header)
+                .rows(rows)
+                .widths(widths)
+                .highlightStyle(displayRows.isEmpty() ? Style.create() : theme.highlightStyle())
+                .highlightSymbol("▸ ")
+                .highlightSpacing(Table.HighlightSpacing.ALWAYS)
+                .block(block)
+                .build();
+
+        setTableArea(area, block);
+        frame.renderStatefulWidget(table, area, tableState);
+    }
+
+    private Row createReactorRow(ReactorRow row, boolean highlight) {
+        return row.isGroupHeader() ? createGroupHeaderRow(row, highlight) : createDependencyRow(row, highlight);
+    }
+
+    private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
+        var group = row.propertyGroup;
+        String check = group.selected ? "[✓]" : "[ ]";
+        String name = "${" + group.propertyName + "}";
+        if (duplicatePropertyNames.contains(group.propertyName)) {
+            name += " (" + group.origin.artifactId + ")";
+        }
+        String current = group.resolvedVersion != null ? group.resolvedVersion : "";
+        String arrow = group.hasUpdate() ? "→" : "";
+        String available = group.hasUpdate() ? group.newestVersion : "";
+        String info = singleModule ? "" : group.totalModuleCount() + " mod";
+
+        Style style = theme.propertyGroupHeader();
+        if (highlight) style = style.bg(theme.searchHighlightBg());
+        return Row.from(check, name, current, arrow, available, info).style(style);
+    }
+
+    private Row createDependencyRow(ReactorRow row, boolean highlight) {
+        var dep = row.dependency;
+        String check = dep.selected ? "[✓]" : "   ";
+        String ga = "  ↳ " + dep.artifactId;
+        boolean inGroup = dep.isPropertyManaged();
+        String current;
+        if (inGroup || dep.primaryVersion == null) {
+            current = "";
+        } else {
+            current = dep.primaryVersion;
+        }
+        String arrow = !inGroup && dep.hasUpdate() ? "→" : "";
+        String available = !inGroup && dep.hasUpdate() ? dep.newestVersion : "";
+
+        Style style = dep.updateType != null
+                ? switch (dep.updateType) {
+                    case PATCH -> theme.updatePatch();
+                    case MINOR -> theme.updateMinor();
+                    case MAJOR -> theme.updateMajor();
+                }
+                : Style.create();
+        if (highlight) style = style.bg(theme.searchHighlightBg());
+
+        String info = "";
+        if (!singleModule) {
+            int modCount = dep.moduleCount();
+            info = modCount + " mod";
+            if (dep.usages.stream().anyMatch(u -> u.managed)) {
+                info += " M";
+            }
+        }
+        return Row.from(check, ga, current, arrow, available, info).style(style);
+    }
+
+    private void renderDetailPane(Frame frame, Rect area) {
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= displayRows.size()) return;
+
+        var row = displayRows.get(sel);
+        String title;
+        List<Row> rows;
+
+        if (row.isGroupHeader()) {
+            var group = row.propertyGroup;
+            title = " " + group.rawExpression + " \u2014 Details ";
+            rows = buildGroupDetailRows(group);
+        } else if (row.dependency != null) {
+            var dep = row.dependency;
+            title = " " + dep.ga() + " \u2014 Details ";
+            rows = buildDependencyDetailRows(dep);
+        } else {
+            return;
+        }
+
+        Block block = Block.builder()
+                .title(title)
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(Style.create().cyan())
+                .build();
+
+        Table table = Table.builder()
+                .rows(rows)
+                .widths(Constraint.fill())
+                .block(block)
+                .build();
+
+        frame.renderStatefulWidget(table, area, detailTableState);
+    }
+
+    private List<Row> buildGroupDetailRows(ReactorCollector.PropertyGroup group) {
+        List<Row> rows = new ArrayList<>();
+
+        // Origin POM path (relative to reactor root)
+        Path originPath = group.origin.pomPath;
+        Path rootPath = reactorModel.root.project.basedir;
+        String relativePom = rootPath.relativize(originPath).toString();
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Origin:    ").bold(), Span.raw(relativePom).fg(Color.DARK_GRAY))))));
+
+        // Current → available version
+        String value = group.resolvedVersion != null ? group.resolvedVersion : "?";
+        if (group.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Version:   ").bold(),
+                    Span.raw(value),
+                    Span.raw(ARROW).dim(),
+                    Span.raw(group.newestVersion).fg(Color.GREEN))))));
+        } else {
+            rows.add(
+                    Row.from(Cell.from(Line.from(List.of(Span.raw("Version:   ").bold(), Span.raw(value))))));
+        }
+
+        // Managed artifacts
+        List<Span> artSpans = new ArrayList<>();
+        artSpans.add(Span.raw("Artifacts: ").bold());
+        for (int i = 0; i < group.dependencies.size(); i++) {
+            if (i > 0) artSpans.add(Span.raw(", ").dim());
+            artSpans.add(Span.raw(group.dependencies.get(i).artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(artSpans))));
+
+        // Module count
+        rows.add(Row.from(Cell.from(Line.from(
+                List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
+
+        return rows;
+    }
+
+    private List<Row> buildDependencyDetailRows(ReactorCollector.AggregatedDependency dep) {
+        List<Row> rows = new ArrayList<>();
+
+        // Full GAV
+        String version = dep.primaryVersion != null ? dep.primaryVersion : "?";
+        rows.add(Row.from(Cell.from(Line.from(List.of(
+                Span.raw("GAV:       ").bold(), Span.raw(dep.groupId + ":" + dep.artifactId + ":" + version))))));
+
+        // Scope(s) in use (default to "compile" when omitted)
+        Set<String> scopes = new LinkedHashSet<>();
+        for (var u : dep.usages) {
+            scopes.add(u.scope != null && !u.scope.isEmpty() ? u.scope : "compile");
+        }
+        rows.add(Row.from(
+                Cell.from(Line.from(List.of(Span.raw("Scope:     ").bold(), Span.raw(String.join(", ", scopes)))))));
+
+        // Managed vs direct
+        boolean anyManaged = dep.usages.stream().anyMatch(u -> u.managed);
+        boolean allManaged = dep.usages.stream().allMatch(u -> u.managed);
+        String management;
+        if (allManaged) {
+            management = "yes";
+        } else if (anyManaged) {
+            management = "mixed";
+        } else {
+            management = "no";
+        }
+        rows.add(Row.from(Cell.from(Line.from(List.of(Span.raw("Managed:   ").bold(), Span.raw(management))))));
+
+        // Update info
+        if (dep.hasUpdate()) {
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Update:    ").bold(),
+                    Span.raw(dep.primaryVersion),
+                    Span.raw(ARROW).dim(),
+                    Span.raw(dep.newestVersion).fg(Color.GREEN))))));
+        }
+
+        // Which modules use this dependency
+        List<Span> modSpans = new ArrayList<>();
+        modSpans.add(Span.raw("Modules:   ").bold());
+        for (int i = 0; i < dep.usages.size(); i++) {
+            if (i > 0) modSpans.add(Span.raw(", ").dim());
+            modSpans.add(Span.raw(dep.usages.get(i).project.artifactId));
+        }
+        rows.add(Row.from(Cell.from(Line.from(modSpans))));
+
+        // Property origin (if property-managed)
+        if (dep.isPropertyManaged()) {
+            String propOrigin = dep.propertyOrigin != null ? dep.propertyOrigin.artifactId : "?";
+            rows.add(Row.from(Cell.from(Line.from(List.of(
+                    Span.raw("Property:  ").bold(),
+                    Span.raw(dep.rawVersionExpr).fg(Color.CYAN),
+                    Span.raw(" (" + propOrigin + ")").dim())))));
+        }
+
+        return rows;
+    }
+
+    private void renderModulesTable(Frame frame, Rect area) {
+        Block block = Block.builder()
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(borderStyle())
+                .build();
+
+        List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
+
+        if (visible.isEmpty()) {
+            Paragraph empty = Paragraph.builder()
+                    .text("No modules")
+                    .block(block)
+                    .centered()
+                    .build();
+            frame.renderWidget(empty, area);
+            return;
+        }
+
+        Row header = sortState.decorateHeader(List.of("module", "updates"), theme.tableHeader());
+
+        List<Row> rows = new ArrayList<>();
+        for (var node : visible) {
+            rows.add(createModuleRow(node));
+        }
+
+        Table table = Table.builder()
+                .header(header)
+                .rows(rows)
+                .widths(Constraint.percentage(75), Constraint.percentage(25))
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol("▸ ")
+                .block(block)
+                .build();
+
+        setTableArea(area, block);
+        frame.renderStatefulWidget(table, area, moduleTableState);
+    }
+
+    private Row createModuleRow(ReactorModel.ModuleNode node) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < node.depth; i++) {
+            sb.append("  ");
+        }
+        if (node.hasChildren()) {
+            sb.append(node.expanded ? "▾ " : "▸ ");
+        } else {
+            sb.append("  ");
+        }
+        sb.append(node.name);
+
+        String counts;
+        if (node.hasChildren()) {
+            counts = node.ownUpdateCount + "/" + node.totalUpdateCount;
+        } else {
+            counts = String.valueOf(node.ownUpdateCount);
+        }
+
+        Style style;
+        if (node.totalUpdateCount > 0 || node.ownUpdateCount > 0) {
+            style = theme.moduleWithUpdates();
+        } else {
+            style = Style.create();
+        }
+
+        return Row.from(sb.toString(), counts).style(style);
+    }
+
+    private void renderInfoBar(Frame frame, Rect area) {
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
+                .split(area);
+
+        // Status + selected count
+        List<Span> statusSpans = new ArrayList<>();
+        statusSpans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
+        long selectedCount = reactorResult.allDependencies.stream()
+                .filter(d -> d.selected && d.hasUpdate())
+                .count();
+        if (selectedCount > 0) {
+            statusSpans.add(
+                    Span.raw("  " + selectedCount + " update(s) selected").fg(theme.selectedCountColor()));
+        }
+        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
+
+        // Key bindings
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" "));
+        if (diffOverlay.isActive()) {
+            buildDiffKeyHints(spans);
+        } else {
+            if (view == View.DEPENDENCIES) {
+                buildDepsKeyHints(spans);
+            } else {
+                buildModulesKeyHints(spans);
+            }
+            spans.add(Span.raw("q").bold());
+            spans.add(Span.raw(":Quit"));
+        }
+
+        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+    }
+
+    private void buildDiffKeyHints(List<Span> spans) {
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(":Scroll  "));
+        spans.add(Span.raw("Esc").bold());
+        spans.add(Span.raw(":Close  "));
+        spans.add(Span.raw("q").bold());
+        spans.add(Span.raw(":Quit"));
+    }
+
+    private void buildDepsKeyHints(List<Span> spans) {
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(KEY_NAV));
+        spans.add(Span.raw(KEY_SPACE).bold());
+        spans.add(Span.raw(":Toggle  "));
+        spans.add(Span.raw("a").bold());
+        spans.add(Span.raw(":All  "));
+        spans.add(Span.raw("n").bold());
+        spans.add(Span.raw(":None  "));
+        spans.add(Span.raw("d").bold());
+        spans.add(Span.raw(":Diff  "));
+        spans.add(Span.raw(KEY_ENTER).bold());
+        spans.add(Span.raw(":Apply  "));
+        spans.add(Span.raw("f").bold());
+        spans.add(Span.raw(":Filter  "));
+        spans.add(Span.raw("i").bold());
+        spans.add(Span.raw(":Details  "));
+        spans.add(Span.raw("h").bold());
+        spans.add(Span.raw(":Help  "));
+    }
+
+    private void buildModulesKeyHints(List<Span> spans) {
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(KEY_NAV));
+        spans.add(Span.raw("←→").bold());
+        spans.add(Span.raw(":Expand  "));
+        spans.add(Span.raw("h").bold());
+        spans.add(Span.raw(":Help  "));
+    }
+
+    // -- ToolPanel methods --
 
     @Override
     public String toolName() {
@@ -350,208 +1339,187 @@ public class UpdatesTui extends ToolPanel {
     }
 
     @Override
-    public void render(Frame frame, Rect area) {
-        if (diffOverlay.isActive()) {
-            diffOverlay.render(frame, area, " POM Changes ");
-            lastContentHeight = area.height();
-            return;
-        }
-        lastContentHeight = area.height();
-        renderUpdatesTable(frame, area);
+    int subViewCount() {
+        return 2;
     }
 
     @Override
-    public boolean handleKeyEvent(KeyEvent key) {
-        // Diff overlay (panel mode)
-        if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
-                diffOverlay.close();
-                return true;
-            }
-            if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-            return true; // consume all keys during overlay
-        }
+    int activeSubView() {
+        return view.ordinal();
+    }
 
-        if (handleSortInput(key)) return true;
+    @Override
+    boolean isSubViewEnabled(int index) {
+        return index != View.MODULES.ordinal() || !singleModule;
+    }
 
-        if (key.isUp()) {
-            tableState.selectPrevious();
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (key.isDown()) {
-            tableState.selectNext(displayDeps.size());
-            fetchPomInfoIfNeeded();
-            return true;
-        }
-        if (TableNavigation.handlePageKeys(key, tableState, displayDeps.size(), lastContentHeight)) {
-            fetchPomInfoIfNeeded();
-            return true;
-        }
+    @Override
+    void setActiveSubView(int index) {
+        if (!isSubViewEnabled(index)) return;
+        view = View.values()[index];
+        clearSearch();
+        int depsCols = 6;
+        sortState = new SortState(view == View.DEPENDENCIES ? depsCols : 2);
+    }
 
-        if (key.isCharIgnoreCase(' ')) {
-            toggleSelection();
-            return true;
-        }
+    @Override
+    List<String> subViewNames() {
+        String depsLabel = "Dependencies" + (loading ? "" : " (" + updateCount() + ")");
+        return List.of(depsLabel, "Modules");
+    }
 
-        if (key.isCharIgnoreCase('a')) {
-            selectAll();
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('n')) {
-            deselectAll();
-            return true;
-        }
-
-        if (key.isKey(KeyCode.ENTER)) {
-            applyUpdates();
-            return true;
-        }
-
-        if (key.isChar('f')) {
-            filter = Filter.values()[(filter.ordinal() + 1) % Filter.values().length];
-            applyFilter();
-            return true;
-        }
-        if (key.isChar('F')) {
-            int len = Filter.values().length;
-            filter = Filter.values()[(filter.ordinal() - 1 + len) % len];
-            applyFilter();
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('d')) {
-            toggleDiffView();
-            return true;
-        }
-
-        return false;
+    private long updateCount() {
+        return reactorResult.allDependencies.stream()
+                .filter(ReactorCollector.AggregatedDependency::hasUpdate)
+                .count();
     }
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
-        if (handleMouseSortHeader(
-                mouse,
-                List.of(
-                        Constraint.length(3), Constraint.percentage(40),
-                        Constraint.percentage(15), Constraint.length(3),
-                        Constraint.percentage(15), Constraint.percentage(10)))) {
+        if (handleMouseTabBar(mouse)) return true;
+        List<Constraint> widths;
+        if (view == View.DEPENDENCIES) {
+            widths = List.of(
+                    Constraint.length(3), Constraint.percentage(40),
+                    Constraint.percentage(15), Constraint.length(3),
+                    Constraint.percentage(15), Constraint.percentage(10));
+        } else {
+            widths = List.of(Constraint.percentage(75), Constraint.percentage(25));
+        }
+        if (handleMouseSortHeader(mouse, widths)) {
             return true;
         }
-        if (mouse.isClick()) {
-            int row = mouseToTableRow(mouse, displayDeps.size(), tableState);
-            if (row >= 0) {
-                tableState.select(row);
-                fetchPomInfoIfNeeded();
+        if (view == View.MODULES) {
+            List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
+            if (mouse.isClick()) {
+                int row = mouseToTableRow(mouse, visible.size(), moduleTableState);
+                if (row >= 0) {
+                    moduleTableState.select(row);
+                    return true;
+                }
+            }
+            if (mouse.isScroll()) {
+                if (visible.isEmpty()) return false;
+                int sel = moduleTableState.selected();
+                if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                    moduleTableState.select(Math.max(0, sel - 1));
+                } else {
+                    moduleTableState.select(Math.min(visible.size() - 1, sel + 1));
+                }
                 return true;
             }
-        }
-        if (mouse.isScroll()) {
-            if (displayDeps.isEmpty()) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(displayDeps.size() - 1, sel + 1));
+        } else {
+            if (mouse.isClick()) {
+                int row = mouseToTableRow(mouse, displayRows.size(), tableState);
+                if (row >= 0) {
+                    tableState.select(row);
+                    return true;
+                }
             }
-            fetchPomInfoIfNeeded();
-            return true;
+            if (mouse.isScroll()) {
+                if (displayRows.isEmpty()) return false;
+                int sel = tableState.selected();
+                if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                    tableState.select(Math.max(0, sel - 1));
+                } else {
+                    tableState.select(Math.min(displayRows.size() - 1, sel + 1));
+                }
+                return true;
+            }
         }
         return false;
     }
 
     @Override
-    protected void onSortChanged() {
-        sortState.sort(displayDeps, sortExtractors());
-    }
-
-    private List<Function<DependencyInfo, String>> sortExtractors() {
-        return List.of(
-                dep -> dep.selected ? "1" : "0", // "" (checkbox)
-                DependencyInfo::ga, // groupId:artifactId
-                dep -> dep.version, // current
-                dep -> dep.hasUpdate() ? "1" : "0", // "" (arrow)
-                dep -> dep.newestVersion != null ? dep.newestVersion : "", // available
-                dep -> dep.updateType != null ? dep.updateType.name() : "" // type
-                );
-    }
-
-    @Override
     public String status() {
+        String search = searchStatus();
+        if (search != null) {
+            return searchMode ? search : status + " — " + search;
+        }
         return status;
     }
 
     @Override
     public List<Span> keyHints() {
+        List<Span> searchHints = searchKeyHints();
+        if (!searchHints.isEmpty()) {
+            return searchHints;
+        }
         List<Span> spans = new ArrayList<>();
         if (diffOverlay.isActive()) {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Close  "));
+            spans.add(Span.raw(":Close"));
         } else {
             spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Nav  "));
-            spans.add(Span.raw("Space").bold());
+            spans.add(Span.raw(KEY_NAV));
+            spans.add(Span.raw(KEY_SPACE).bold());
             spans.add(Span.raw(":Toggle  "));
             spans.add(Span.raw("a").bold());
             spans.add(Span.raw(":All  "));
             spans.add(Span.raw("n").bold());
             spans.add(Span.raw(":None  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Apply  "));
-            spans.add(Span.raw("f").bold());
-            spans.add(Span.raw(":Filter  "));
             spans.addAll(sortKeyHints());
+            spans.add(Span.raw("/").bold());
+            spans.add(Span.raw(":Search  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw(KEY_ENTER).bold());
+            spans.add(Span.raw(":Apply  "));
+            spans.add(Span.raw("f").bold());
+            spans.add(Span.raw(":Filter"));
         }
         return spans;
     }
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return HelpOverlay.parse("""
-                ## Dependency Updates
-                Checks Maven Central for newer versions of each
-                declared dependency. Versions are resolved in
-                the background — status bar shows progress.
-                Select updates with Space, then press Enter to
-                apply them to the POM. Use 'd' to preview the
-                changes as a unified diff before committing.
+        List<HelpOverlay.Entry> descEntries = new ArrayList<>();
+        if (singleModule) {
+            descEntries.add(new HelpOverlay.Entry("", "Shows available dependency updates for this project."));
+            descEntries.add(new HelpOverlay.Entry("", "Dependencies managed via properties (e.g."));
+            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"));
+            descEntries.add(new HelpOverlay.Entry("", "the group header toggles all dependencies in it."));
+        } else {
+            descEntries.add(new HelpOverlay.Entry("", "Aggregates dependency updates across all reactor"));
+            descEntries.add(new HelpOverlay.Entry("", "modules. Dependencies managed via properties (e.g."));
+            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"));
+            descEntries.add(new HelpOverlay.Entry("", "the group header toggles all dependencies in it."));
+            descEntries.add(new HelpOverlay.Entry("", ""));
+            descEntries.add(new HelpOverlay.Entry("", "The 'N mod' column shows how many reactor modules"));
+            descEntries.add(new HelpOverlay.Entry("", "use each dependency. 'M' indicates a managed"));
+            descEntries.add(new HelpOverlay.Entry("", "dependency (from dependencyManagement)."));
+        }
+        descEntries.add(new HelpOverlay.Entry("", ""));
+        descEntries.add(new HelpOverlay.Entry("", "When you apply updates, property-based deps edit"));
+        descEntries.add(new HelpOverlay.Entry("", "the <properties> in the POM that defines them;"));
+        descEntries.add(new HelpOverlay.Entry("", "direct deps edit the module's own POM."));
 
-                ## Filters
-                f / F           Cycle filter: All > Patch > Minor > Major
-                All — show all dependencies (default)
-                Patch — only patch updates (bug fixes)
-                Minor — only minor updates (new features)
-                Major — only major updates (breaking changes)
+        String sectionTitle = singleModule ? "Dependency Updates" : "Reactor Dependency Updates";
+        String actionsTitle = singleModule ? "Actions" : "Reactor Updates Actions";
 
-                ## Colors
-                green           Patch update — safe to apply
-                yellow          Minor update — usually compatible
-                red             Major update — breaking changes possible
-                dim             No update available or up-to-date
-
-                ## Actions
-                ↑ / ↓           Move selection up / down
-                Space           Toggle selection of current dependency
-                a / n           Select all / deselect all
-                Enter           Apply selected updates to POM
-                d               Preview POM changes as unified diff
-                s / S           Sort by column / reverse sort
-                """);
-    }
-
-    @Override
-    public boolean isDirty() {
-        return dirty;
-    }
-
-    @Override
-    public boolean save() {
-        return doSave();
+        return List.of(
+                new HelpOverlay.Section(sectionTitle, descEntries),
+                new HelpOverlay.Section(
+                        "Colors",
+                        List.of(
+                                new HelpOverlay.Entry("green", "Patch update — bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("yellow", "Minor update — new features, usually compatible"),
+                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"),
+                                new HelpOverlay.Entry("cyan", "Property group header (${property.name})"))),
+                new HelpOverlay.Section(
+                        actionsTitle,
+                        List.of(
+                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
+                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
+                                new HelpOverlay.Entry(KEY_SPACE, "Toggle selection (group or individual)"),
+                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
+                                new HelpOverlay.Entry(KEY_ENTER, "Apply selected updates to POM files"),
+                                new HelpOverlay.Entry("f / F", "Cycle filter: all → patch → minor → major"),
+                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"),
+                                new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))));
     }
 
     @Override
@@ -567,385 +1535,25 @@ public class UpdatesTui extends ToolPanel {
         httpPool.shutdownNow();
     }
 
-    /**
-     * Toggle the selected state of the currently highlighted dependency when an update is available.
-     *
-     * If the table has a valid selected row and that dependency has an available update, flips its
-     * `selected` flag; otherwise does nothing.
-     */
-    private void toggleSelection() {
-        int sel = selectedIndex();
-        if (sel >= 0 && sel < displayDeps.size()) {
-            var dep = displayDeps.get(sel);
-            if (dep.hasUpdate()) {
-                boolean newState = !dep.selected;
-                dep.selected = newState;
-                if (dep.versionProperty != null) {
-                    for (var other : allDeps) {
-                        if (other != dep && dep.versionProperty.equals(other.versionProperty)) {
-                            other.selected = newState;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private void requestQuit() {
-        if (dirty) {
-            pendingQuit = true;
-            status = "Save changes to POM?";
-        } else {
-            runner.quit();
-        }
-    }
-
-    private boolean doSave() {
-        try {
-            String currentOnDisk = Files.readString(Path.of(pomPath));
-            if (!currentOnDisk.equals(originalPomContent)) {
-                status = "POM modified externally — save aborted";
-                return false;
-            }
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            dirty = false;
-            status = "Saved";
-            return true;
-        } catch (Exception e) {
-            status = "Failed to save: " + e.getMessage();
-            return false;
-        }
-    }
-
-    private void saveAndQuit() {
-        if (doSave()) {
-            runner.quit();
-        } else {
-            pendingQuit = false;
-        }
-    }
-
-    private void toggleDiffView() {
-        // Include both staged changes and currently selected (not yet applied) updates
-        // Use allDeps to honor property-linked peers outside the filtered view
-        List<DependencyInfo> pendingSelected =
-                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
-
-        String modifiedPom;
-        if (pendingSelected.isEmpty()) {
-            modifiedPom = editor.toXml();
-        } else {
-            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
-            for (var dep : pendingSelected) {
-                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                if (dep.managed) {
-                    preview.dependencies().updateManagedDependency(true, coords);
-                } else {
-                    preview.dependencies().updateDependency(true, coords);
-                }
-            }
-            modifiedPom = preview.toXml();
-        }
-
-        long changes = diffOverlay.open(originalPomContent, modifiedPom);
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
-    }
-
-    private void selectAll() {
-        for (var dep : displayDeps) {
-            if (dep.hasUpdate()) dep.selected = true;
-        }
-    }
-
-    private void deselectAll() {
-        for (var dep : displayDeps) {
-            dep.selected = false;
-        }
-    }
-
-    private void applyFilter() {
-        displayDeps = allDeps.stream()
-                .filter(dep -> switch (filter) {
-                    case ALL -> dep.hasUpdate();
-                    case PATCH -> dep.updateType == VersionComparator.UpdateType.PATCH;
-                    case MINOR -> dep.updateType == VersionComparator.UpdateType.MINOR;
-                    case MAJOR -> dep.updateType == VersionComparator.UpdateType.MAJOR;
-                })
-                .collect(Collectors.toCollection(ArrayList::new));
-        onSortChanged();
-        if (!displayDeps.isEmpty()) {
-            tableState.select(0);
-        }
-    }
-
-    private void applyUpdates() {
-        // Use allDeps to honor property-linked peers outside the filtered view
-        List<DependencyInfo> toUpdate =
-                allDeps.stream().filter(d -> d.selected && d.hasUpdate()).toList();
-
-        if (toUpdate.isEmpty()) {
-            status = "No updates selected";
-            return;
-        }
-
-        try {
-            // Validate on a preview editor first to avoid partial mutations
-            PomEditor preview = new PomEditor(Document.of(editor.toXml()));
-            for (var dep : toUpdate) {
-                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                if (dep.managed) {
-                    preview.dependencies().updateManagedDependency(true, coords);
-                } else {
-                    preview.dependencies().updateDependency(true, coords);
-                }
-            }
-
-            // All updates succeeded on preview — apply to real editor
-            for (var dep : toUpdate) {
-                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                if (dep.managed) {
-                    editor.dependencies().updateManagedDependency(true, coords);
-                } else {
-                    editor.dependencies().updateDependency(true, coords);
-                }
-            }
-
-            dirty = true;
-            status = "Staged " + toUpdate.size() + " update(s) — save on exit";
-
-            for (var dep : toUpdate) {
-                dep.version = dep.newestVersion;
-                dep.newestVersion = null;
-                dep.selected = false;
-                dep.updateType = null;
-            }
-            applyFilter();
-        } catch (Exception e) {
-            status = "Failed to update: " + e.getMessage();
-        }
-    }
-
-    // -- Rendering --
-
-    void renderStandalone(Frame frame) {
-        var zones = Layout.vertical()
-                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(3))
-                .split(frame.area());
-
-        renderHeader(frame, zones.get(0));
-        Rect contentArea = renderStandaloneHelp(frame, zones.get(1));
-        if (contentArea != null) {
-            lastContentHeight = contentArea.height();
-            if (diffOverlay.isActive()) {
-                diffOverlay.render(frame, contentArea, " POM Changes ");
-            } else {
-                renderUpdatesTable(frame, contentArea);
-            }
-        }
-        renderInfoBar(frame, zones.get(2));
-    }
-
-    private void renderHeader(Frame frame, Rect area) {
-        String title = loading ? "Checking Updates…" : "Dependency Updates";
-        List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" " + projectGav).bold().cyan());
-        if (loading) {
-            spans.add(Span.raw("  Checking " + loadedCount + "/" + allDeps.size() + "…")
-                    .dim());
-        }
-        if (dirty) {
-            spans.add(theme.dirtyIndicator());
-        }
-        renderStandaloneHeader(frame, area, title, Line.from(spans));
-    }
-
-    private void renderUpdatesTable(Frame frame, Rect area) {
-        long updateCount =
-                displayDeps.stream().filter(DependencyInfo::hasUpdate).count();
-        String title = " Updates (" + updateCount + " of " + allDeps.size() + " dependencies) " + "[" + filter + "] ";
-
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(borderStyle())
-                .build();
-
-        if (displayDeps.isEmpty()) {
-            String msg = loading ? "Checking versions…" : "No updates available";
-            Paragraph empty =
-                    Paragraph.builder().text(msg).block(block).centered().build();
-            frame.renderWidget(empty, area);
-            clearTableArea();
-            return;
-        }
-
-        Row header = sortState.decorateHeader(
-                List.of("", "groupId:artifactId", "current", "", "available", "type"), theme.tableHeader());
-
-        List<Row> rows = new ArrayList<>();
-        for (var dep : displayDeps) {
-            rows.add(createUpdateRow(dep));
-        }
-
-        Table table = Table.builder()
-                .header(header)
-                .rows(rows)
-                .widths(
-                        Constraint.length(3), Constraint.percentage(40),
-                        Constraint.percentage(15), Constraint.length(3),
-                        Constraint.percentage(15), Constraint.percentage(10))
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
-                .block(block)
-                .build();
-
-        setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
-    }
-
-    private Row createUpdateRow(DependencyInfo dep) {
-        String check = dep.selected ? "[✓]" : "[ ]";
-        String ga = dep.groupId + ":" + dep.artifactId;
-        String current = dep.version;
-        String arrow = dep.hasUpdate() ? "→" : "";
-        String available = dep.hasUpdate() ? dep.newestVersion : "";
-        String type = dep.updateType != null ? dep.updateType.name().toLowerCase() : "";
-
-        Style style = dep.updateType != null
-                ? switch (dep.updateType) {
-                    case PATCH -> theme.updatePatch();
-                    case MINOR -> theme.updateMinor();
-                    case MAJOR -> theme.updateMajor();
-                }
-                : Style.create();
-
-        return Row.from(check, ga, current, arrow, available, type).style(style);
-    }
-
-    private void renderInfoBar(Frame frame, Rect area) {
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
-                .split(area);
-
-        // POM info
-        renderPomInfo(frame, rows.get(0));
-
-        // Status
-        List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(
-                Span.raw(" " + status).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
-        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
-
-        // Key bindings
-        List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-        if (pendingQuit) {
-            spans.add(Span.raw("y").bold());
-            spans.add(Span.raw(":Save and quit  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":Discard and quit  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Scroll  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Close  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
-        } else {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Nav  "));
-            spans.add(Span.raw("Space").bold());
-            spans.add(Span.raw(":Toggle  "));
-            spans.add(Span.raw("a").bold());
-            spans.add(Span.raw(":All  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":None  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Apply  "));
-            spans.add(Span.raw("f").bold());
-            spans.add(Span.raw(":Filter  "));
-            spans.add(Span.raw("d").bold());
-            spans.add(Span.raw(":Diff  "));
-            spans.add(Span.raw("h").bold());
-            spans.add(Span.raw(":Help  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
-        }
-
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
-    }
-
-    /**
-     * Renders a single-line POM metadata summary for the currently selected dependency.
-     *
-     * If cached POM info with a project name is available, renders the project name (bold cyan)
-     * and, when present, the license (green) and organization (dim), separated by a dark-gray divider.
-     * Otherwise renders the dependency's "groupId:artifactId" in cyan and appends " (managed)" in dim
-     * if the dependency is managed.
-     *
-     * @param frame the frame to render into
-     * @param area the rectangular area within the frame to use for rendering
-     */
-    private void renderPomInfo(Frame frame, Rect area) {
-        List<Span> spans = new ArrayList<>();
-        int sel = selectedIndex();
-        if (sel >= 0 && sel < displayDeps.size()) {
-            var dep = displayDeps.get(sel);
-            String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
-            var info = pomInfoCache.get(pomKey);
-            if (info != null && info.name != null) {
-                spans.add(Span.raw(" "));
-                spans.add(Span.raw(info.name).bold().cyan());
-                if (info.license != null) {
-                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
-                    spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
-                }
-                if (info.organization != null) {
-                    spans.add(Span.raw(" │ ").fg(theme.separatorColor()));
-                    spans.add(Span.raw(info.organization).dim());
-                }
-            } else {
-                spans.add(Span.raw(" " + dep.ga()).cyan());
-                if (dep.managed) {
-                    spans.add(Span.raw(" (managed)").dim());
-                }
-            }
-        }
-        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
-    }
+    // -- Help --
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        if (!singleModule) {
+            sections.addAll(HelpOverlay.parse("""
+                    ## Modules View
+                    Shows the reactor module tree with update counts.
+                    """ + NAV_KEYS + """
+                    ← / →           Collapse / expand module tree
+                    """));
+        }
+        String tabEntry = singleModule ? "" : "Tab             Switch Dependencies / Modules view\n";
         sections.addAll(HelpOverlay.parse("""
                 ## General
-                """ + NAV_KEYS + """
-                d               Preview POM changes as a unified diff
+                """ + tabEntry + """
                 h               Toggle this help screen
-                q / Esc         Quit (prompts to save if modified)
+                q / Esc         Quit
                 """));
         return sections;
-    }
-
-    /**
-     * Fetches and caches POM metadata for the currently selected dependency if it is not already cached.
-     *
-     * If the selected index is invalid or the cache already contains an entry for the dependency (key
-     * "groupId:artifactId:version"), the method returns immediately. Otherwise it inserts a placeholder
-     * cache entry to prevent duplicate fetches, starts an asynchronous fetch using the internal HTTP
-     * pool, and updates the cache on the renderer thread when the fetch completes.
-     */
-    private void fetchPomInfoIfNeeded() {
-        int sel = selectedIndex();
-        if (sel < 0 || sel >= displayDeps.size()) return;
-        var dep = displayDeps.get(sel);
-        String pomKey = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
-        if (pomInfoCache.containsKey(pomKey)) return;
-        pomInfoCache.put(pomKey, new SearchTui.PomInfo(null, null, null, null, null, null, null));
-
-        CompletableFuture.supplyAsync(
-                        () -> SearchTui.fetchPomFromCentral(dep.groupId, dep.artifactId, dep.version), httpPool)
-                .thenAccept(info -> runner.runOnRenderThread(() -> pomInfoCache.put(pomKey, info)));
     }
 }
