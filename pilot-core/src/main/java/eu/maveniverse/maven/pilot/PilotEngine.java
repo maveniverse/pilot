@@ -136,21 +136,10 @@ public class PilotEngine {
 
     private ToolPanel createUpdatesPanel(PilotProject proj, List<PilotProject> projects, Consumer<String> progress) {
         UpdatesTui.VersionResolver versionResolver = resolver::resolveVersions;
-        if (projects.size() > 1) {
-            ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
-            ReactorModel reactorModel = ReactorModel.build(projects);
-            String reactorGav = projects.get(0).gav();
-            return new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
-        } else {
-            List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
-            for (PilotProject.Dep dep : proj.dependencies) {
-                dependencies.add(new UpdatesTui.DependencyInfo(
-                        dep.groupId(), dep.artifactId(), dep.version(), dep.scope(), dep.type()));
-            }
-            collectManagedDependencies(proj.originalManagedDependencies, proj.managedDependencies, dependencies);
-            String pomPath = proj.pomPath.toString();
-            return new UpdatesTui(dependencies, pomPath, proj.gav(), versionResolver);
-        }
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
+        ReactorModel reactorModel = ReactorModel.build(projects);
+        String reactorGav = projects.get(0).gav();
+        return new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
     }
 
     private ToolPanel createConflictsPanel(PilotProject proj, List<PilotProject> projects, Consumer<String> progress) {

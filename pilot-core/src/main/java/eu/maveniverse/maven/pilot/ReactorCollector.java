@@ -97,6 +97,7 @@ public class ReactorCollector {
         String newestVersion;
         VersionComparator.UpdateType updateType;
         boolean selected;
+        boolean expanded = true;
 
         PropertyGroup(String propertyName, String rawExpression, String resolvedVersion, PilotProject origin) {
             this.propertyName = propertyName;
@@ -223,12 +224,16 @@ public class ReactorCollector {
             PilotProject.Dep resolvedDep,
             List<PilotProject.Dep> originalDeps,
             PilotProject project) {
-        String rawVersion = null;
-        for (PilotProject.Dep orig : originalDeps) {
-            if (orig.groupId().equals(resolvedDep.groupId())
-                    && orig.artifactId().equals(resolvedDep.artifactId())) {
-                rawVersion = orig.version();
-                break;
+        String rawVersion = findRawVersion(resolvedDep, originalDeps);
+
+        // If not found in local originals, check parent chain's managed deps
+        if (rawVersion == null) {
+            PilotProject ancestor = project.parent;
+            while (ancestor != null && rawVersion == null) {
+                if (ancestor.originalManagedDependencies != null) {
+                    rawVersion = findRawVersion(resolvedDep, ancestor.originalManagedDependencies);
+                }
+                ancestor = ancestor.parent;
             }
         }
 
@@ -243,6 +248,15 @@ public class ReactorCollector {
             agg.propertyName = propertyName;
             agg.propertyOrigin = findPropertyOrigin(project, propertyName);
         }
+    }
+
+    private static String findRawVersion(PilotProject.Dep target, List<PilotProject.Dep> deps) {
+        for (PilotProject.Dep dep : deps) {
+            if (dep.groupId().equals(target.groupId()) && dep.artifactId().equals(target.artifactId())) {
+                return dep.version();
+            }
+        }
+        return null;
     }
 
     private static PilotProject findPropertyOrigin(PilotProject project, String propertyName) {

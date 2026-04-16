@@ -440,8 +440,8 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header + scroll
-            if (row >= 0 && row < displayDeps.size()) {
+            int row = mouseToTableRow(mouse, displayDeps.size(), tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 fetchPomInfoIfNeeded();
                 return true;
@@ -775,6 +775,7 @@ public class UpdatesTui extends ToolPanel {
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -798,7 +799,7 @@ public class UpdatesTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, tableState);
     }
 
