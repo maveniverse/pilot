@@ -187,6 +187,19 @@ public class AuditTui extends ToolPanel {
         }
     }
 
+    /** Initialize counters from pre-populated entry data (for tests). */
+    void initFromEntries() {
+        licensesLoaded = (int) entries.stream().filter(e -> e.licenseLoaded).count();
+        vulnsLoaded = (int) entries.stream().filter(e -> e.vulnsLoaded).count();
+        vulnCount = entries.stream()
+                .filter(AuditEntry::hasVulnerabilities)
+                .mapToInt(e -> e.vulnerabilities.size())
+                .sum();
+        rebuildVulnRows();
+        rebuildByLicenseRows();
+        updateStatus();
+    }
+
     private void fetchAllData() {
         for (var entry : entries) {
             // Fetch license info
