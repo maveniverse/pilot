@@ -325,6 +325,11 @@ public class AuditTui extends ToolPanel {
             }
         }
 
+        // Re-apply active sort so expand/collapse preserves order
+        if (view == View.BY_LICENSE && sortState.isSorted()) {
+            sortByLicenseTree();
+        }
+
         if (byLicenseRows.isEmpty()) {
             byLicenseTableState.clearSelection();
         } else if (byLicenseTableState.selected() == null || byLicenseTableState.selected() >= byLicenseRows.size()) {
@@ -676,7 +681,7 @@ public class AuditTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = zones.get(0);
+        setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), tableState);
 
         // -- Detail pane --
@@ -888,20 +893,42 @@ public class AuditTui extends ToolPanel {
                 vr -> vr.vuln().summary);
     }
 
-    private List<Function<LicenseRow, String>> byLicenseExtractors() {
-        return List.of(
-                r -> r.isGroup() ? r.licenseName : r.entry.ga(),
-                r -> r.isGroup() ? "" : r.entry.version,
-                r -> r.isGroup() ? "" : r.entry.scope,
-                r -> "");
+    private List<Function<LicenseRow, String>> byLicenseGroupExtractors() {
+        return List.of(r -> r.licenseName, r -> String.valueOf(r.deps.size()), r -> "", r -> "");
+    }
+
+    private List<Function<AuditEntry, String>> byLicenseChildExtractors() {
+        return List.of(AuditEntry::ga, e -> e.version, e -> e.scope, e -> "");
     }
 
     @Override
     protected void onSortChanged() {
         switch (view) {
             case LICENSES -> sortState.sort(entries, licensesExtractors());
-            case BY_LICENSE -> sortState.sort(byLicenseRows, byLicenseExtractors());
+            case BY_LICENSE -> sortByLicenseTree();
             case VULNERABILITIES -> sortState.sort(vulnRows, vulnExtractors());
+        }
+    }
+
+    private void sortByLicenseTree() {
+        // Extract and sort groups
+        var sortedGroups = new ArrayList<LicenseRow>();
+        for (var row : byLicenseRows) {
+            if (row.isGroup()) sortedGroups.add(row);
+        }
+        sortState.sort(sortedGroups, byLicenseGroupExtractors());
+        // Rebuild flat list, sorting children within each group
+        var childExtractors = byLicenseChildExtractors();
+        byLicenseRows = new ArrayList<>();
+        for (var group : sortedGroups) {
+            byLicenseRows.add(group);
+            if (group.expanded) {
+                var sortedDeps = new ArrayList<>(group.deps);
+                sortState.sort(sortedDeps, childExtractors);
+                for (var dep : sortedDeps) {
+                    byLicenseRows.add(LicenseRow.dep(dep));
+                }
+            }
         }
     }
 
@@ -963,7 +990,7 @@ public class AuditTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = zones.get(0);
+        setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), byLicenseTableState);
 
         // -- Detail pane --
@@ -1051,6 +1078,7 @@ public class AuditTui extends ToolPanel {
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -1102,7 +1130,7 @@ public class AuditTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = zones.get(0);
+        setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), vulnTableState);
 
         // -- Detail pane --
@@ -1393,8 +1421,8 @@ public class AuditTui extends ToolPanel {
                 ## Vulnerability Colors
                 red bold        Critical severity
                 yellow          High severity
-                yellow          Medium severity
-                default         Low severity
+                white           Medium severity
+                dim             Low severity
                 dim             Unknown severity
 
                 ## Audit Actions
@@ -1480,8 +1508,8 @@ public class AuditTui extends ToolPanel {
         if (handleMouseTabBar(mouse)) return true;
         if (handleMouseSortHeader(mouse, currentTableWidths())) return true;
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 3 + activeTableState().offset(); // tab bar + border + header
-            if (row >= 0 && row < activeRowCount()) {
+            int row = mouseToTableRow(mouse, activeRowCount(), activeTableState());
+            if (row >= 0) {
                 activeTableState().select(row);
                 return true;
             }

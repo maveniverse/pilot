@@ -353,11 +353,13 @@ public class PilotShell {
             }
         }
 
-        // Scroll follows mouse position
+        // Scroll follows mouse position and updates focus
         if (mouse.isScroll()) {
             if (treePane != null && treeArea != null && isInRect(mouse, treeArea)) {
+                if (focus != Focus.TREE) setFocus(Focus.TREE);
                 treePane.handleMouseEvent(mouse, treeArea);
             } else if (activePanel != null && contentArea != null && isInRect(mouse, contentArea)) {
+                if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
                 activePanel.handleMouseEvent(mouse, contentArea);
             }
             return true;

@@ -248,8 +248,10 @@ public class ReactorUpdatesTui extends ToolPanel {
             }
             if (groupHasUpdate) {
                 displayRows.add(ReactorRow.group(group));
-                for (var dep : group.dependencies) {
-                    displayRows.add(ReactorRow.dep(dep));
+                if (group.expanded) {
+                    for (var dep : group.dependencies) {
+                        displayRows.add(ReactorRow.dep(dep));
+                    }
                 }
             }
         }
@@ -304,9 +306,47 @@ public class ReactorUpdatesTui extends ToolPanel {
     @Override
     protected void onSortChanged() {
         if (view == View.DEPENDENCIES) {
-            sortState.sort(displayRows, depsSortExtractors());
+            sortByDepsTree();
         }
         // Modules view uses visibleNodes() which is tree-based; sorting not applied there.
+    }
+
+    /**
+     * Sort dependencies while preserving property group structure.
+     * Groups are sorted among themselves, children are sorted within each group,
+     * and ungrouped deps are sorted separately at the end.
+     */
+    private void sortByDepsTree() {
+        var groups = new ArrayList<ReactorRow>();
+        var ungrouped = new ArrayList<ReactorRow>();
+        var childrenByGroup = new LinkedHashMap<ReactorCollector.PropertyGroup, List<ReactorRow>>();
+
+        for (var row : displayRows) {
+            if (row.isGroupHeader()) {
+                groups.add(row);
+                childrenByGroup.put(row.propertyGroup, new ArrayList<>());
+            } else if (!childrenByGroup.isEmpty() && row.dependency != null && row.dependency.isPropertyManaged()) {
+                // Find the group this dep belongs to
+                var lastGroup = groups.get(groups.size() - 1).propertyGroup;
+                childrenByGroup.get(lastGroup).add(row);
+            } else {
+                ungrouped.add(row);
+            }
+        }
+
+        var extractors = depsSortExtractors();
+        sortState.sort(groups, extractors);
+        for (var children : childrenByGroup.values()) {
+            sortState.sort(children, extractors);
+        }
+        sortState.sort(ungrouped, extractors);
+
+        displayRows = new ArrayList<>();
+        for (var group : groups) {
+            displayRows.add(group);
+            displayRows.addAll(childrenByGroup.get(group.propertyGroup));
+        }
+        displayRows.addAll(ungrouped);
     }
 
     @Override
@@ -397,6 +437,7 @@ public class ReactorUpdatesTui extends ToolPanel {
         }
 
         if (key.isKey(KeyCode.TAB)) {
+            clearSearch();
             view = TabBar.next(view, View.values());
             return true;
         }
@@ -423,6 +464,10 @@ public class ReactorUpdatesTui extends ToolPanel {
 
     @Override
     public boolean handleKeyEvent(KeyEvent key) {
+        if (view == View.MODULES) {
+            return handleModulesEvent(key);
+        }
+
         // Diff overlay mode — consume all keys
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
@@ -445,6 +490,40 @@ public class ReactorUpdatesTui extends ToolPanel {
             return true;
         }
         if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
+            return true;
+        }
+        if (key.isKey(KeyCode.RIGHT)) {
+            Integer sel = tableState.selected();
+            if (sel != null && sel < displayRows.size()) {
+                var row = displayRows.get(sel);
+                if (row.isGroupHeader() && !row.propertyGroup.expanded) {
+                    row.propertyGroup.expanded = true;
+                    buildDisplayRows();
+                    tableState.select(sel);
+                } else {
+                    tableState.selectNext(displayRows.size());
+                }
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.LEFT)) {
+            Integer sel = tableState.selected();
+            if (sel != null && sel < displayRows.size()) {
+                var row = displayRows.get(sel);
+                if (row.isGroupHeader() && row.propertyGroup.expanded) {
+                    row.propertyGroup.expanded = false;
+                    buildDisplayRows();
+                    tableState.select(sel);
+                } else if (!row.isGroupHeader() && row.dependency != null && row.dependency.isPropertyManaged()) {
+                    // Navigate to parent group header
+                    for (int i = sel - 1; i >= 0; i--) {
+                        if (displayRows.get(i).isGroupHeader()) {
+                            tableState.select(i);
+                            break;
+                        }
+                    }
+                }
+            }
             return true;
         }
         if (key.isCharIgnoreCase(' ')) {
@@ -504,8 +583,10 @@ public class ReactorUpdatesTui extends ToolPanel {
             Integer sel = moduleTableState.selected();
             if (sel != null && sel < visible.size()) {
                 var node = visible.get(sel);
-                if (node.hasChildren()) {
-                    node.expanded = !node.expanded;
+                if (node.hasChildren() && !node.expanded) {
+                    node.expanded = true;
+                } else {
+                    moduleTableState.selectNext(reactorModel.visibleNodes().size());
                 }
             }
             return true;
@@ -516,6 +597,14 @@ public class ReactorUpdatesTui extends ToolPanel {
                 var node = visible.get(sel);
                 if (node.expanded && node.hasChildren()) {
                     node.expanded = false;
+                } else {
+                    // Navigate to parent
+                    for (int i = sel - 1; i >= 0; i--) {
+                        if (visible.get(i).depth < node.depth) {
+                            moduleTableState.select(i);
+                            break;
+                        }
+                    }
                 }
             }
             return true;
@@ -849,6 +938,7 @@ public class ReactorUpdatesTui extends ToolPanel {
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -875,7 +965,7 @@ public class ReactorUpdatesTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, tableState);
     }
 
@@ -883,7 +973,8 @@ public class ReactorUpdatesTui extends ToolPanel {
         if (row.isGroupHeader()) {
             var group = row.propertyGroup;
             String check = group.selected ? "[✓]" : "[ ]";
-            String name = "${" + group.propertyName + "}";
+            String expandIcon = group.expanded ? "▾ " : "▸ ";
+            String name = expandIcon + "${" + group.propertyName + "}";
             if (duplicatePropertyNames.contains(group.propertyName)) {
                 name += " (" + group.origin.artifactId + ")";
             }
@@ -898,9 +989,9 @@ public class ReactorUpdatesTui extends ToolPanel {
             return Row.from(check, name, current, arrow, available, info).style(style);
         } else {
             var dep = row.dependency;
-            String check = dep.selected ? "[✓]" : "   ";
-            String ga = "  ↳ " + dep.artifactId;
             boolean inGroup = dep.isPropertyManaged();
+            String check = inGroup ? "" : (dep.selected ? "[✓]" : "[ ]");
+            String ga = inGroup ? "  ↳ " + dep.artifactId : dep.ga();
             String current = inGroup ? "" : (dep.primaryVersion != null ? dep.primaryVersion : "");
             String arrow = (!inGroup && dep.hasUpdate()) ? "→" : "";
             String available = (!inGroup && dep.hasUpdate()) ? dep.newestVersion : "";
@@ -1071,6 +1162,7 @@ public class ReactorUpdatesTui extends ToolPanel {
                     .centered()
                     .build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -1090,7 +1182,7 @@ public class ReactorUpdatesTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, moduleTableState);
     }
 
@@ -1230,9 +1322,30 @@ public class ReactorUpdatesTui extends ToolPanel {
         if (handleMouseSortHeader(mouse, widths)) {
             return true;
         }
+        if (view == View.MODULES) {
+            List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
+            if (mouse.isClick()) {
+                int row = mouseToTableRow(mouse, visible.size(), moduleTableState);
+                if (row >= 0) {
+                    moduleTableState.select(row);
+                    return true;
+                }
+            }
+            if (mouse.isScroll()) {
+                if (visible.isEmpty()) return false;
+                int sel = moduleTableState.selected() != null ? moduleTableState.selected() : 0;
+                if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+                    moduleTableState.select(Math.max(0, sel - 1));
+                } else {
+                    moduleTableState.select(Math.min(visible.size() - 1, sel + 1));
+                }
+                return true;
+            }
+            return false;
+        }
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 3 + tableState.offset(); // tab bar + border + header
-            if (row >= 0 && row < displayRows.size()) {
+            int row = mouseToTableRow(mouse, displayRows.size(), tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
@@ -1322,6 +1435,12 @@ public class ReactorUpdatesTui extends ToolPanel {
                 f / F           Cycle filter: all → patch → minor → major
                 d               Preview changes as a multi-file diff
                 i               Toggle detail pane for selected row
+                Tab             Switch Dependencies / Modules view
+
+                ## Modules View
+                Shows the reactor module tree with update counts.
+                """ + NAV_KEYS + """
+                ← / →           Collapse / expand module tree
                 """);
     }
 
@@ -1343,13 +1462,7 @@ public class ReactorUpdatesTui extends ToolPanel {
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
         sections.addAll(HelpOverlay.parse("""
-                ## Modules View
-                Shows the reactor module tree with update counts.
-                """ + NAV_KEYS + """
-                ← / →           Collapse / expand module tree
-
                 ## General
-                Tab             Switch Dependencies / Modules view
                 h               Toggle this help screen
                 q / Esc         Quit
                 """));

@@ -439,8 +439,8 @@ public class DependenciesTui extends ToolPanel {
         if (handleMouseTabBar(mouse)) return true;
         if (handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 3 + tableState.offset(); // tab bar + border + header
-            if (row >= 0 && row < currentList().size()) {
+            int row = mouseToTableRow(mouse, currentList().size(), tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
@@ -990,6 +990,7 @@ public class DependenciesTui extends ToolPanel {
                     .centered()
                     .build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -1008,7 +1009,7 @@ public class DependenciesTui extends ToolPanel {
                 .widths(getTableWidths())
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, tableState);
     }
 

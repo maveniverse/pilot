@@ -343,8 +343,8 @@ public class ConflictsTui extends ToolPanel {
         }
         if (mouse.isClick()) {
             var displayed = displayedConflicts();
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header
-            if (row >= 0 && row < displayed.size()) {
+            int row = mouseToTableRow(mouse, displayed.size(), tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
@@ -428,13 +428,12 @@ public class ConflictsTui extends ToolPanel {
 
     @Override
     protected void onSortChanged() {
-        List<ConflictGroup> displayed = displayedConflicts();
         List<Function<ConflictGroup, String>> extractors = List.of(
                 g -> g.hasConflict() ? "⚠" : "✓",
                 g -> g.ga,
                 ConflictGroup::resolvedVersion,
                 g -> g.entries.stream().map(e -> e.requestedVersion).distinct().collect(Collectors.joining(", ")));
-        sortState.sort(displayed, extractors);
+        sortState.sort(conflicts, extractors);
     }
 
     @Override
@@ -601,6 +600,7 @@ public class ConflictsTui extends ToolPanel {
                     .centered()
                     .build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -632,7 +632,7 @@ public class ConflictsTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, tableState);
     }
 

@@ -160,12 +160,12 @@ class Theme {
 
     /** Style for medium severity. */
     Style severityMedium() {
-        return Style.create().fg(Color.YELLOW);
+        return Style.create().fg(Color.WHITE);
     }
 
     /** Style for low severity. */
     Style severityLow() {
-        return Style.create();
+        return Style.create().fg(Color.DARK_GRAY);
     }
 
     /** Style for unknown severity. */

@@ -34,6 +34,7 @@ import dev.tamboui.tui.event.MouseEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.TableState;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -269,30 +270,68 @@ public abstract class ToolPanel {
     protected void onSortChanged() {}
 
     /**
-     * The area where the table was last rendered. Set by panels during render
-     * so that mouse header-click detection works.
+     * The area where the table was last rendered. Set by panels via
+     * {@link #setTableArea(Rect, Block)} during rendering so that mouse
+     * header-click detection and row selection work.
      */
     protected Rect lastTableArea;
 
     /**
+     * The inner area of the last rendered table (after block borders/titles/padding).
+     * This is where the Table widget positions the header and data rows.
+     */
+    private Rect lastTableInner;
+
+    /**
+     * The width of the highlight symbol used in the last rendered table.
+     * This offset is needed because the Table widget shifts all columns
+     * right by this amount to reserve space for the selection indicator.
+     */
+    protected int lastHighlightWidth = 2; // default for "▸ "
+
+    /**
+     * Set the table area and compute the inner area from the block.
+     * Call this in render methods instead of setting {@link #lastTableArea} directly.
+     *
+     * @param area  the outer area passed to the table widget
+     * @param block the block used by the table (for computing inner area)
+     */
+    protected void setTableArea(Rect area, Block block) {
+        lastTableArea = area;
+        lastTableInner = block != null ? block.inner(area) : area;
+    }
+
+    /**
+     * Clear cached table geometry so that stale coordinates are not used
+     * when the table is replaced by an empty placeholder.
+     */
+    protected void clearTableArea() {
+        lastTableArea = null;
+        lastTableInner = null;
+    }
+
+    /**
      * Handle mouse click on a table header row to toggle column sort.
-     * Panels should call this in {@link #handleMouseEvent} and set {@link #lastTableArea}
-     * during rendering.
+     * Panels should call this in {@link #handleMouseEvent} and call
+     * {@link #setTableArea(Rect, Block)} during rendering.
      *
      * @param mouse  the mouse event
      * @param widths the column constraints matching the table layout
      * @return {@code true} if the click was on the header and was handled
      */
     protected boolean handleMouseSortHeader(MouseEvent mouse, List<Constraint> widths) {
-        if (sortState == null || lastTableArea == null || !mouse.isClick()) return false;
-        int headerY = lastTableArea.y() + 1; // first row inside border
+        if (sortState == null || lastTableInner == null || !mouse.isClick()) return false;
+        int headerY = lastTableInner.y();
         if (mouse.y() != headerY) return false;
-        Rect inner = new Rect(
-                lastTableArea.x() + 1,
-                lastTableArea.y() + 1,
-                Math.max(0, lastTableArea.width() - 2),
-                Math.max(0, lastTableArea.height() - 2));
-        var cols = Layout.horizontal().constraints(widths).split(inner);
+        // Account for highlight symbol: the Table widget shifts all columns
+        // right by the highlight symbol width (e.g. 2 for "▸ ")
+        int hlw = lastHighlightWidth;
+        Rect colArea = new Rect(
+                lastTableInner.x() + hlw,
+                lastTableInner.y(),
+                Math.max(0, lastTableInner.width() - hlw),
+                lastTableInner.height());
+        var cols = Layout.horizontal().constraints(widths).split(colArea);
         for (int i = 0; i < cols.size(); i++) {
             Rect col = cols.get(i);
             if (mouse.x() >= col.x() && mouse.x() < col.x() + col.width()) {
@@ -302,6 +341,27 @@ public abstract class ToolPanel {
             }
         }
         return false;
+    }
+
+    /**
+     * Compute the 0-based data row index from a mouse click position.
+     * Uses the inner area from {@link #setTableArea(Rect, Block)} so it
+     * automatically accounts for any UI elements above the table
+     * (tab bars, search bars, borders, titles, etc.).
+     *
+     * @param mouse    the mouse event
+     * @param rowCount number of data rows in the table
+     * @param state    the table state (for scroll offset)
+     * @return the row index, or {@code -1} if the click is not on a data row
+     */
+    protected int mouseToTableRow(MouseEvent mouse, int rowCount, TableState state) {
+        if (lastTableInner == null) return -1;
+        int dataStartY = lastTableInner.y() + 1; // header row + 1
+        int visibleRows = lastTableInner.height() - 1; // subtract header
+        if (mouse.y() < dataStartY || mouse.y() >= dataStartY + visibleRows) return -1;
+        int row = mouse.y() - dataStartY + state.offset();
+        if (row < 0 || row >= rowCount) return -1;
+        return row;
     }
 
     /** Returns sort-specific key hints, or empty list if sorting is not active. */

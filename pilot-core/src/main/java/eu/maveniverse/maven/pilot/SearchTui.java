@@ -283,8 +283,8 @@ public class SearchTui extends ToolPanel {
             return true;
         }
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header
-            if (row >= 0 && row < artifacts.size()) {
+            int row = mouseToTableRow(mouse, artifacts.size(), tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
@@ -580,6 +580,7 @@ public class SearchTui extends ToolPanel {
             Paragraph empty =
                     Paragraph.builder().text(msg).block(block).centered().build();
             frame.renderWidget(empty, area);
+            clearTableArea();
             return;
         }
 
@@ -604,7 +605,7 @@ public class SearchTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        lastTableArea = area;
+        setTableArea(area, block);
         frame.renderStatefulWidget(table, area, tableState);
     }
 
