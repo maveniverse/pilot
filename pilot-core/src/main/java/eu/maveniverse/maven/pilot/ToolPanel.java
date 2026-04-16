@@ -56,13 +56,6 @@ public abstract class ToolPanel {
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 
-    protected static final String NAVIGATION_HELP = """
-            ## Navigation
-            ↑ / ↓           Move selection up / down
-            PgUp / PgDn     Move selection up / down by one page
-            Home / End       Jump to first / last row
-            """;
-
     protected static final String SEARCH_HELP = """
             ## Search
             /               Enter search mode — type to search
@@ -74,12 +67,6 @@ public abstract class ToolPanel {
             ## General
             h               Toggle this help screen
             q / Esc         Quit
-            """;
-
-    protected static final String GENERAL_STANDALONE_SAVE_HELP = """
-            ## General
-            h               Toggle this help screen
-            q / Esc         Quit (prompts to save if modified)
             """;
 
     /**
