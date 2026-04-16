@@ -174,6 +174,7 @@ public class PilotShell {
     }
 
     public void run() throws Exception {
+        ToolPanel.configureBackend();
         var configured = TuiRunner.builder()
                 .eventHandler(this::handleEvent)
                 .renderer(this::render)
