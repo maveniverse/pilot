@@ -394,42 +394,36 @@ public class ConflictsTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Conflict Resolution",
-                        List.of(
-                                new HelpOverlay.Entry("", "When multiple dependencies request different versions"),
-                                new HelpOverlay.Entry("", "of the same artifact, Maven picks one (the 'resolved'"),
-                                new HelpOverlay.Entry("", "version). This screen shows all such groups."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "The details pane shows the dependency path for each"),
-                                new HelpOverlay.Entry("", "request, so you can see which transitive chain"),
-                                new HelpOverlay.Entry("", "asked for which version."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Use 'p' to pin a group's resolved version into"),
-                                new HelpOverlay.Entry("", "<dependencyManagement>, ensuring all modules use"),
-                                new HelpOverlay.Entry("", "that version explicitly."))),
-                new HelpOverlay.Section(
-                        "Table Columns",
-                        List.of(
-                                new HelpOverlay.Entry("status", "⚠ = conflict (versions differ), ✓ = consistent"),
-                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
-                                new HelpOverlay.Entry("resolved", "The version Maven selected"),
-                                new HelpOverlay.Entry("versions", "All distinct versions requested"))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("yellow", "Actual conflict — different versions requested"),
-                                new HelpOverlay.Entry("default", "No conflict — all requests agree on version"),
-                                new HelpOverlay.Entry("dim", "Dependency path in details pane"))),
-                new HelpOverlay.Section(
-                        "Conflict Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
-                                new HelpOverlay.Entry("a", "Toggle between conflicts only / all groups"),
-                                new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"))));
+        return HelpOverlay.parse("""
+                ## Conflict Resolution
+                When multiple dependencies request different versions
+                of the same artifact, Maven picks one (the 'resolved'
+                version). This screen shows all such groups.
+                The details pane shows the dependency path for each
+                request, so you can see which transitive chain
+                asked for which version.
+                Use 'p' to pin a group's resolved version into
+                <dependencyManagement>, ensuring all modules use
+                that version explicitly.
+
+                ## Table Columns
+                status          ⚠ = conflict (versions differ), ✓ = consistent
+                dependency      groupId:artifactId
+                resolved        The version Maven selected
+                versions        All distinct versions requested
+
+                ## Colors
+                yellow          Actual conflict — different versions requested
+                default         No conflict — all requests agree on version
+                dim             Dependency path in details pane
+
+                ## Conflict Actions
+                ↑ / ↓           Move selection up / down
+                Enter / Space   Toggle dependency path details
+                a               Toggle between conflicts only / all groups
+                p               Pin resolved version in dependencyManagement
+                d               Preview POM changes as a unified diff
+                """);
     }
 
     @Override
@@ -523,20 +517,19 @@ public class ConflictsTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.set(
-                sections.size() - 1,
-                new HelpOverlay.Section(
-                        "Keys",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                                new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                                new HelpOverlay.Entry("Enter / Space", "Toggle dependency path details"),
-                                new HelpOverlay.Entry("a", "Toggle between conflicts only / all groups"),
-                                new HelpOverlay.Entry("p", "Pin resolved version in dependencyManagement"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                                new HelpOverlay.Entry("h", "Toggle this help screen"),
-                                new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        List<HelpOverlay.Section> parsed = HelpOverlay.parse("""
+                ## Keys
+                """ + NAV_KEYS + """
+                Enter / Space   Toggle dependency path details
+                a               Toggle between conflicts only / all groups
+                p               Pin resolved version in dependencyManagement
+                d               Preview POM changes as a unified diff
+                h               Toggle this help screen
+                q / Esc         Quit (prompts to save if modified)
+                """);
+        if (!parsed.isEmpty()) {
+            sections.set(sections.size() - 1, parsed.get(0));
+        }
         return sections;
     }
 

@@ -526,43 +526,37 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Dependency Analysis",
-                        List.of(
-                                new HelpOverlay.Entry("", "Uses bytecode analysis to compare what is declared"),
-                                new HelpOverlay.Entry("", "in the POM against what is actually used in code."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Declared view: dependencies in the POM that are not"),
-                                new HelpOverlay.Entry("", "referenced in compiled bytecode. These may be safe"),
-                                new HelpOverlay.Entry("", "to remove (but check for runtime/reflection use)."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Transitive view: classes used in your code that come"),
-                                new HelpOverlay.Entry("", "from transitive dependencies. These should be declared"),
-                                new HelpOverlay.Entry("", "explicitly to avoid breakage when transitives change."))),
-                new HelpOverlay.Section(
-                        "Table Columns",
-                        List.of(
-                                new HelpOverlay.Entry("status", "unused (declared) or undeclared (transitive)"),
-                                new HelpOverlay.Entry("dependency", "groupId:artifactId"),
-                                new HelpOverlay.Entry("scope", "Maven scope (compile, test, runtime, provided)"),
-                                new HelpOverlay.Entry("classifier", "Artifact classifier (e.g. test-fixtures)"))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("yellow", "Issue flag — unused or undeclared dependency"),
-                                new HelpOverlay.Entry("cyan", "Header and view tab indicators"),
-                                new HelpOverlay.Entry("dim", "Informational / secondary text"))),
-                new HelpOverlay.Section(
-                        "Dependencies Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("← / →", "Switch Declared / Transitive view"),
-                                new HelpOverlay.Entry("x / Enter", "Remove selected (Declared view)"),
-                                new HelpOverlay.Entry("a / Enter", "Add to POM (Transitive view)"),
-                                new HelpOverlay.Entry("c", "Cycle scope (compile → test → runtime → ...)"),
-                                new HelpOverlay.Entry("s / S", "Sort by column / reverse direction"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"))));
+        return HelpOverlay.parse("""
+                ## Dependency Analysis
+                Uses bytecode analysis to compare what is declared
+                in the POM against what is actually used in code.
+                Declared view: dependencies in the POM that are not
+                referenced in compiled bytecode. These may be safe
+                to remove (but check for runtime/reflection use).
+                Transitive view: classes used in your code that come
+                from transitive dependencies. These should be declared
+                explicitly to avoid breakage when transitives change.
+
+                ## Table Columns
+                status          unused (declared) or undeclared (transitive)
+                dependency      groupId:artifactId
+                scope           Maven scope (compile, test, runtime, provided)
+                classifier      Artifact classifier (e.g. test-fixtures)
+
+                ## Colors
+                yellow          Issue flag — unused or undeclared dependency
+                cyan            Header and view tab indicators
+                dim             Informational / secondary text
+
+                ## Dependencies Actions
+                ↑ / ↓           Move selection up / down
+                ← / →           Switch Declared / Transitive view
+                x / Enter       Remove selected (Declared view)
+                a / Enter       Add to POM (Transitive view)
+                c               Cycle scope (compile → test → runtime → ...)
+                s / S           Sort by column / reverse direction
+                d               Preview POM changes as unified diff
+                """);
     }
 
     @Override
@@ -850,16 +844,14 @@ public class DependenciesTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "General",
-                List.of(
-                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                        new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                        new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                        new HelpOverlay.Entry("Tab", "Switch between Declared and Transitive views"),
-                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        sections.addAll(HelpOverlay.parse("""
+                ## General
+                """ + NAV_KEYS + """
+                Tab             Switch between Declared and Transitive views
+                d               Preview POM changes as a unified diff
+                h               Toggle this help screen
+                q / Esc         Quit (prompts to save if modified)
+                """));
         return sections;
     }
 

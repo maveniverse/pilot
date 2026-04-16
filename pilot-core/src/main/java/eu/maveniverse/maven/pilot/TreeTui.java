@@ -236,18 +236,17 @@ public class TreeTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(new HelpOverlay.Section(
-                "Dependency Tree",
-                List.of(
-                        new HelpOverlay.Entry("", "Shows the resolved dependency tree."),
-                        new HelpOverlay.Entry("", ""),
-                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                        new HelpOverlay.Entry("← / →", "Collapse / expand tree node"),
-                        new HelpOverlay.Entry("e / w", "Expand all / collapse all"),
-                        new HelpOverlay.Entry("/", "Search by groupId or artifactId"),
-                        new HelpOverlay.Entry("c", "Jump to next conflict"),
-                        new HelpOverlay.Entry("r", "Reverse path (why was this pulled in?)"),
-                        new HelpOverlay.Entry("s", "Cycle scope: compile → runtime → test"))));
+        return HelpOverlay.parse("""
+                ## Dependency Tree
+                Shows the resolved dependency tree.
+                ↑ / ↓           Move selection up / down
+                ← / →           Collapse / expand tree node
+                e / w           Expand all / collapse all
+                /               Search by groupId or artifactId
+                c               Jump to next conflict
+                r               Reverse path (why was this pulled in?)
+                s               Cycle scope: compile → runtime → test
+                """);
     }
 
     @Override
@@ -725,23 +724,17 @@ public class TreeTui extends ToolPanel {
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
-        List<HelpOverlay.Section> sections = new ArrayList<>();
-        sections.addAll(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "Colors (by scope)",
-                List.of(
-                        new HelpOverlay.Entry("default", "compile scope"),
-                        new HelpOverlay.Entry("blue", "runtime scope"),
-                        new HelpOverlay.Entry("magenta", "provided scope"),
-                        new HelpOverlay.Entry("dark gray", "test scope"),
-                        new HelpOverlay.Entry("red", "system scope"),
-                        new HelpOverlay.Entry("yellow", "Version conflict"),
-                        new HelpOverlay.Entry("dim", "Scope label, optional marker"))));
-        sections.add(new HelpOverlay.Section(
-                "General",
-                List.of(
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit"))));
+        List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
+        sections.addAll(HelpOverlay.parse("""
+                ## Colors (by scope)
+                default         compile scope
+                blue            runtime scope
+                magenta         provided scope
+                dark gray       test scope
+                red             system scope
+                yellow          Version conflict
+                dim             Scope label, optional marker
+                """ + GENERAL_STANDALONE_HELP));
         return sections;
     }
 

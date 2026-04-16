@@ -512,43 +512,36 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return List.of(
-                new HelpOverlay.Section(
-                        "Dependency Updates",
-                        List.of(
-                                new HelpOverlay.Entry("", "Checks Maven Central for newer versions of each"),
-                                new HelpOverlay.Entry("", "declared dependency. Versions are resolved in"),
-                                new HelpOverlay.Entry("", "the background — status bar shows progress."),
-                                new HelpOverlay.Entry("", ""),
-                                new HelpOverlay.Entry("", "Select updates with Space, then press Enter to"),
-                                new HelpOverlay.Entry("", "apply them to the POM. Use 'd' to preview the"),
-                                new HelpOverlay.Entry("", "changes as a unified diff before committing."))),
-                new HelpOverlay.Section(
-                        "Filters",
-                        List.of(
-                                new HelpOverlay.Entry("f / F", "Cycle filter: All > Patch > Minor > Major"),
-                                new HelpOverlay.Entry("", "All — show all dependencies (default)"),
-                                new HelpOverlay.Entry("", "Patch — only patch updates (bug fixes)"),
-                                new HelpOverlay.Entry("", "Minor — only minor updates (new features)"),
-                                new HelpOverlay.Entry("", "Major — only major updates (breaking changes)"))),
-                new HelpOverlay.Section(
-                        "Colors",
-                        List.of(
-                                new HelpOverlay.Entry("green", "Patch update — safe to apply"),
-                                new HelpOverlay.Entry("yellow", "Minor update — usually compatible"),
-                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"),
-                                new HelpOverlay.Entry("dim", "No update available or up-to-date"))),
-                new HelpOverlay.Section(
-                        "Actions",
-                        List.of(
-                                new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                                new HelpOverlay.Entry("Space", "Toggle selection of current dependency"),
-                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
-                                new HelpOverlay.Entry("Enter", "Apply selected updates to POM"),
-                                new HelpOverlay.Entry("d", "Preview POM changes as unified diff"),
-                                new HelpOverlay.Entry("s / S", "Sort by column / reverse sort"),
-                                new HelpOverlay.Entry("/", "Search dependencies by name"),
-                                new HelpOverlay.Entry("n / N", "Next / previous search match"))));
+        return HelpOverlay.parse("""
+                ## Dependency Updates
+                Checks Maven Central for newer versions of each
+                declared dependency. Versions are resolved in
+                the background — status bar shows progress.
+                Select updates with Space, then press Enter to
+                apply them to the POM. Use 'd' to preview the
+                changes as a unified diff before committing.
+
+                ## Filters
+                f / F           Cycle filter: All > Patch > Minor > Major
+                All — show all dependencies (default)
+                Patch — only patch updates (bug fixes)
+                Minor — only minor updates (new features)
+                Major — only major updates (breaking changes)
+
+                ## Colors
+                green           Patch update — safe to apply
+                yellow          Minor update — usually compatible
+                red             Major update — breaking changes possible
+                dim             No update available or up-to-date
+
+                ## Actions
+                ↑ / ↓           Move selection up / down
+                Space           Toggle selection of current dependency
+                a / n           Select all / deselect all
+                Enter           Apply selected updates to POM
+                d               Preview POM changes as unified diff
+                s / S           Sort by column / reverse sort
+                """);
     }
 
     @Override
@@ -924,15 +917,13 @@ public class UpdatesTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.add(new HelpOverlay.Section(
-                "General",
-                List.of(
-                        new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
-                        new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
-                        new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                        new HelpOverlay.Entry("d", "Preview POM changes as a unified diff"),
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
-                        new HelpOverlay.Entry("q / Esc", "Quit (prompts to save if modified)"))));
+        sections.addAll(HelpOverlay.parse("""
+                ## General
+                """ + NAV_KEYS + """
+                d               Preview POM changes as a unified diff
+                h               Toggle this help screen
+                q / Esc         Quit (prompts to save if modified)
+                """));
         return sections;
     }
 
