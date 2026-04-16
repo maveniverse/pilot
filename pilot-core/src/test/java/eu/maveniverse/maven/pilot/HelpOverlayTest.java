@@ -63,6 +63,8 @@ class HelpOverlayTest {
         assertThat(sections.get(0).entries().get(0).key()).isEmpty();
         assertThat(sections.get(0).entries().get(0).description())
                 .isEqualTo("This is a description line without a key.");
+        assertThat(sections.get(0).entries().get(1).key()).isEmpty();
+        assertThat(sections.get(0).entries().get(1).description()).isEqualTo("Another description line.");
     }
 
     @Test

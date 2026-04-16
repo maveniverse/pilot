@@ -67,7 +67,7 @@ public abstract class ToolPanel {
             ## Search
             /               Enter search mode — type to search
             n / N           Next / previous search match
-            Esc             Clear search or quit
+            Esc             Exit search mode
             """;
 
     protected static final String GENERAL_STANDALONE_HELP = """

@@ -599,7 +599,7 @@ public class AlignTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.set(sections.size() - 1, HelpOverlay.parse("""
+        List<HelpOverlay.Section> parsed = HelpOverlay.parse("""
                 ## Keys
                 ↑ / ↓           Move between options
                 ← / → / Enter  Cycle through option values
@@ -607,7 +607,10 @@ public class AlignTui extends ToolPanel {
                 w               Apply alignment and write to POM
                 h               Toggle this help screen
                 q / Esc         Quit
-                """).get(0));
+                """);
+        if (!parsed.isEmpty()) {
+            sections.set(sections.size() - 1, parsed.get(0));
+        }
         return sections;
     }
 

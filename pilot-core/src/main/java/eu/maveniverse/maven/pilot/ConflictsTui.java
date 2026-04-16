@@ -517,8 +517,7 @@ public class ConflictsTui extends ToolPanel {
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
         List<HelpOverlay.Section> sections = new ArrayList<>(helpSections());
-        sections.set(
-                sections.size() - 1, HelpOverlay.parse("""
+        List<HelpOverlay.Section> parsed = HelpOverlay.parse("""
                 ## Keys
                 """ + NAV_KEYS + """
                 Enter / Space   Toggle dependency path details
@@ -527,7 +526,10 @@ public class ConflictsTui extends ToolPanel {
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen
                 q / Esc         Quit (prompts to save if modified)
-                """).get(0));
+                """);
+        if (!parsed.isEmpty()) {
+            sections.set(sections.size() - 1, parsed.get(0));
+        }
         return sections;
     }
 
