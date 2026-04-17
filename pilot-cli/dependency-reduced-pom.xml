@@ -26,6 +26,7 @@
                   <mainClass>eu.maveniverse.maven.pilot.mvn4.PilotMain</mainClass>
                   <manifestEntries>
                     <Multi-Release>true</Multi-Release>
+                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
                   </manifestEntries>
                 </transformer>
                 <transformer />

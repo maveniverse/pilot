@@ -33,7 +33,7 @@ class LoadReactorTest {
 
     @Test
     void loadSelfReactor() throws Exception {
-        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "ERROR");
+        System.setProperty("maven.logger.defaultLogLevel", "ERROR");
 
         Path pomPath = Path.of("pom.xml").toAbsolutePath().normalize();
         AtomicReference<String> status = new AtomicReference<>("");

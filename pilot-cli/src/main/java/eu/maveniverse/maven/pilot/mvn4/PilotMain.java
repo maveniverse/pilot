@@ -67,7 +67,7 @@ public class PilotMain {
 
     public static void main(String[] args) throws Exception {
         // Suppress noisy Maven resolver warnings (e.g., strict POM validation of third-party deps)
-        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "ERROR");
+        System.setProperty("maven.logger.defaultLogLevel", "ERROR");
 
         Path pomPath = args.length > 0 ? Path.of(args[0]) : Path.of("pom.xml");
         pomPath = pomPath.toAbsolutePath().normalize();
