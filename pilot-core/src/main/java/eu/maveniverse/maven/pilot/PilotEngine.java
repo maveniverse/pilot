@@ -70,7 +70,7 @@ public class PilotEngine {
             case "tree" -> createTreePanel(proj);
             case "dependencies" -> createDependenciesPanel(proj, session);
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
-            case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
+            case "conflicts" -> createConflictsPanel(proj, projects, session);
             case "align" -> createAlignPanel(proj, projects);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
             case "pom" -> createPomPanel(proj);
@@ -158,8 +158,7 @@ public class PilotEngine {
         return new UpdatesTui(result, reactorModel, gav, versionResolver, sessionProvider);
     }
 
-    private ToolPanel createConflictsPanel(
-            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
+    private ToolPanel createConflictsPanel(PilotProject proj, List<PilotProject> projects, PomEditSession session) {
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
         String gav = projects.size() > 1
                 ? projects.get(0).gav() + " (reactor: " + projects.size() + " modules)"

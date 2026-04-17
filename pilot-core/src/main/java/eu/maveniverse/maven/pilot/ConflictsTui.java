@@ -473,40 +473,37 @@ public class ConflictsTui extends ToolPanel {
         Map<String, List<ConflictEntry>> mergedMap = new HashMap<>();
 
         for (PilotProject project : projects) {
-            CompletableFuture.supplyAsync(
-                            () -> {
-                                loadingModule = project.artifactId;
-                                DependencyTreeModel tree = treeResolver.resolve(project);
-                                Map<String, List<ConflictEntry>> localMap = new HashMap<>();
-                                List<String> modulePath = new ArrayList<>();
-                                if (multiModule) modulePath.add("[" + project.artifactId + "]");
-                                collectConflicts(tree.root, localMap, modulePath);
-                                return localMap;
-                            },
-                            pool)
-                    .thenAccept(localMap -> runner.runOnRenderThread(() -> {
-                        for (var entry : localMap.entrySet()) {
-                            mergedMap
-                                    .computeIfAbsent(entry.getKey(), k -> new ArrayList<>())
-                                    .addAll(entry.getValue());
-                        }
-                        loadedCount++;
-                        status = "Collecting conflicts… " + loadedCount + "/" + totalModules;
-                        if (loadedCount >= totalModules) {
-                            onCollectionComplete(mergedMap);
-                            pool.shutdown();
-                        }
-                    }))
+            CompletableFuture.supplyAsync(() -> resolveModule(project, multiModule), pool)
+                    .thenAccept(localMap -> runner.runOnRenderThread(() -> mergeAndAdvance(localMap, mergedMap, pool)))
                     .exceptionally(ex -> {
-                        runner.runOnRenderThread(() -> {
-                            loadedCount++;
-                            if (loadedCount >= totalModules) {
-                                onCollectionComplete(mergedMap);
-                                pool.shutdown();
-                            }
-                        });
+                        runner.runOnRenderThread(() -> mergeAndAdvance(Map.of(), mergedMap, pool));
                         return null;
                     });
+        }
+    }
+
+    private Map<String, List<ConflictEntry>> resolveModule(PilotProject project, boolean multiModule) {
+        loadingModule = project.artifactId;
+        DependencyTreeModel tree = treeResolver.resolve(project);
+        Map<String, List<ConflictEntry>> localMap = new HashMap<>();
+        List<String> modulePath = new ArrayList<>();
+        if (multiModule) modulePath.add("[" + project.artifactId + "]");
+        collectConflicts(tree.root, localMap, modulePath);
+        return localMap;
+    }
+
+    private void mergeAndAdvance(
+            Map<String, List<ConflictEntry>> localMap,
+            Map<String, List<ConflictEntry>> mergedMap,
+            ExecutorService pool) {
+        for (var entry : localMap.entrySet()) {
+            mergedMap.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
+        }
+        loadedCount++;
+        status = "Collecting conflicts… " + loadedCount + "/" + totalModules;
+        if (loadedCount >= totalModules) {
+            onCollectionComplete(mergedMap);
+            pool.shutdown();
         }
     }
 
@@ -552,7 +549,7 @@ public class ConflictsTui extends ToolPanel {
                                 .anyMatch(c ->
                                         c.requestedVersion != null && !c.requestedVersion.equals(c.resolvedVersion)))
                 .map(e -> new ConflictGroup(e.getKey(), e.getValue()))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
