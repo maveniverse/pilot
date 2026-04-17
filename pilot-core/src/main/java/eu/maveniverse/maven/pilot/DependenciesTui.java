@@ -228,7 +228,6 @@ public class DependenciesTui extends ToolPanel {
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
-    private TuiRunner runner;
 
     /** Returns the current in-memory POM content (package-private for testing). */
     String currentPomContent() {
@@ -613,11 +612,6 @@ public class DependenciesTui extends ToolPanel {
                 s / S           Sort by column / reverse direction
                 d               Preview POM changes as unified diff
                 """);
-    }
-
-    @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
     }
 
     private List<DepEntry> currentList() {

@@ -161,8 +161,6 @@ public class AuditTui extends ToolPanel {
     /** Flattened vulnerability row linking back to its parent entry. */
     private record VulnRow(AuditEntry entry, OsvClient.Vulnerability vuln) {}
 
-    private TuiRunner runner;
-
     /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
         this(entries, projectGav, treeModel, new PomEditSession(Path.of(pomPath)));
@@ -1584,7 +1582,7 @@ public class AuditTui extends ToolPanel {
 
     @Override
     public void setRunner(TuiRunner runner) {
-        this.runner = runner;
+        super.setRunner(runner);
         fetchAllData();
     }
 

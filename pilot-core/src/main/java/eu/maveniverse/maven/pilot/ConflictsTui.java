@@ -126,8 +126,6 @@ public class ConflictsTui extends ToolPanel {
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
 
-    private TuiRunner runner;
-
     /**
      * Get the currently selected table-row index, or -1 when no selection exists.
      *
@@ -454,12 +452,13 @@ public class ConflictsTui extends ToolPanel {
 
     @Override
     public void setRunner(TuiRunner runner) {
-        this.runner = runner;
+        super.setRunner(runner);
         if (loading && pendingProjects != null) {
             startConflictCollection();
         }
     }
 
+    @SuppressWarnings("java:S2095") // pool is shut down after task submission; daemon threads ensure no leak
     private void startConflictCollection() {
         ExecutorService pool =
                 Executors.newFixedThreadPool(Math.min(4, Runtime.getRuntime().availableProcessors()), r -> {
@@ -681,18 +680,8 @@ public class ConflictsTui extends ToolPanel {
                     .borderType(BorderType.ROUNDED)
                     .borderStyle(borderStyle())
                     .build();
-            String loadingText = "Collecting conflicts… " + loadedCount + "/" + totalModules;
-            String currentModule = loadingModule;
-            if (currentModule != null) {
-                loadingText += "\n" + currentModule;
-            }
-            Paragraph loadingMsg = Paragraph.builder()
-                    .text(loadingText)
-                    .block(block)
-                    .centered()
-                    .build();
-            frame.renderWidget(loadingMsg, area);
-            clearTableArea();
+            renderLoadingPlaceholder(
+                    frame, area, block, "Collecting conflicts… " + loadedCount + "/" + totalModules, loadingModule);
             return;
         }
 

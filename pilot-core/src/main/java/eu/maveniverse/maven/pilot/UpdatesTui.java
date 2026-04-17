@@ -149,8 +149,6 @@ public class UpdatesTui extends ToolPanel {
     int dateFetchesPending;
     boolean datesLoading;
 
-    private TuiRunner runner;
-
     /**
      * Standalone constructor — creates a local session cache.
      */
@@ -680,34 +678,11 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
         if (key.isRight()) {
-            Integer sel = tableState.selected();
-            if (sel != null && sel < displayRows.size()) {
-                var row = displayRows.get(sel);
-                if (row.isGroupHeader() && !row.propertyGroup.expanded) {
-                    row.propertyGroup.expanded = true;
-                    rebuildDisplayRowsKeepSelection();
-                } else {
-                    tableState.selectNext(displayRows.size());
-                }
-            }
+            handleDepsRightKey();
             return true;
         }
         if (key.isLeft()) {
-            Integer sel = tableState.selected();
-            if (sel != null && sel < displayRows.size()) {
-                var row = displayRows.get(sel);
-                if (row.isGroupHeader() && row.propertyGroup.expanded) {
-                    row.propertyGroup.expanded = false;
-                    rebuildDisplayRowsKeepSelection();
-                } else if (!row.isGroupHeader() && row.dependency != null && row.dependency.isPropertyManaged()) {
-                    for (int i = sel - 1; i >= 0; i--) {
-                        if (displayRows.get(i).isGroupHeader()) {
-                            tableState.select(i);
-                            break;
-                        }
-                    }
-                }
-            }
+            handleDepsLeftKey();
             return true;
         }
         if (key.isCharIgnoreCase(' ')) {
@@ -749,6 +724,37 @@ public class UpdatesTui extends ToolPanel {
         return false;
     }
 
+    private void handleDepsRightKey() {
+        Integer sel = tableState.selected();
+        if (sel != null && sel < displayRows.size()) {
+            var row = displayRows.get(sel);
+            if (row.isGroupHeader() && !row.propertyGroup.expanded) {
+                row.propertyGroup.expanded = true;
+                rebuildDisplayRowsKeepSelection();
+            } else {
+                tableState.selectNext(displayRows.size());
+            }
+        }
+    }
+
+    private void handleDepsLeftKey() {
+        Integer sel = tableState.selected();
+        if (sel != null && sel < displayRows.size()) {
+            var row = displayRows.get(sel);
+            if (row.isGroupHeader() && row.propertyGroup.expanded) {
+                row.propertyGroup.expanded = false;
+                rebuildDisplayRowsKeepSelection();
+            } else if (!row.isGroupHeader() && row.dependency != null && row.dependency.isPropertyManaged()) {
+                for (int i = sel - 1; i >= 0; i--) {
+                    if (displayRows.get(i).isGroupHeader()) {
+                        tableState.select(i);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     private boolean handleModulesNavigation(KeyEvent key) {
         List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
         if (key.isUp()) {
@@ -763,35 +769,43 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
-            Integer sel = moduleTableState.selected();
-            if (sel != null && sel < visible.size()) {
-                var node = visible.get(sel);
-                if (node.hasChildren() && !node.expanded) {
-                    node.expanded = true;
-                } else {
-                    moduleTableState.selectNext(reactorModel.visibleNodes().size());
-                }
-            }
+            handleModulesRightKey(visible);
             return true;
         }
         if (key.isKey(KeyCode.LEFT)) {
-            Integer sel = moduleTableState.selected();
-            if (sel != null && sel < visible.size()) {
-                var node = visible.get(sel);
-                if (node.expanded && node.hasChildren()) {
-                    node.expanded = false;
-                } else {
-                    for (int i = sel - 1; i >= 0; i--) {
-                        if (visible.get(i).depth < node.depth) {
-                            moduleTableState.select(i);
-                            break;
-                        }
-                    }
-                }
-            }
+            handleModulesLeftKey(visible);
             return true;
         }
         return false;
+    }
+
+    private void handleModulesRightKey(List<ReactorModel.ModuleNode> visible) {
+        Integer sel = moduleTableState.selected();
+        if (sel != null && sel < visible.size()) {
+            var node = visible.get(sel);
+            if (node.hasChildren() && !node.expanded) {
+                node.expanded = true;
+            } else {
+                moduleTableState.selectNext(reactorModel.visibleNodes().size());
+            }
+        }
+    }
+
+    private void handleModulesLeftKey(List<ReactorModel.ModuleNode> visible) {
+        Integer sel = moduleTableState.selected();
+        if (sel != null && sel < visible.size()) {
+            var node = visible.get(sel);
+            if (node.expanded && node.hasChildren()) {
+                node.expanded = false;
+            } else {
+                for (int i = sel - 1; i >= 0; i--) {
+                    if (visible.get(i).depth < node.depth) {
+                        moduleTableState.select(i);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     private void rebuildDisplayRowsKeepSelection() {
@@ -1234,24 +1248,22 @@ public class UpdatesTui extends ToolPanel {
 
     private Row createDependencyRow(ReactorRow row, boolean highlight) {
         var dep = row.dependency;
-        boolean inGroup = dep.isPropertyManaged();
-
-        if (inGroup) {
-            String check = "   ";
-            String ga = "  ↳ " + dep.artifactId;
-            Style style = Style.create();
-            if (highlight) style = style.bg(theme.searchHighlightBg());
-            String info = "";
-            if (!singleModule) {
-                int modCount = dep.moduleCount();
-                info = modCount + " mod";
-                if (dep.usages.stream().anyMatch(u -> u.managed)) {
-                    info += " M";
-                }
-            }
-            return Row.from(check, ga, "", "", "", "", "", info).style(style);
+        if (dep.isPropertyManaged()) {
+            return createGroupedDependencyRow(dep, highlight);
         }
+        return createStandaloneDependencyRow(dep, highlight);
+    }
 
+    private Row createGroupedDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
+        String check = "   ";
+        String ga = "  ↳ " + dep.artifactId;
+        Style style = Style.create();
+        if (highlight) style = style.bg(theme.searchHighlightBg());
+        String info = buildModuleInfo(dep);
+        return Row.from(check, ga, "", "", "", "", "", info).style(style);
+    }
+
+    private Row createStandaloneDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
         String check = dep.selected ? "[✓]" : "[ ]";
         String ga = dep.artifactId;
         String current = dep.primaryVersion != null ? dep.primaryVersion : "";
@@ -1259,19 +1271,22 @@ public class UpdatesTui extends ToolPanel {
         String available = dep.hasUpdate() ? dep.newestVersion : "";
         String type = updateTypeLabel(dep.updateType);
         String age = formatAge(dep.libYears, dep.hasUpdate());
-
         Style style = updateTypeStyle(dep.updateType);
         if (highlight) style = style.bg(theme.searchHighlightBg());
-
-        String info = "";
-        if (!singleModule) {
-            int modCount = dep.moduleCount();
-            info = modCount + " mod";
-            if (dep.usages.stream().anyMatch(u -> u.managed)) {
-                info += " M";
-            }
-        }
+        String info = buildModuleInfo(dep);
         return Row.from(check, ga, current, arrow, available, type, age, info).style(style);
+    }
+
+    private String buildModuleInfo(ReactorCollector.AggregatedDependency dep) {
+        if (singleModule) {
+            return "";
+        }
+        int modCount = dep.moduleCount();
+        String info = modCount + " mod";
+        if (dep.usages.stream().anyMatch(u -> u.managed)) {
+            info += " M";
+        }
+        return info;
     }
 
     private void renderDetailPane(Frame frame, Rect area) {
@@ -1759,7 +1774,7 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     public void setRunner(TuiRunner runner) {
-        this.runner = runner;
+        super.setRunner(runner);
         if (loading) {
             fetchAllUpdates();
         }

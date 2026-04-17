@@ -80,7 +80,6 @@ public class PomTui extends ToolPanel {
     private View view = View.RAW;
     private final TableState tableState = new TableState();
 
-    private TuiRunner runner;
     private int lastContentHeight;
 
     /**
@@ -374,11 +373,6 @@ public class PomTui extends ToolPanel {
                 W               Collapse all (keeps root expanded)
                 Tab             Switch Raw POM / Effective POM
                 """ + SEARCH_HELP);
-    }
-
-    @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
     }
 
     @Override

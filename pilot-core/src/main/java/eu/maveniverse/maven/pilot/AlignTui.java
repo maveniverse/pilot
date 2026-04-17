@@ -94,8 +94,6 @@ public class AlignTui extends ToolPanel {
     private String alignedPomContent;
     private Map<Path, String> alignedPomContents; // cross-POM mode
 
-    private TuiRunner runner;
-
     public AlignTui(String pomPath, String projectGav, AlignOptions detectedOptions, ParentPomInfo parentInfo) {
         this(pomPath, List.of(), projectGav, detectedOptions, parentInfo);
     }
@@ -669,11 +667,6 @@ public class AlignTui extends ToolPanel {
             spans.add(Span.raw(":Apply"));
         }
         return spans;
-    }
-
-    @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
     }
 
     // -- Rendering --
