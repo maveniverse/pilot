@@ -18,82 +18,71 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import static eu.maveniverse.maven.pilot.TestProjects.createProject;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import dev.tamboui.export.ExportRequest;
 import dev.tamboui.layout.Size;
+import dev.tamboui.terminal.Terminal;
+import dev.tamboui.terminal.TestBackend;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Demo test for Dependency Updates TUI.
- */
 class UpdatesDemoTest {
 
+    private static final int WIDTH = 100;
+    private static final int HEIGHT = 24;
+
+    private String renderToText(dev.tamboui.tui.Renderer renderer) {
+        var terminal = new Terminal<>(new TestBackend(WIDTH, HEIGHT));
+        var frame = terminal.draw(renderer::render);
+        return ExportRequest.export(frame.buffer()).text().toString();
+    }
+
     @Test
-    void browseAndFilterUpdates(@TempDir Path tempDir) throws Exception {
-        String pomPath =
-                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
-        List<UpdatesTui.DependencyInfo> deps = new ArrayList<>();
+    void browseAndSwitchViews(@TempDir java.nio.file.Path tempDir) throws Exception {
+        var root = createProject("parent", tempDir);
+        var child = createProject("child", TestProjects.subdir(tempDir, "child"));
+        child.parent = root;
+        var projects = List.of(root, child);
+        var model = ReactorModel.build(projects);
+        var result = new ReactorCollector.CollectionResult(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
 
-        var d1 = new UpdatesTui.DependencyInfo("com.google.guava", "guava", "33.0.0-jre", "compile", "jar");
-        d1.newestVersion = "33.4.0-jre";
-        d1.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d1);
+        UpdatesTui tui = new UpdatesTui(result, model, "com.example:parent:1.0", (g, a) -> List.of());
+        // Mark loading as done since we have no deps to resolve
+        tui.loading = false;
+        tui.status = "No updates";
 
-        var d2 = new UpdatesTui.DependencyInfo("org.slf4j", "slf4j-api", "2.0.9", "compile", "jar");
-        d2.newestVersion = "2.0.16";
-        d2.updateType = VersionComparator.UpdateType.PATCH;
-        deps.add(d2);
-
-        var d3 = new UpdatesTui.DependencyInfo("commons-io", "commons-io", "2.15.1", "compile", "jar");
-        d3.newestVersion = "2.18.0";
-        d3.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d3);
-
-        var d4 = new UpdatesTui.DependencyInfo("org.junit.jupiter", "junit-jupiter", "5.10.1", "test", "jar");
-        d4.newestVersion = "5.11.4";
-        d4.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d4);
-
-        UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
-
-        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
-
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
 
-            // Navigate through updates
-            pilot.press(KeyCode.DOWN);
-            pilot.pause();
-            pilot.press(KeyCode.DOWN);
+            // Initial view should show Dependencies tab active
+            String rendered = renderToText(tui::renderStandalone);
+            assertThat(rendered).contains("\u25B8 Dependencies");
+            assertThat(rendered).doesNotContain("\u25B8 Modules");
+
+            // Switch to Modules view
+            pilot.press(KeyCode.TAB);
             pilot.pause();
 
-            // Toggle selection
-            pilot.press(' ');
+            rendered = renderToText(tui::renderStandalone);
+            assertThat(rendered).contains("\u25B8 Modules");
+            assertThat(rendered).doesNotContain("\u25B8 Dependencies");
+
+            // Switch back to Dependencies view
+            pilot.press(KeyCode.TAB);
             pilot.pause();
 
-            // Filter to patch only
-            pilot.press('2');
-            pilot.pause();
+            rendered = renderToText(tui::renderStandalone);
+            assertThat(rendered).contains("\u25B8 Dependencies");
+            assertThat(rendered).doesNotContain("\u25B8 Modules");
 
-            // Back to all
-            pilot.press('1');
-            pilot.pause();
-
-            // Select all
-            pilot.press('a');
-            pilot.pause();
-
-            // Deselect all
-            pilot.press('n');
-            pilot.pause();
-
-            // Quit
             pilot.press('q');
         }
     }

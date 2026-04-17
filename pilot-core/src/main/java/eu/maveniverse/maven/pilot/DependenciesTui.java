@@ -44,7 +44,6 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,6 +60,8 @@ public class DependenciesTui extends ToolPanel {
     private static final String COL_GA = "groupId:artifactId";
     private static final String COL_VERSION = "version";
     private static final String COL_SCOPE = "scope";
+    private static final String SECTION_DEPENDENCIES = "dependencies";
+    private static final String TARGET_DEPENDENCY = "dependency";
     private static final String HIGHLIGHT_SYMBOL = "▸ ";
 
     // Maven 3 scopes (modelVersion 4.0.0)
@@ -183,23 +184,47 @@ public class DependenciesTui extends ToolPanel {
         }
     }
 
+    /** Entry representing a managed dependency or BOM import in the Managed tab. */
+    public static class ManagedEntry {
+        final String groupId;
+        final String artifactId;
+        final String version;
+        final String scope;
+        final String type;
+        final boolean isBom;
+        final String source; // "own" or "inherited"
+
+        public ManagedEntry(
+                String groupId, String artifactId, String version, String scope, String type, String source) {
+            this.groupId = groupId;
+            this.artifactId = artifactId;
+            this.version = version != null ? version : "";
+            this.scope = scope != null ? scope : COMPILE_SCOPE;
+            this.type = type != null ? type : "jar";
+            this.isBom = "pom".equals(this.type) && "import".equals(this.scope);
+            this.source = source;
+        }
+
+        String ga() {
+            return groupId + ":" + artifactId;
+        }
+    }
+
     private enum View {
         DECLARED,
-        TRANSITIVE
+        TRANSITIVE,
+        MANAGED
     }
 
     private final List<DepEntry> declared;
     private final List<DepEntry> transitive;
-    private final String pomPath;
+    private final List<ManagedEntry> managed;
     private final String projectGav;
     private final boolean bytecodeAnalyzed;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
     private String status;
-    private final String originalPomContent;
-    private final PomEditor editor;
-    private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
@@ -207,7 +232,7 @@ public class DependenciesTui extends ToolPanel {
 
     /** Returns the current in-memory POM content (package-private for testing). */
     String currentPomContent() {
-        return editor.toXml();
+        return editSession.currentXml();
     }
 
     /**
@@ -233,28 +258,43 @@ public class DependenciesTui extends ToolPanel {
      * @param projectGav the project GAV string displayed in the UI header
      */
     public DependenciesTui(List<DepEntry> declared, List<DepEntry> transitive, String pomPath, String projectGav) {
-        this(declared, transitive, pomPath, projectGav, false);
+        this(declared, transitive, List.of(), new PomEditSession(Path.of(pomPath)), projectGav, false);
     }
 
+    /** Standalone / test constructor with bytecode analysis flag. */
     public DependenciesTui(
             List<DepEntry> declared,
             List<DepEntry> transitive,
             String pomPath,
             String projectGav,
             boolean bytecodeAnalyzed) {
+        this(declared, transitive, List.of(), new PomEditSession(Path.of(pomPath)), projectGav, bytecodeAnalyzed);
+    }
+
+    /** Panel-mode constructor — uses a shared PomEditSession from the shell. */
+    public DependenciesTui(
+            List<DepEntry> declared,
+            List<DepEntry> transitive,
+            PomEditSession session,
+            String projectGav,
+            boolean bytecodeAnalyzed) {
+        this(declared, transitive, List.of(), session, projectGav, bytecodeAnalyzed);
+    }
+
+    /** Full constructor with managed dependencies. */
+    public DependenciesTui(
+            List<DepEntry> declared,
+            List<DepEntry> transitive,
+            List<ManagedEntry> managed,
+            PomEditSession session,
+            String projectGav,
+            boolean bytecodeAnalyzed) {
+        this.editSession = session;
         this.declared = declared;
         this.transitive = transitive;
-        this.pomPath = pomPath;
+        this.managed = managed;
         this.projectGav = projectGav;
         this.bytecodeAnalyzed = bytecodeAnalyzed;
-        String pom;
-        try {
-            pom = Files.readString(Path.of(pomPath));
-        } catch (Exception e) {
-            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
-        }
-        this.originalPomContent = pom;
-        this.editor = new PomEditor(Document.of(pom));
         this.sortState = new SortState(sortColumnCount());
         updateStatus();
         if (!declared.isEmpty()) {
@@ -337,11 +377,6 @@ public class DependenciesTui extends ToolPanel {
             requestQuit();
             return true;
         }
-        if (key.isKey(KeyCode.TAB)) {
-            view = (view == View.DECLARED) ? View.TRANSITIVE : View.DECLARED;
-            tableState.select(0);
-            return true;
-        }
         if (key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelpStandalone());
             return true;
@@ -365,12 +400,17 @@ public class DependenciesTui extends ToolPanel {
             return;
         }
         Rect contentArea = renderTabBar(frame, area);
-        var zones = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.percentage(25))
-                .split(contentArea);
-        lastContentHeight = zones.get(0).height();
-        renderTable(frame, zones.get(0), null);
-        renderDetails(frame, zones.get(1));
+        if (view == View.MANAGED) {
+            lastContentHeight = contentArea.height();
+            renderManagedTable(frame, contentArea);
+        } else {
+            var zones = Layout.vertical()
+                    .constraints(Constraint.fill(), Constraint.percentage(25))
+                    .split(contentArea);
+            lastContentHeight = zones.get(0).height();
+            renderTable(frame, zones.get(0), null);
+            renderDetails(frame, zones.get(1));
+        }
     }
 
     @Override
@@ -393,10 +433,10 @@ public class DependenciesTui extends ToolPanel {
             return true;
         }
         if (key.isDown()) {
-            tableState.selectNext(currentList().size());
+            tableState.selectNext(currentListSize());
             return true;
         }
-        if (TableNavigation.handlePageKeys(key, tableState, currentList().size(), lastContentHeight)) {
+        if (TableNavigation.handlePageKeys(key, tableState, currentListSize(), lastContentHeight)) {
             return true;
         }
 
@@ -404,6 +444,14 @@ public class DependenciesTui extends ToolPanel {
             view = TabBar.next(view, View.values());
             tableState.select(0);
             return true;
+        }
+
+        if (view == View.MANAGED) {
+            if (key.isCharIgnoreCase('x')) {
+                removeManaged();
+                return true;
+            }
+            return false;
         }
 
         if (key.isKey(KeyCode.ENTER)) {
@@ -437,22 +485,22 @@ public class DependenciesTui extends ToolPanel {
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (handleMouseTabBar(mouse)) return true;
-        if (handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
+        if (view != View.MANAGED && handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
         if (mouse.isClick()) {
-            int row = mouseToTableRow(mouse, currentList().size(), tableState);
+            int row = mouseToTableRow(mouse, currentListSize(), tableState);
             if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
         }
         if (mouse.isScroll()) {
-            var list = currentList();
-            if (list.isEmpty()) return false;
+            int size = currentListSize();
+            if (size == 0) return false;
             int sel = tableState.selected();
             if (mouse.kind() == MouseEventKind.SCROLL_UP) {
                 tableState.select(Math.max(0, sel - 1));
             } else {
-                tableState.select(Math.min(list.size() - 1, sel + 1));
+                tableState.select(Math.min(size - 1, sel + 1));
             }
             return true;
         }
@@ -461,7 +509,7 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     int subViewCount() {
-        return 2;
+        return 3;
     }
 
     @Override
@@ -479,7 +527,8 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     List<String> subViewNames() {
-        return List.of("Declared: " + declared.size(), "Transitive: " + transitive.size());
+        return List.of(
+                "Declared: " + declared.size(), "Transitive: " + transitive.size(), "Managed: " + managed.size());
     }
 
     @Override
@@ -509,12 +558,17 @@ public class DependenciesTui extends ToolPanel {
             if (view == View.DECLARED) {
                 spans.add(Span.raw("x/Enter").bold());
                 spans.add(Span.raw(":Delete  "));
-            } else {
+                spans.add(Span.raw("c").bold());
+                spans.add(Span.raw(":Scope  "));
+            } else if (view == View.TRANSITIVE) {
                 spans.add(Span.raw("a/Enter").bold());
                 spans.add(Span.raw(":Add  "));
+                spans.add(Span.raw("c").bold());
+                spans.add(Span.raw(":Scope  "));
+            } else {
+                spans.add(Span.raw("x").bold());
+                spans.add(Span.raw(":Remove  "));
             }
-            spans.add(Span.raw("c").bold());
-            spans.add(Span.raw(":Scope  "));
             spans.addAll(sortKeyHints());
             spans.add(Span.raw("/").bold());
             spans.add(Span.raw(":Search  "));
@@ -550,23 +604,14 @@ public class DependenciesTui extends ToolPanel {
 
                 ## Dependencies Actions
                 ↑ / ↓           Move selection up / down
-                ← / →           Switch Declared / Transitive view
+                Tab             Switch Declared / Transitive / Managed view
                 x / Enter       Remove selected (Declared view)
                 a / Enter       Add to POM (Transitive view)
+                x               Remove managed entry (Managed view)
                 c               Cycle scope (compile → test → runtime → ...)
                 s / S           Sort by column / reverse direction
                 d               Preview POM changes as unified diff
                 """);
-    }
-
-    @Override
-    public boolean isDirty() {
-        return dirty;
-    }
-
-    @Override
-    public boolean save() {
-        return doSave();
     }
 
     @Override
@@ -576,6 +621,14 @@ public class DependenciesTui extends ToolPanel {
 
     private List<DepEntry> currentList() {
         return view == View.DECLARED ? declared : transitive;
+    }
+
+    private int currentListSize() {
+        return switch (view) {
+            case DECLARED -> declared.size();
+            case TRANSITIVE -> transitive.size();
+            case MANAGED -> managed.size();
+        };
     }
 
     private int sortColumnCount() {
@@ -601,7 +654,9 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     protected void onSortChanged() {
-        sortState.sort(currentList(), sortExtractors());
+        if (view != View.MANAGED) {
+            sortState.sort(currentList(), sortExtractors());
+        }
     }
 
     @Override
@@ -612,11 +667,19 @@ public class DependenciesTui extends ToolPanel {
             searchMatchIndex = -1;
             return;
         }
-        var deps = currentList();
         searchMatches = new ArrayList<>();
-        for (int i = 0; i < deps.size(); i++) {
-            if (depMatchesSearch(deps.get(i), query)) {
-                searchMatches.add(i);
+        if (view == View.MANAGED) {
+            for (int i = 0; i < managed.size(); i++) {
+                if (managedMatchesSearch(managed.get(i), query)) {
+                    searchMatches.add(i);
+                }
+            }
+        } else {
+            var deps = currentList();
+            for (int i = 0; i < deps.size(); i++) {
+                if (depMatchesSearch(deps.get(i), query)) {
+                    searchMatches.add(i);
+                }
             }
         }
         if (!searchMatches.isEmpty()) {
@@ -635,6 +698,11 @@ public class DependenciesTui extends ToolPanel {
     private boolean depMatchesSearch(DepEntry dep, String query) {
         String searchable = dep.groupId + ":" + dep.artifactId + ":" + dep.version;
         if (dep.scope != null) searchable += ":" + dep.scope;
+        return searchable.toLowerCase().contains(query);
+    }
+
+    private boolean managedMatchesSearch(ManagedEntry entry, String query) {
+        String searchable = entry.groupId + ":" + entry.artifactId + ":" + entry.version + ":" + entry.source;
         return searchable.toLowerCase().contains(query);
     }
 
@@ -666,8 +734,13 @@ public class DependenciesTui extends ToolPanel {
         var dep = declared.get(sel);
 
         try {
-            editor.dependencies().deleteDependency(Coordinates.of(dep.groupId, dep.artifactId, dep.version));
-            dirty = true;
+            editSession.beforeMutation();
+            editSession
+                    .editor()
+                    .dependencies()
+                    .deleteDependency(Coordinates.of(dep.groupId, dep.artifactId, dep.version));
+            editSession.recordChange(
+                    PomEditSession.ChangeType.REMOVE, TARGET_DEPENDENCY, dep.ga(), "removed", SECTION_DEPENDENCIES);
             declared.remove(sel);
             updateStatus();
             if (sel >= declared.size() && !declared.isEmpty()) {
@@ -691,9 +764,11 @@ public class DependenciesTui extends ToolPanel {
         var dep = transitive.get(sel);
 
         try {
+            editSession.beforeMutation();
             Coordinates coords = (dep.hasClassifier())
                     ? Coordinates.of(dep.groupId, dep.artifactId, dep.version, dep.classifier, "jar")
                     : Coordinates.of(dep.groupId, dep.artifactId, dep.version);
+            PomEditor editor = editSession.editor();
             if (!COMPILE_SCOPE.equals(dep.scope)) {
                 AlignOptions detected = editor.dependencies().detectConventions();
                 AlignOptions options = AlignOptions.builder()
@@ -706,7 +781,12 @@ public class DependenciesTui extends ToolPanel {
             } else {
                 editor.dependencies().addAligned(coords);
             }
-            dirty = true;
+            editSession.recordChange(
+                    PomEditSession.ChangeType.ADD,
+                    TARGET_DEPENDENCY,
+                    dep.ga(),
+                    "added from transitive",
+                    SECTION_DEPENDENCIES);
 
             // Move from transitive to declared
             transitive.remove(sel);
@@ -721,6 +801,36 @@ public class DependenciesTui extends ToolPanel {
             }
         } catch (Exception e) {
             status = "Failed to add: " + e.getMessage();
+        }
+    }
+
+    private void removeManaged() {
+        int sel = selectedIndex();
+        if (sel < 0 || sel >= managed.size()) return;
+        var entry = managed.get(sel);
+        if (!"own".equals(entry.source)) {
+            status = "Cannot remove inherited managed dependency";
+            return;
+        }
+        try {
+            editSession.beforeMutation();
+            Coordinates coords = entry.isBom
+                    ? Coordinates.of(entry.groupId, entry.artifactId, entry.version, "", "pom")
+                    : Coordinates.of(entry.groupId, entry.artifactId, entry.version);
+            editSession.editor().dependencies().deleteManagedDependency(coords);
+            editSession.recordChange(
+                    PomEditSession.ChangeType.REMOVE,
+                    "managed",
+                    entry.ga(),
+                    entry.isBom ? "removed BOM import" : "removed managed dependency",
+                    SECTION_DEPENDENCIES);
+            managed.remove(sel);
+            updateStatus();
+            if (sel >= managed.size() && !managed.isEmpty()) {
+                tableState.select(managed.size() - 1);
+            }
+        } catch (Exception e) {
+            status = "Failed to remove: " + e.getMessage();
         }
     }
 
@@ -758,7 +868,7 @@ public class DependenciesTui extends ToolPanel {
         var dep = deps.get(sel);
 
         if (view == View.TRANSITIVE) {
-            List<String> scopes = getScopesForModel(editor.document());
+            List<String> scopes = getScopesForModel(editSession.editor().document());
             if (!scopes.contains(dep.scope)) {
                 scopes = new ArrayList<>(scopes);
                 scopes.add(dep.scope);
@@ -769,18 +879,18 @@ public class DependenciesTui extends ToolPanel {
         }
 
         try {
+            PomEditor editor = editSession.editor();
             Document doc = editor.document();
             List<String> scopes = getScopesForModel(doc);
             if (!scopes.contains(dep.scope)) {
-                // Unknown scope (e.g. "system") — include it in the cycling list
                 scopes = new ArrayList<>(scopes);
                 scopes.add(dep.scope);
             }
             int current = scopes.indexOf(dep.scope);
             String newScope = scopes.get((current + 1) % scopes.size());
+            String oldScope = dep.scope;
             Coordinates coords = Coordinates.of(dep.groupId, dep.artifactId, dep.version);
 
-            // Find the <dependency> element matching this GA
             doc.root()
                     .childElement("dependencies")
                     .flatMap(depsEl -> depsEl.childElements("dependency")
@@ -789,14 +899,19 @@ public class DependenciesTui extends ToolPanel {
                     .ifPresentOrElse(
                             el -> {
                                 try {
+                                    editSession.beforeMutation();
                                     if (COMPILE_SCOPE.equals(newScope)) {
-                                        // Remove <scope> element — compile is the default
                                         el.childElement(COL_SCOPE).ifPresent(el::removeChild);
                                     } else {
                                         editor.updateOrCreateChildElement(el, COL_SCOPE, newScope);
                                     }
                                     dep.scope = newScope;
-                                    dirty = true;
+                                    editSession.recordChange(
+                                            PomEditSession.ChangeType.MODIFY,
+                                            TARGET_DEPENDENCY,
+                                            dep.ga(),
+                                            "scope: " + oldScope + " → " + newScope,
+                                            SECTION_DEPENDENCIES);
                                     updateStatus();
                                 } catch (Exception e) {
                                     status = "Failed to change scope: " + e.getMessage();
@@ -809,7 +924,7 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private void requestQuit() {
-        if (dirty) {
+        if (isDirty()) {
             pendingQuit = true;
             status = "Save changes to POM?";
         } else {
@@ -817,28 +932,13 @@ public class DependenciesTui extends ToolPanel {
         }
     }
 
-    private boolean doSave() {
-        try {
-            String currentOnDisk = Files.readString(Path.of(pomPath));
-            if (!currentOnDisk.equals(originalPomContent)) {
-                status = "POM modified externally — save aborted";
-                return false;
-            }
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            dirty = false;
-            status = "Saved";
-            return true;
-        } catch (Exception e) {
-            status = "Failed to save: " + e.getMessage();
-            return false;
-        }
-    }
-
     private void saveAndQuit() {
-        if (doSave()) {
+        PomEditSession.SaveResult result = editSession.save();
+        if (result.success()) {
             runner.quit();
         } else {
             pendingQuit = false;
+            status = result.message();
         }
     }
 
@@ -847,7 +947,7 @@ public class DependenciesTui extends ToolPanel {
         sections.addAll(HelpOverlay.parse("""
                 ## General
                 """ + NAV_KEYS + """
-                Tab             Switch between Declared and Transitive views
+                Tab             Switch between Declared, Transitive, and Managed views
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen
                 q / Esc         Quit (prompts to save if modified)
@@ -856,7 +956,7 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private void toggleDiffView() {
-        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
@@ -923,6 +1023,8 @@ public class DependenciesTui extends ToolPanel {
             lastContentHeight = contentArea.height();
             if (diffOverlay.isActive()) {
                 diffOverlay.render(frame, contentArea, " POM Changes ");
+            } else if (view == View.MANAGED) {
+                renderManagedTable(frame, contentArea);
             } else {
                 renderTable(frame, contentArea);
                 renderDetails(frame, zones.get(2));
@@ -946,12 +1048,14 @@ public class DependenciesTui extends ToolPanel {
                 : 0;
         String declaredLabel = "Declared: " + declared.size() + (unused > 0 ? " (" + unused + " unused)" : "");
         String transitiveLabel = "Transitive: " + transitive.size() + (used > 0 ? " (" + used + " used)" : "");
+        String managedLabel = "Managed: " + managed.size();
         spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
             case DECLARED -> declaredLabel;
             case TRANSITIVE -> transitiveLabel;
+            case MANAGED -> managedLabel;
         }));
 
-        if (dirty) {
+        if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
 
@@ -961,6 +1065,54 @@ public class DependenciesTui extends ToolPanel {
                     .bold());
         }
         renderStandaloneHeader(frame, area, "Dependency Overview", Line.from(spans));
+    }
+
+    private void renderManagedTable(Frame frame, Rect area) {
+        Block block = Block.builder()
+                .title(Title.from(" Managed Dependencies (" + managed.size() + ") "))
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(borderStyle())
+                .build();
+
+        if (managed.isEmpty()) {
+            Paragraph empty = Paragraph.builder()
+                    .text("No managed dependencies")
+                    .block(block)
+                    .centered()
+                    .build();
+            frame.renderWidget(empty, area);
+            return;
+        }
+
+        Row header = Row.from("", COL_GA, COL_VERSION, "type", "source").style(theme.tableHeader());
+        List<Row> rows = new ArrayList<>();
+        for (int i = 0; i < managed.size(); i++) {
+            ManagedEntry e = managed.get(i);
+            String icon = e.isBom ? "B" : " ";
+            String typeLabel = e.isBom ? "bom" : e.scope;
+            Style rowStyle = "inherited".equals(e.source) ? Style.create().dim() : Style.create();
+            if (isSearchMatch(i)) {
+                rowStyle = rowStyle.bg(theme.searchHighlightBg());
+            }
+            rows.add(Row.from(icon, e.ga(), e.version, typeLabel, e.source).style(rowStyle));
+        }
+
+        Table table = Table.builder()
+                .header(header)
+                .rows(rows)
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol(theme.highlightSymbol())
+                .block(block)
+                .widths(
+                        Constraint.length(3),
+                        Constraint.percentage(40),
+                        Constraint.percentage(25),
+                        Constraint.percentage(15),
+                        Constraint.percentage(15))
+                .build();
+
+        setTableArea(area, block);
+        frame.renderStatefulWidget(table, area, tableState);
     }
 
     private void renderTable(Frame frame, Rect area) {

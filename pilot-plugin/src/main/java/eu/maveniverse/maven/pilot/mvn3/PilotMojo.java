@@ -88,7 +88,8 @@ public class PilotMojo extends AbstractMojo {
             new PilotShell(
                             reactorModel,
                             projects,
-                            (toolId, proj, scope2, progress) -> engine.createPanel(toolId, proj, scope2, progress))
+                            (toolId, proj, scope2, session, sessionProvider, progress) ->
+                                    engine.createPanel(toolId, proj, scope2, session, sessionProvider, progress))
                     .run();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run pilot: " + e.getMessage(), e);

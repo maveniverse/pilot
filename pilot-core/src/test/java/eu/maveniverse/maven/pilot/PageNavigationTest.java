@@ -158,11 +158,31 @@ class PageNavigationTest {
 
     @Test
     void updatesPageNavigation() throws Exception {
-        var deps = new ArrayList<UpdatesTui.DependencyInfo>();
+        List<PilotProject.Dep> deps = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
-            deps.add(new UpdatesTui.DependencyInfo("com.example", "lib" + i, "1.0", "compile", "jar"));
+            deps.add(new PilotProject.Dep("com.example", "lib" + i, "1.0"));
         }
-        UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:app:1.0", (g, a) -> List.of());
+        Path basedir = tempDir.resolve("app");
+        Files.createDirectories(basedir);
+        Files.writeString(basedir.resolve("pom.xml"), "<project/>");
+        PilotProject proj = new PilotProject(
+                "com.example",
+                "app",
+                "1.0",
+                "jar",
+                basedir,
+                basedir.resolve("pom.xml"),
+                deps,
+                List.of(),
+                deps,
+                List.of(),
+                new java.util.Properties(),
+                null,
+                null);
+        List<PilotProject> projects = List.of(proj);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
+        ReactorModel model = ReactorModel.build(projects);
+        UpdatesTui tui = new UpdatesTui(result, model, "com.example:app:1.0", (g, a) -> List.of());
         tui.loadedCount = 5;
         tui.updateStatusIfDone();
 

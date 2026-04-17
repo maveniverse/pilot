@@ -38,10 +38,7 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
-import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.Coordinates;
-import eu.maveniverse.domtrip.maven.PomEditor;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -102,16 +99,12 @@ public class ConflictsTui extends ToolPanel {
     }
 
     private final List<ConflictGroup> conflicts;
-    private final String pomPath;
     private final String projectGav;
     private final TableState tableState = new TableState();
     private boolean showDetails = true;
     private boolean showAll = false;
     private String status;
 
-    private final String originalPomContent;
-    private final PomEditor editor;
-    private boolean dirty;
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
@@ -139,30 +132,18 @@ public class ConflictsTui extends ToolPanel {
         return conflicts.stream().filter(ConflictGroup::hasConflict).collect(Collectors.toList());
     }
 
-    /**
-     * Creates a ConflictsTui configured with the provided conflict groups, POM path, and project GAV.
-     *
-     * Initializes the status message to reflect the number of provided conflict groups and selects
-     * the first row when the list of conflicts is not empty.
-     *
-     * @param conflicts list of conflict groups to display
-     * @param pomPath path to the project's POM file used for pinning resolved versions
-     * @param projectGav project coordinates shown in the header
-     */
+    /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public ConflictsTui(List<ConflictGroup> conflicts, String pomPath, String projectGav) {
+        this(conflicts, new PomEditSession(Path.of(pomPath)), projectGav);
+    }
+
+    /** Panel-mode constructor — uses a shared PomEditSession from the shell. */
+    public ConflictsTui(List<ConflictGroup> conflicts, PomEditSession session, String projectGav) {
+        this.editSession = session;
         this.conflicts = conflicts;
-        this.pomPath = pomPath;
         this.projectGav = projectGav;
         this.status = conflicts.size() + " dependency group(s) with version variance";
         this.sortState = new SortState(4);
-        String pom;
-        try {
-            pom = Files.readString(Path.of(pomPath));
-        } catch (Exception e) {
-            throw new IllegalStateException("Cannot read POM: " + pomPath, e);
-        }
-        this.originalPomContent = pom;
-        this.editor = new PomEditor(Document.of(pom));
         if (!displayedConflicts().isEmpty()) {
             tableState.select(0);
         }
@@ -314,7 +295,7 @@ public class ConflictsTui extends ToolPanel {
             return true;
         }
 
-        if (key.isCharIgnoreCase('a')) {
+        if (key.isCharIgnoreCase('t')) {
             showAll = !showAll;
             List<ConflictGroup> displayed = displayedConflicts();
             if (displayed.isEmpty()) {
@@ -381,7 +362,7 @@ public class ConflictsTui extends ToolPanel {
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Enter").bold());
             spans.add(Span.raw(":Details  "));
-            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw("t").bold());
             spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
             spans.add(Span.raw("p").bold());
             spans.add(Span.raw(":Pin version  "));
@@ -420,7 +401,7 @@ public class ConflictsTui extends ToolPanel {
                 ## Conflict Actions
                 ↑ / ↓           Move selection up / down
                 Enter / Space   Toggle dependency path details
-                a               Toggle between conflicts only / all groups
+                t               Toggle between conflicts only / all groups
                 p               Pin resolved version in dependencyManagement
                 d               Preview POM changes as a unified diff
                 """);
@@ -434,16 +415,6 @@ public class ConflictsTui extends ToolPanel {
                 ConflictGroup::resolvedVersion,
                 g -> g.entries.stream().map(e -> e.requestedVersion).distinct().collect(Collectors.joining(", ")));
         sortState.sort(conflicts, extractors);
-    }
-
-    @Override
-    public boolean isDirty() {
-        return dirty;
-    }
-
-    @Override
-    public boolean save() {
-        return doSave();
     }
 
     @Override
@@ -466,11 +437,13 @@ public class ConflictsTui extends ToolPanel {
         var group = displayed.get(sel);
 
         try {
+            editSession.beforeMutation();
             String resolvedVersion = group.resolvedVersion();
             var coords = Coordinates.of(group.entries.get(0).groupId, group.entries.get(0).artifactId, resolvedVersion);
-            editor.dependencies().updateManagedDependency(true, coords);
+            editSession.editor().dependencies().updateManagedDependency(true, coords);
+            editSession.recordChange(
+                    PomEditSession.ChangeType.ADD, "managed", group.ga, "pinned to " + resolvedVersion, "conflicts");
 
-            dirty = true;
             status = "Pinned " + group.ga + " to " + resolvedVersion + " — save on exit";
         } catch (Exception e) {
             status = "Failed to pin version: " + e.getMessage();
@@ -478,7 +451,7 @@ public class ConflictsTui extends ToolPanel {
     }
 
     private void requestQuit() {
-        if (dirty) {
+        if (isDirty()) {
             pendingQuit = true;
             status = "Save changes to POM?";
         } else {
@@ -486,31 +459,18 @@ public class ConflictsTui extends ToolPanel {
         }
     }
 
-    private boolean doSave() {
-        try {
-            String currentOnDisk = Files.readString(Path.of(pomPath));
-            if (!currentOnDisk.equals(originalPomContent)) {
-                status = "POM modified externally — save aborted";
-                return false;
-            }
-            Files.writeString(Path.of(pomPath), editor.toXml());
-            return true;
-        } catch (Exception e) {
-            status = "Failed to save: " + e.getMessage();
-            return false;
-        }
-    }
-
     private void saveAndQuit() {
-        if (doSave()) {
+        PomEditSession.SaveResult result = editSession.save();
+        if (result.success()) {
             runner.quit();
         } else {
             pendingQuit = false;
+            status = result.message();
         }
     }
 
     private void toggleDiffView() {
-        long changes = diffOverlay.open(originalPomContent, editor.toXml());
+        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
@@ -520,7 +480,7 @@ public class ConflictsTui extends ToolPanel {
                 ## Keys
                 """ + NAV_KEYS + """
                 Enter / Space   Toggle dependency path details
-                a               Toggle between conflicts only / all groups
+                t               Toggle between conflicts only / all groups
                 p               Pin resolved version in dependencyManagement
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen
@@ -565,7 +525,7 @@ public class ConflictsTui extends ToolPanel {
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        if (dirty) {
+        if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
         renderStandaloneHeader(frame, area, "Conflict Resolution", Line.from(spans));
@@ -712,7 +672,7 @@ public class ConflictsTui extends ToolPanel {
             spans.add(Span.raw(":Navigate  "));
             spans.add(Span.raw("Enter").bold());
             spans.add(Span.raw(":Details  "));
-            spans.add(Span.raw("a").bold());
+            spans.add(Span.raw("t").bold());
             spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
             spans.add(Span.raw("p").bold());
             spans.add(Span.raw(":Pin version  "));

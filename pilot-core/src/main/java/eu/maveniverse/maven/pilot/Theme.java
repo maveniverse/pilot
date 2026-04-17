@@ -21,6 +21,8 @@ package eu.maveniverse.maven.pilot;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Span;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Centralizes all color and style decisions for the Pilot TUI.
@@ -59,6 +61,53 @@ class Theme {
     /** Dirty indicator shown next to tabs when there are unsaved changes. */
     Span dirtyIndicator() {
         return Span.raw(" [modified]").fg(Color.YELLOW);
+    }
+
+    // ── Change markers (row gutter indicators) ─────────────────────────────
+
+    /** Gutter marker for an added row. */
+    Span changeAdded() {
+        return Span.raw("+").fg(Color.GREEN);
+    }
+
+    /** Gutter marker for a modified row. */
+    Span changeModified() {
+        return Span.raw("~").fg(Color.YELLOW);
+    }
+
+    /** Gutter marker for a removed row. */
+    Span changeRemoved() {
+        return Span.raw("-").fg(Color.RED);
+    }
+
+    /** Row style for removed entries (dimmed). */
+    Style removedRowStyle() {
+        return Style.create().dim();
+    }
+
+    /**
+     * Change summary indicator for tab bar, replacing the boolean [modified].
+     * Shows e.g. " [+1 ~2 -1]" with colored counts.
+     */
+    List<Span> changesSummary(int adds, int modifies, int removes) {
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" ["));
+        boolean first = true;
+        if (adds > 0) {
+            spans.add(Span.raw("+" + adds).fg(Color.GREEN));
+            first = false;
+        }
+        if (modifies > 0) {
+            if (!first) spans.add(Span.raw(" "));
+            spans.add(Span.raw("~" + modifies).fg(Color.YELLOW));
+            first = false;
+        }
+        if (removes > 0) {
+            if (!first) spans.add(Span.raw(" "));
+            spans.add(Span.raw("-" + removes).fg(Color.RED));
+        }
+        spans.add(Span.raw("]"));
+        return spans;
     }
 
     // ── Tool header tabs (PilotShell header) ───────────────────────────────
@@ -173,7 +222,7 @@ class Theme {
         return Style.create().fg(Color.DARK_GRAY);
     }
 
-    // ── Update types (ReactorUpdatesTui) ───────────────────────────────────
+    // ── Update types (UpdatesTui) ──────────────────────────────────────────
 
     /** Style for patch updates. */
     Style updatePatch() {

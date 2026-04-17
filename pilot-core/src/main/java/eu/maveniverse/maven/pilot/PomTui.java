@@ -278,11 +278,11 @@ public class PomTui extends ToolPanel {
             }
         }
 
-        if (key.isCharIgnoreCase('e')) {
+        if (key.isChar('E')) {
             model.expandAll(model.root);
             return true;
         }
-        if (key.isCharIgnoreCase('w')) {
+        if (key.isChar('W')) {
             model.collapseAll(model.root);
             model.setExpanded(model.root, true);
             return true;
@@ -342,7 +342,7 @@ public class PomTui extends ToolPanel {
         spans.add(Span.raw(":Expand  "));
         spans.add(Span.raw("/").bold());
         spans.add(Span.raw(":Search  "));
-        spans.add(Span.raw("e/w").bold());
+        spans.add(Span.raw("E/W").bold());
         spans.add(Span.raw(":Expand/Collapse all"));
         return spans;
     }
@@ -369,8 +369,8 @@ public class PomTui extends ToolPanel {
                 ## Navigation
                 """ + NAV_KEYS + """
                 ← / →           Collapse / expand tree node
-                e               Expand all nodes
-                w               Collapse all (keeps root expanded)
+                E               Expand all nodes
+                W               Collapse all (keeps root expanded)
                 Tab             Switch Raw POM / Effective POM
                 """ + SEARCH_HELP);
     }
@@ -660,7 +660,7 @@ public class PomTui extends ToolPanel {
             spans.add(Span.raw(":Expand/Collapse  "));
             spans.add(Span.raw("/").bold());
             spans.add(Span.raw(":Search  "));
-            spans.add(Span.raw("e/w").bold());
+            spans.add(Span.raw("E/W").bold());
             spans.add(Span.raw(":Expand/Collapse all  "));
             spans.add(Span.raw("h").bold());
             spans.add(Span.raw(":Help  "));

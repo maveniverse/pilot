@@ -22,6 +22,7 @@ import dev.tamboui.layout.Alignment;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -39,6 +40,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -75,6 +77,8 @@ public class PilotShell {
                 String toolId,
                 PilotProject project,
                 List<PilotProject> scope,
+                PomEditSession session,
+                java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
                 java.util.function.Consumer<String> progress)
                 throws Exception;
     }
@@ -105,6 +109,9 @@ public class PilotShell {
     private int activeToolIndex = 0;
     private ToolPanel activePanel;
     private final Map<String, ToolPanel> panelCache = new HashMap<>();
+    private final Map<String, PomEditSession> sessionCache = new ConcurrentHashMap<>();
+    private boolean pendingQuit;
+    private String pendingQuitStatus;
 
     // Components
     private final ReactorModel reactorModel;
@@ -235,6 +242,24 @@ public class PilotShell {
             return true;
         }
 
+        // Pending quit prompt: y/n/Esc
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                saveAllAndQuit();
+                return true;
+            }
+            if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+                return true;
+            }
+            if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                pendingQuitStatus = null;
+                return true;
+            }
+            return true; // consume all keys during quit prompt
+        }
+
         // Alt+letter: switch tool (checked before delegation because
         // isCharIgnoreCase does not check modifiers)
         if (key.modifiers().alt() && key.code() == KeyCode.CHAR) {
@@ -247,7 +272,29 @@ public class PilotShell {
             }
         }
 
-        // Delegate to focused pane (search inputs consume chars like q, h)
+        // Edit lifecycle keys (before panel delegation so they're global)
+        PomEditSession session = currentSession();
+        if (key.isCharIgnoreCase('w') && session != null && session.isDirty()) {
+            PomEditSession.SaveResult result = session.save();
+            pendingQuitStatus = result.message();
+            return true;
+        }
+        if (key.isChar('z') && session != null && session.isDirty()) {
+            if (session.undoLast()) {
+                pendingQuitStatus = "Undid last change";
+            }
+            return true;
+        }
+        if (key.isChar('R') && session != null && session.isDirty()) {
+            session.revertAll();
+            // Invalidate cached panels for this POM so they refresh
+            invalidatePanelCacheForPom(session.pomPath());
+            refreshActivePanel();
+            pendingQuitStatus = "Reverted all changes";
+            return true;
+        }
+
+        // Delegate to focused pane (search inputs consume chars like q)
         if (focus == Focus.TREE && treePane != null) {
             if (treePane.handleKeyEvent(key)) return true;
         } else if (focus == Focus.CONTENT && activePanel != null) {
@@ -291,10 +338,10 @@ public class PilotShell {
             return true;
         }
         if (key.isCharIgnoreCase('q')) {
-            runner.quit();
+            requestQuit();
             return true;
         }
-        if (key.isCharIgnoreCase('h')) {
+        if (key.isChar('?') || key.isCharIgnoreCase('h')) {
             helpOverlay.open(buildHelp());
             return true;
         }
@@ -303,19 +350,49 @@ public class PilotShell {
             return true;
         }
 
-        // Fallback: unmodified letter matching a tool mnemonic switches tool
-        // (handles cases where Alt modifier isn't detected, e.g. macOS Option key)
-        if (key.code() == KeyCode.CHAR && !key.modifiers().ctrl()) {
-            char c = Character.toLowerCase(key.character());
-            for (int i = 0; i < TOOLS.size(); i++) {
-                if (c == TOOLS.get(i).mnemonic) {
-                    switchTool(i);
-                    return true;
+        return false;
+    }
+
+    private PomEditSession currentSession() {
+        if (selectedProject == null) return null;
+        return sessionCache.get(selectedProject.pomPath.toString());
+    }
+
+    private void requestQuit() {
+        List<PomEditSession> dirtySessions =
+                sessionCache.values().stream().filter(PomEditSession::isDirty).toList();
+        if (dirtySessions.isEmpty()) {
+            runner.quit();
+        } else {
+            pendingQuit = true;
+            int total =
+                    dirtySessions.stream().mapToInt(PomEditSession::changeCount).sum();
+            pendingQuitStatus = total + " unsaved change(s). Save? (y)es (n)o (Esc)cancel";
+        }
+    }
+
+    private void saveAllAndQuit() {
+        for (PomEditSession session : sessionCache.values()) {
+            if (session.isDirty()) {
+                PomEditSession.SaveResult result = session.save();
+                if (!result.success()) {
+                    pendingQuit = false;
+                    pendingQuitStatus = result.message();
+                    return;
                 }
             }
         }
+        runner.quit();
+    }
 
-        return false;
+    @SuppressWarnings("unused")
+    private void invalidatePanelCacheForPom(java.nio.file.Path pomPath) {
+        panelCache.entrySet().removeIf(entry -> {
+            // Cache keys are "toolId:moduleGA" — we need to match by POM path
+            // which requires checking the project. For simplicity, clear all module-dependent panels.
+            String cacheKey = entry.getKey();
+            return cacheKey.contains(":");
+        });
     }
 
     private boolean handleMouseEvent(MouseEvent mouse) {
@@ -486,9 +563,19 @@ public class PilotShell {
         final PilotProject proj = selectedProject;
         final List<PilotProject> scope = selectedScope;
         final int subView = currentSubView;
+        // Get or create session for this module's POM
+        final PomEditSession session;
+        if (proj != null && !tool.isModuleIndependent()) {
+            String pomKey = proj.pomPath.toString();
+            session = sessionCache.computeIfAbsent(pomKey, k -> new PomEditSession(proj.pomPath));
+        } else {
+            session = null;
+        }
+        final java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider =
+                path -> sessionCache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
         Future<?> task = panelExecutor.submit(() -> {
             try {
-                ToolPanel panel = panelFactory.create(tool.id, proj, scope, s -> {
+                ToolPanel panel = panelFactory.create(tool.id, proj, scope, session, sessionProvider, s -> {
                     if (cacheKey.equals(loadingCacheKey)) {
                         panelLoadingStatus = s;
                     }
@@ -731,7 +818,9 @@ public class PilotShell {
 
         // Status line
         List<Span> statusSpans = new ArrayList<>();
-        if (focus == Focus.TREE && treePane != null) {
+        if (pendingQuitStatus != null) {
+            statusSpans.add(Span.raw(" " + pendingQuitStatus).fg(Color.YELLOW));
+        } else if (focus == Focus.TREE && treePane != null) {
             statusSpans.add(Span.raw(" Module Tree").fg(theme.statusColor()));
             if (selectedProject != null) {
                 statusSpans.add(Span.raw(" │ " + selectedProject.artifactId).fg(theme.secondaryTextColor()));
@@ -841,7 +930,7 @@ public class PilotShell {
                         new HelpOverlay.Entry("Enter", "Switch focus to content pane (from tree)"),
                         new HelpOverlay.Entry("\\", "Cycle left panel: full → narrow → hidden"),
                         new HelpOverlay.Entry("Alt+t/d/p/a/u/c/i/s", "Switch tool"),
-                        new HelpOverlay.Entry("h", "Toggle this help screen"),
+                        new HelpOverlay.Entry("? / h", "Toggle this help screen"),
                         new HelpOverlay.Entry("q / Ctrl+C", "Quit"))));
 
         return sections;

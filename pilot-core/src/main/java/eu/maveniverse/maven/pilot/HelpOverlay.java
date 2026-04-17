@@ -120,8 +120,10 @@ class HelpOverlay {
         lines.add(Line.from(
                 Span.raw("  Press ").dim(),
                 Span.raw("Esc").bold().yellow(),
-                Span.raw(" or ").dim(),
+                Span.raw(", ").dim(),
                 Span.raw("h").bold().yellow(),
+                Span.raw(" or ").dim(),
+                Span.raw("?").bold().yellow(),
                 Span.raw(" to close this help screen").dim()));
 
         scroll = 0;
@@ -152,7 +154,7 @@ class HelpOverlay {
         if (!opening) {
             return true;
         }
-        if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('h')) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('h') || key.isChar('?')) {
             close();
             return true;
         }

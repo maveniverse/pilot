@@ -19,11 +19,9 @@
 package eu.maveniverse.maven.pilot.mvn3;
 
 import eu.maveniverse.maven.pilot.*;
-import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
 import org.apache.maven.execution.MavenSession;
-import org.apache.maven.model.Dependency;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -73,57 +71,16 @@ public class UpdatesMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
             UpdatesTui.VersionResolver versionResolver = createVersionResolver();
-            List<MavenProject> projects = session.getProjects();
+            List<PilotProject> projects = MojoHelper.toPilotProjects(session.getProjects());
+            ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
+            ReactorModel reactorModel = ReactorModel.build(projects);
 
-            if (projects.size() > 1) {
-                executeReactor(projects, versionResolver);
-            } else {
-                executeSingleProject(versionResolver);
-            }
+            UpdatesTui tui =
+                    new UpdatesTui(result, reactorModel, projects.get(0).gav(), versionResolver);
+            tui.runStandalone();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to check updates: " + e.getMessage(), e);
         }
-    }
-
-    private void executeSingleProject(UpdatesTui.VersionResolver versionResolver) throws Exception {
-        List<UpdatesTui.DependencyInfo> dependencies = new ArrayList<>();
-
-        for (Dependency dep : project.getDependencies()) {
-            dependencies.add(new UpdatesTui.DependencyInfo(
-                    dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType()));
-        }
-
-        if (project.getDependencyManagement() != null) {
-            for (Dependency dep : project.getDependencyManagement().getDependencies()) {
-                boolean alreadyListed = dependencies.stream()
-                        .anyMatch(d -> d.groupId.equals(dep.getGroupId()) && d.artifactId.equals(dep.getArtifactId()));
-                if (!alreadyListed) {
-                    var info = new UpdatesTui.DependencyInfo(
-                            dep.getGroupId(), dep.getArtifactId(), dep.getVersion(), dep.getScope(), dep.getType());
-                    info.managed = true;
-                    dependencies.add(info);
-                }
-            }
-        }
-
-        String pomPath = project.getFile().getAbsolutePath();
-        String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
-
-        UpdatesTui tui = new UpdatesTui(dependencies, pomPath, gav, versionResolver);
-        tui.runStandalone();
-    }
-
-    private void executeReactor(List<MavenProject> mavenProjects, UpdatesTui.VersionResolver versionResolver)
-            throws Exception {
-        List<PilotProject> projects = MojoHelper.toPilotProjects(mavenProjects);
-        ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
-        ReactorModel reactorModel = ReactorModel.build(projects);
-
-        PilotProject root = projects.get(0);
-        String reactorGav = root.gav();
-
-        ReactorUpdatesTui tui = new ReactorUpdatesTui(result, reactorModel, reactorGav, versionResolver);
-        tui.runStandalone();
     }
 
     private UpdatesTui.VersionResolver createVersionResolver() {

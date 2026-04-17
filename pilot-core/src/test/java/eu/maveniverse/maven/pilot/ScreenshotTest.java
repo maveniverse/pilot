@@ -173,36 +173,62 @@ class ScreenshotTest {
 
     @Test
     void dependencyUpdates(@TempDir Path tempDir) throws Exception {
-        String pomPath =
-                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
-        List<UpdatesTui.DependencyInfo> deps = new ArrayList<>();
+        Path basedir = tempDir.resolve("demo");
+        Files.createDirectories(basedir);
+        Files.writeString(basedir.resolve("pom.xml"), "<project/>");
 
-        var d1 = new UpdatesTui.DependencyInfo("com.google.guava", "guava", "33.0.0-jre", "compile", "jar");
-        d1.newestVersion = "33.4.0-jre";
-        d1.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d1);
+        List<PilotProject.Dep> deps = List.of(
+                new PilotProject.Dep("com.google.guava", "guava", "33.0.0-jre", "compile", "jar"),
+                new PilotProject.Dep("org.slf4j", "slf4j-api", "2.0.9", "compile", "jar"),
+                new PilotProject.Dep("commons-io", "commons-io", "2.15.1", "compile", "jar"),
+                new PilotProject.Dep("org.junit.jupiter", "junit-jupiter", "5.10.1", "test", "jar"),
+                new PilotProject.Dep("org.apache.commons", "commons-lang3", "3.12.0", "compile", "jar"));
+        PilotProject proj = new PilotProject(
+                "com.example",
+                "demo",
+                "1.0.0",
+                "jar",
+                basedir,
+                basedir.resolve("pom.xml"),
+                deps,
+                List.of(),
+                deps,
+                List.of(),
+                new java.util.Properties(),
+                null,
+                null);
+        List<PilotProject> projects = List.of(proj);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
+        ReactorModel model = ReactorModel.build(projects);
 
-        var d2 = new UpdatesTui.DependencyInfo("org.slf4j", "slf4j-api", "2.0.9", "compile", "jar");
-        d2.newestVersion = "2.0.16";
-        d2.updateType = VersionComparator.UpdateType.PATCH;
-        deps.add(d2);
+        for (var ad : result.allDependencies) {
+            switch (ad.artifactId) {
+                case "guava" -> {
+                    ad.newestVersion = "33.4.0-jre";
+                    ad.updateType = VersionComparator.UpdateType.MINOR;
+                }
+                case "slf4j-api" -> {
+                    ad.newestVersion = "2.0.16";
+                    ad.updateType = VersionComparator.UpdateType.PATCH;
+                }
+                case "commons-io" -> {
+                    ad.newestVersion = "2.18.0";
+                    ad.updateType = VersionComparator.UpdateType.MINOR;
+                }
+                case "junit-jupiter" -> {
+                    ad.newestVersion = "5.11.4";
+                    ad.updateType = VersionComparator.UpdateType.MINOR;
+                }
+                case "commons-lang3" -> {
+                    ad.newestVersion = "3.17.0";
+                    ad.updateType = VersionComparator.UpdateType.MINOR;
+                }
+                default -> {}
+            }
+        }
 
-        var d3 = new UpdatesTui.DependencyInfo("commons-io", "commons-io", "2.15.1", "compile", "jar");
-        d3.newestVersion = "2.18.0";
-        d3.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d3);
-
-        var d4 = new UpdatesTui.DependencyInfo("org.junit.jupiter", "junit-jupiter", "5.10.1", "test", "jar");
-        d4.newestVersion = "5.11.4";
-        d4.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d4);
-
-        var d5 = new UpdatesTui.DependencyInfo("org.apache.commons", "commons-lang3", "3.12.0", "compile", "jar");
-        d5.newestVersion = "3.17.0";
-        d5.updateType = VersionComparator.UpdateType.MINOR;
-        deps.add(d5);
-
-        UpdatesTui tui = new UpdatesTui(deps, pomPath, "com.example:demo:1.0.0", (g, a) -> List.of());
+        UpdatesTui tui = new UpdatesTui(result, model, "com.example:demo:1.0.0", (g, a) -> List.of());
+        tui.buildDisplayRows();
 
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(WIDTH, HEIGHT))) {
             Pilot pilot = testRunner.pilot();

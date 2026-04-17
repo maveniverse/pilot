@@ -93,7 +93,7 @@ public class PilotMain {
 
         // Phase 3: Create lazy panel factory that blocks on first use
         // (called from PilotShell's panel executor thread, not the UI thread)
-        PilotShell.ToolPanelFactory panelFactory = (toolId, proj, scope, progress) -> {
+        PilotShell.ToolPanelFactory panelFactory = (toolId, proj, scope, session, sessionProvider, progress) -> {
             if ("search".equals(toolId)) {
                 return new SearchTui(new CentralSearchClient(), "", java.util.List.of(), 0);
             }
@@ -119,7 +119,7 @@ public class PilotMain {
                         + " scope projects not found in reactor (path mismatch)");
             }
             try {
-                return reactor.engine.createPanel(toolId, realProject, realScope, progress);
+                return reactor.engine.createPanel(toolId, realProject, realScope, session, sessionProvider, progress);
             } catch (Exception e) {
                 System.err.println(
                         "[Pilot] Failed to create '" + toolId + "' panel for " + realProject.ga() + ": " + e);
