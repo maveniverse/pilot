@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -54,6 +55,18 @@ public class PilotEngine {
         return treeCache.computeIfAbsent(project.ga(), k -> resolver.collectDependencies(project));
     }
 
+    private void resolveAllDependencies(List<PilotProject> projects, Consumer<String> progress) {
+        AtomicInteger loaded = new AtomicInteger();
+        int total = projects.size();
+        projects.parallelStream().forEach(p -> {
+            cachedCollectDependencies(p);
+            synchronized (loaded) {
+                int count = loaded.incrementAndGet();
+                progress.accept("Resolving dependencies… " + count + "/" + total + "\n" + p.artifactId);
+            }
+        });
+    }
+
     public ToolPanel createPanel(String toolId, PilotProject proj, List<PilotProject> projects) throws Exception {
         return createPanel(toolId, proj, projects, null, null, s -> {});
     }
@@ -70,7 +83,7 @@ public class PilotEngine {
             case "tree" -> createTreePanel(proj);
             case "dependencies" -> createDependenciesPanel(proj, session);
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
-            case "conflicts" -> createConflictsPanel(proj, projects, session);
+            case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
             case "align" -> createAlignPanel(proj, projects);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
             case "pom" -> createPomPanel(proj);
@@ -158,8 +171,10 @@ public class PilotEngine {
         return new UpdatesTui(result, reactorModel, gav, versionResolver, sessionProvider);
     }
 
-    private ToolPanel createConflictsPanel(PilotProject proj, List<PilotProject> projects, PomEditSession session) {
+    private ToolPanel createConflictsPanel(
+            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
+        resolveAllDependencies(targetProjects, progress);
         String gav = projects.size() > 1
                 ? projects.get(0).gav() + " (reactor: " + projects.size() + " modules)"
                 : proj.gav();
@@ -192,15 +207,12 @@ public class PilotEngine {
     private ToolPanel createAuditPanel(
             PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         if (projects.size() > 1) {
+            resolveAllDependencies(projects, progress);
             PilotProject root = projects.get(0);
             DependencyTreeModel treeModel = cachedCollectDependencies(root);
             Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
             int emptyTrees = 0;
-            for (int i = 0; i < projects.size(); i++) {
-                PilotProject p = projects.get(i);
-                if (projects.size() >= 100) {
-                    progress.accept("Collecting audit data… " + (i + 1) + "/" + projects.size() + "\n" + p.artifactId);
-                }
+            for (PilotProject p : projects) {
                 DependencyTreeModel tree = cachedCollectDependencies(p);
                 if (tree.root.children.isEmpty()) {
                     emptyTrees++;
