@@ -155,11 +155,11 @@ public class AuditTui extends ToolPanel {
     private int lastTableHeight;
     private String scopeFilter; // null = show all
     private List<AuditEntry> filteredEntries;
-    private List<VulnRow> vulnRows = new ArrayList<>();
+    List<VulnRow> vulnRows = new ArrayList<>();
     private List<LicenseRow> byLicenseRows = new ArrayList<>();
 
     /** Flattened vulnerability row linking back to its parent entry. */
-    private record VulnRow(AuditEntry entry, OsvClient.Vulnerability vuln) {}
+    record VulnRow(AuditEntry entry, OsvClient.Vulnerability vuln) {}
 
     /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
@@ -855,7 +855,9 @@ public class AuditTui extends ToolPanel {
     void setActiveSubView(int index) {
         view = View.values()[index];
         clearSearch();
-        sortState = new SortState(view == View.VULNERABILITIES ? 5 : 4);
+        sortState = view == View.VULNERABILITIES
+                ? new SortState(6, 4, false) // default sort: published date descending
+                : new SortState(4);
     }
 
     @Override
@@ -877,6 +879,7 @@ public class AuditTui extends ToolPanel {
                 vr -> vr.vuln().id,
                 vr -> severitySortKey(vr.vuln().severity),
                 vr -> vr.entry().scope,
+                vr -> vr.vuln().published != null ? vr.vuln().published : "",
                 vr -> vr.vuln().summary);
     }
 
@@ -1078,17 +1081,19 @@ public class AuditTui extends ToolPanel {
 
         // -- Vulnerability table --
         String vFilterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
-        Block block = Block.builder()
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(borderStyle())
-                .build();
+        Block.Builder blockBuilder =
+                Block.builder().borderType(BorderType.ROUNDED).borderStyle(borderStyle());
+        if (vulnsLoaded < entries.size()) {
+            blockBuilder.title(" Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size() + " ");
+        }
+        Block block = blockBuilder.build();
 
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < vulnRows.size(); i++) {
             var vr = vulnRows.get(i);
             String severity = normalizeSeverity(vr.vuln().severity);
-            String summary =
-                    vr.vuln().summary.length() > 60 ? vr.vuln().summary.substring(0, 57) + "..." : vr.vuln().summary;
+            String published = formatPublished(vr.vuln().published);
+            String summary = truncateSummary(vr.vuln().summary, 50);
             Style style = getSeverityStyle(severity);
             if (view == View.VULNERABILITIES && isSearchMatch(i)) {
                 style = style.bg(theme.searchHighlightBg());
@@ -1098,21 +1103,23 @@ public class AuditTui extends ToolPanel {
                     Cell.from(vr.vuln().id).style(style),
                     Cell.from(severity).style(style),
                     Cell.from(vr.entry().scope).style(getScopeStyle(vr.entry().scope)),
+                    Cell.from(published).style(style),
                     Cell.from(summary).style(style)));
         }
 
         Row header = sortState.decorateHeader(
-                List.of("artifact", "CVE/ID", "severity", COL_SCOPE, "summary"), theme.tableHeader());
+                List.of("artifact", "CVE/ID", "severity", COL_SCOPE, "published", "summary"), theme.tableHeader());
 
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
                 .widths(
-                        Constraint.percentage(28),
-                        Constraint.percentage(17),
-                        Constraint.percentage(10),
+                        Constraint.percentage(24),
+                        Constraint.percentage(14),
+                        Constraint.percentage(9),
                         Constraint.percentage(8),
-                        Constraint.percentage(37))
+                        Constraint.percentage(11),
+                        Constraint.percentage(34))
                 .highlightStyle(theme.highlightStyle())
                 .highlightSymbol(HIGHLIGHT_SYMBOL)
                 .block(block)
@@ -1172,7 +1179,7 @@ public class AuditTui extends ToolPanel {
             String pub = vuln.published.length() > 10 ? vuln.published.substring(0, 10) : vuln.published;
             lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
         }
-        lines.add(Line.from(Span.raw(vuln.summary)));
+        lines.add(Line.from(Span.raw(vuln.summary != null ? vuln.summary : "")));
         Line modulesLine = buildModulesLine(vr.entry);
         if (modulesLine != null) lines.add(modulesLine);
 
@@ -1195,11 +1202,22 @@ public class AuditTui extends ToolPanel {
         return "https://osv.dev/vulnerability/" + id;
     }
 
-    private static String normalizeSeverity(String severity) {
+    static String normalizeSeverity(String severity) {
         if (severity == null) return "UNKNOWN";
-        String upper = severity.toUpperCase();
+        String upper = severity.toUpperCase(Locale.ROOT);
         if ("MODERATE".equals(upper)) return SEVERITY_MEDIUM;
         return upper;
+    }
+
+    static String formatPublished(String published) {
+        if (published == null) return "";
+        return published.length() >= 10 ? published.substring(0, 10) : published;
+    }
+
+    static String truncateSummary(String summary, int maxLen) {
+        if (summary == null || summary.isEmpty()) return "";
+        if (summary.length() <= maxLen) return summary;
+        return summary.substring(0, maxLen - 3) + "...";
     }
 
     /** Return a sort key for severity so that sorting is semantic (CRITICAL > HIGH > MEDIUM > LOW) rather than alphabetic. */
@@ -1537,11 +1555,12 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(15), Constraint.percentage(10));
             case VULNERABILITIES ->
                 List.of(
-                        Constraint.percentage(28),
-                        Constraint.percentage(17),
-                        Constraint.percentage(10),
+                        Constraint.percentage(24),
+                        Constraint.percentage(14),
+                        Constraint.percentage(9),
                         Constraint.percentage(8),
-                        Constraint.percentage(37));
+                        Constraint.percentage(11),
+                        Constraint.percentage(34));
         };
     }
 

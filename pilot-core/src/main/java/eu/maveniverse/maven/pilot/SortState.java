@@ -42,6 +42,14 @@ class SortState {
         this.columnCount = columnCount;
     }
 
+    SortState(int columnCount, int defaultColumn, boolean defaultAscending) {
+        this.columnCount = columnCount;
+        if (defaultColumn >= 0 && defaultColumn < columnCount) {
+            this.sortColumn = defaultColumn;
+            this.ascending = defaultAscending;
+        }
+    }
+
     int sortColumn() {
         return sortColumn;
     }

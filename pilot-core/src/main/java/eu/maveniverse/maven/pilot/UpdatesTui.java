@@ -533,6 +533,18 @@ public class UpdatesTui extends ToolPanel {
         };
     }
 
+    private static List<Constraint> depsTableWidths() {
+        return List.of(
+                Constraint.length(3),
+                Constraint.percentage(30),
+                Constraint.percentage(12),
+                Constraint.length(3),
+                Constraint.percentage(12),
+                Constraint.length(5),
+                Constraint.length(6),
+                Constraint.percentage(10));
+    }
+
     @Override
     protected void onSortChanged() {
         if (view == View.DEPENDENCIES) {
@@ -1206,19 +1218,10 @@ public class UpdatesTui extends ToolPanel {
             }
         }
 
-        List<Constraint> widths = List.of(
-                Constraint.length(3),
-                Constraint.percentage(30),
-                Constraint.percentage(12),
-                Constraint.length(3),
-                Constraint.percentage(12),
-                Constraint.length(5),
-                Constraint.length(6),
-                Constraint.percentage(10));
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(widths)
+                .widths(depsTableWidths())
                 .highlightStyle(displayRows.isEmpty() ? Style.create() : theme.highlightStyle())
                 .highlightSymbol("▸ ")
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS)
@@ -1631,14 +1634,7 @@ public class UpdatesTui extends ToolPanel {
         if (handleMouseTabBar(mouse)) return true;
         List<Constraint> widths;
         if (view == View.DEPENDENCIES) {
-            widths = List.of(
-                    Constraint.length(3),
-                    Constraint.percentage(35),
-                    Constraint.percentage(14),
-                    Constraint.length(3),
-                    Constraint.percentage(14),
-                    Constraint.length(6),
-                    Constraint.percentage(10));
+            widths = depsTableWidths();
         } else {
             widths = List.of(Constraint.percentage(75), Constraint.percentage(25));
         }

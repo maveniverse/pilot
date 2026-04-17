@@ -504,7 +504,7 @@ public class ConflictsTui extends ToolPanel {
     }
 
     void onCollectionComplete(Map<String, List<ConflictEntry>> mergedMap) {
-        conflicts = filterConflictGroups(mergedMap);
+        conflicts = new ArrayList<>(filterConflictGroups(mergedMap));
         loading = false;
         status = conflicts.size() + " dependency group(s) with version variance";
         if (!displayedConflicts().isEmpty()) {
