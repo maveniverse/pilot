@@ -569,6 +569,18 @@ public class AuditTui extends ToolPanel {
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
     }
 
+    @Override
+    protected Line buildSubViewTabLine() {
+        Line base = super.buildSubViewTabLine();
+        if (vulnsLoaded < entries.size()) {
+            List<Span> spans = new ArrayList<>(base.spans());
+            spans.add(Span.raw("  checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size())
+                    .fg(Color.DARK_GRAY));
+            return Line.from(spans);
+        }
+        return base;
+    }
+
     // -- Rendering --
 
     @Override
@@ -1053,14 +1065,14 @@ public class AuditTui extends ToolPanel {
 
     private void renderVulnerabilities(Frame frame, Rect area) {
         if (vulnRows.isEmpty()) {
-            String filterLabel = scopeFilter != null ? " [" + scopeFilter + "]" : "";
             Block block = Block.builder()
                     .borderType(BorderType.ROUNDED)
                     .borderStyle(borderStyle())
                     .build();
             String msg;
             if (vulnsLoaded < entries.size()) {
-                msg = "Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size();
+                // Loading progress is shown on the tab bar line
+                msg = "";
             } else if (scopeFilter != null) {
                 msg = "No known vulnerabilities in " + scopeFilter + " scope";
             } else {

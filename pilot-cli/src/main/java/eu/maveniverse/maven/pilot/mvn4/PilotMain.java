@@ -279,13 +279,13 @@ public class PilotMain {
         List<Path> pomPaths = new ArrayList<>();
         collectPomPaths(discoveryResult, pomPaths);
 
-        // Build effective models for each module
+        // Build effective models for each module (reuse one session for shared cache)
         status.set("Building effective models (0/" + pomPaths.size() + ")…");
+        ModelBuilder.ModelBuilderSession effectiveSession = modelBuilder.newSession();
         List<PilotProject> projects = new ArrayList<>();
         Map<String, Model> effectiveModels = new LinkedHashMap<>();
         Map<String, PilotProject> projectsByGa = new LinkedHashMap<>();
         for (Path modulePom : pomPaths) {
-            ModelBuilder.ModelBuilderSession effectiveSession = modelBuilder.newSession();
             ModelBuilderRequest.ModelBuilderRequestBuilder effectiveBuilder = ModelBuilderRequest.builder()
                     .session(session)
                     .requestType(ModelBuilderRequest.RequestType.BUILD_EFFECTIVE)
@@ -314,7 +314,7 @@ public class PilotMain {
 
         // Extend parent chains beyond reactor for external parents
         status.set("Resolving parent chains…");
-        extendExternalParents(session, modelBuilder, projects, projectsByGa, extensionProperties);
+        extendExternalParents(session, effectiveSession, projects, projectsByGa, extensionProperties);
 
         status.set("Ready");
         PilotResolver resolver = new Maven4PilotResolver(session, effectiveModels);
@@ -331,7 +331,7 @@ public class PilotMain {
 
     private static void extendExternalParents(
             Session session,
-            ModelBuilder modelBuilder,
+            ModelBuilder.ModelBuilderSession mbs,
             List<PilotProject> projects,
             Map<String, PilotProject> projectsByGa,
             Map<String, String> extensionProperties) {
@@ -343,14 +343,14 @@ public class PilotMain {
             }
             if (projectsByGa.containsKey(top.ga())) {
                 // Already processed or is a reactor project — check if it needs extension
-                resolveExternalParentChain(session, modelBuilder, top, projectsByGa, extensionProperties);
+                resolveExternalParentChain(session, mbs, top, projectsByGa, extensionProperties);
             }
         }
     }
 
     private static void resolveExternalParentChain(
             Session session,
-            ModelBuilder modelBuilder,
+            ModelBuilder.ModelBuilderSession mbs,
             PilotProject project,
             Map<String, PilotProject> projectsByGa,
             Map<String, String> extensionProperties) {
@@ -359,7 +359,6 @@ public class PilotMain {
         // Resolve this project's parent POM to find properties defined in external parents
         try {
             // Build the file model for this project to get its declared parent
-            ModelBuilder.ModelBuilderSession mbs = modelBuilder.newSession();
             ModelBuilderRequest.ModelBuilderRequestBuilder builder = ModelBuilderRequest.builder()
                     .session(session)
                     .requestType(ModelBuilderRequest.RequestType.BUILD_EFFECTIVE)
@@ -383,7 +382,6 @@ public class PilotMain {
             if (parentPom == null) return;
 
             // Build the parent's model
-            ModelBuilder.ModelBuilderSession parentMbs = modelBuilder.newSession();
             ModelBuilderRequest.ModelBuilderRequestBuilder parentBuilder = ModelBuilderRequest.builder()
                     .session(session)
                     .requestType(ModelBuilderRequest.RequestType.BUILD_EFFECTIVE)
@@ -391,7 +389,7 @@ public class PilotMain {
             if (!extensionProperties.isEmpty()) {
                 parentBuilder.userProperties(extensionProperties);
             }
-            ModelBuilderResult parentResult = parentMbs.build(parentBuilder.build());
+            ModelBuilderResult parentResult = mbs.build(parentBuilder.build());
 
             PilotProject parentProject =
                     toPilotProject(parentResult.getEffectiveModel(), parentResult.getFileModel(), parentPom);
@@ -399,7 +397,7 @@ public class PilotMain {
             project.parent = parentProject;
 
             // Recursively extend the parent's parent chain
-            resolveExternalParentChain(session, modelBuilder, parentProject, projectsByGa, extensionProperties);
+            resolveExternalParentChain(session, mbs, parentProject, projectsByGa, extensionProperties);
         } catch (Exception e) {
             // External parent resolution is best-effort
         }
