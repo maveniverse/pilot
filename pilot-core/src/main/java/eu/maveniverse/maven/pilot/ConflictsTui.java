@@ -482,7 +482,7 @@ public class ConflictsTui extends ToolPanel {
         pool.shutdown();
     }
 
-    private Map<String, List<ConflictEntry>> resolveModule(PilotProject project, boolean multiModule) {
+    Map<String, List<ConflictEntry>> resolveModule(PilotProject project, boolean multiModule) {
         loadingModule = project.artifactId;
         DependencyTreeModel tree = treeResolver.resolve(project);
         Map<String, List<ConflictEntry>> localMap = new HashMap<>();
@@ -492,8 +492,7 @@ public class ConflictsTui extends ToolPanel {
         return localMap;
     }
 
-    private void mergeAndAdvance(
-            Map<String, List<ConflictEntry>> localMap, Map<String, List<ConflictEntry>> mergedMap) {
+    void mergeAndAdvance(Map<String, List<ConflictEntry>> localMap, Map<String, List<ConflictEntry>> mergedMap) {
         for (var entry : localMap.entrySet()) {
             mergedMap.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
         }
@@ -504,7 +503,7 @@ public class ConflictsTui extends ToolPanel {
         }
     }
 
-    private void onCollectionComplete(Map<String, List<ConflictEntry>> mergedMap) {
+    void onCollectionComplete(Map<String, List<ConflictEntry>> mergedMap) {
         conflicts = filterConflictGroups(mergedMap);
         loading = false;
         status = conflicts.size() + " dependency group(s) with version variance";
