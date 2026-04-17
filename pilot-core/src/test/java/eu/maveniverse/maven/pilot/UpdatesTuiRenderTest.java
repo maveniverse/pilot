@@ -27,8 +27,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Rendering and interaction tests for {@link UpdatesTui}.
@@ -133,6 +137,7 @@ class UpdatesTuiRenderTest {
                     d.newestVersion = "6.0.0";
                     d.updateType = VersionComparator.UpdateType.MAJOR;
                 }
+                default -> {}
             }
         }
 
@@ -286,44 +291,25 @@ class UpdatesTuiRenderTest {
 
     // ── Filtering ──────────────────────────────────────────────────────────
 
-    @Test
-    void filterPatchShowsOnlyPatchUpdates() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar('f'), null); // ALL -> PATCH
-
-        String output = render(tui::renderStandalone);
-        assertThat(output)
-                .contains("[PATCH]")
-                .contains("slf4j-api")
-                .doesNotContain("guava")
-                .doesNotContain("junit-jupiter");
+    static Stream<Arguments> filterByTypeArgs() {
+        return Stream.of(
+                Arguments.of(1, "PATCH", "slf4j-api", new String[] {"guava", "junit-jupiter"}),
+                Arguments.of(2, "MINOR", "guava", new String[] {"slf4j-api", "junit-jupiter"}),
+                Arguments.of(3, "MAJOR", "junit-jupiter", new String[] {"guava", "slf4j-api"}));
     }
 
-    @Test
-    void filterMinorShowsOnlyMinorUpdates() throws Exception {
+    @ParameterizedTest
+    @MethodSource("filterByTypeArgs")
+    void filterShowsOnlyMatchingUpdateType(int presses, String label, String visible, String[] hidden)
+            throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar('f'), null); // PATCH
-        tui.handleEvent(KeyEvent.ofChar('f'), null); // MINOR
+        for (int i = 0; i < presses; i++) tui.handleEvent(KeyEvent.ofChar('f'), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output)
-                .contains("[MINOR]")
-                .contains("guava")
-                .doesNotContain("slf4j-api")
-                .doesNotContain("junit-jupiter");
-    }
-
-    @Test
-    void filterMajorShowsOnlyMajorUpdates() throws Exception {
-        var tui = createTuiWithUpdates();
-        for (int i = 0; i < 3; i++) tui.handleEvent(KeyEvent.ofChar('f'), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(output)
-                .contains("[MAJOR]")
-                .contains("junit-jupiter")
-                .doesNotContain("guava")
-                .doesNotContain("slf4j-api");
+        assertThat(output).contains("[" + label + "]").contains(visible);
+        for (String h : hidden) {
+            assertThat(output).doesNotContain(h);
+        }
     }
 
     @Test
@@ -404,8 +390,7 @@ class UpdatesTuiRenderTest {
         tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).doesNotContain("guava");
-        assertThat(output).contains("slf4j-api");
+        assertThat(output).doesNotContain("guava").contains("slf4j-api");
     }
 
     @Test
@@ -447,8 +432,7 @@ class UpdatesTuiRenderTest {
         tui.handleEvent(KeyEvent.ofKey(KeyCode.ESCAPE), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).doesNotContain("POM Changes");
-        assertThat(output).contains("guava");
+        assertThat(output).doesNotContain("POM Changes").contains("guava");
     }
 
     @Test
