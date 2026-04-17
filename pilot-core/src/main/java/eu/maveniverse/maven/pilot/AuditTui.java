@@ -499,97 +499,8 @@ public class AuditTui extends ToolPanel {
             return true;
         }
 
-        // ←/→ for expand/collapse in VULNERABILITIES view
-        if (key.isRight() && view == View.VULNERABILITIES) {
-            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
-            if (idx >= 0
-                    && idx < vulnDisplayRows.size()
-                    && vulnDisplayRows.get(idx).isGroupHeader()) {
-                var group = vulnDisplayRows.get(idx).group();
-                if (!group.expanded) {
-                    group.expanded = true;
-                    rebuildVulnDisplayRows();
-                } else {
-                    vulnTableState.selectNext(vulnDisplayRows.size());
-                }
-                return true;
-            }
-        }
-        if (key.isLeft() && view == View.VULNERABILITIES) {
-            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
-            if (idx >= 0 && idx < vulnDisplayRows.size()) {
-                var dr = vulnDisplayRows.get(idx);
-                if (dr.isGroupHeader() && dr.group().expanded) {
-                    dr.group().expanded = false;
-                    rebuildVulnDisplayRows();
-                    return true;
-                } else if (!dr.isGroupHeader()) {
-                    for (int i = idx - 1; i >= 0; i--) {
-                        if (vulnDisplayRows.get(i).isGroupHeader()) {
-                            vulnTableState.select(i);
-                            break;
-                        }
-                    }
-                    return true;
-                }
-            }
-        }
-
-        // VULNERABILITIES: Enter/Space to expand/collapse groups
-        if (view == View.VULNERABILITIES && (key.isKey(KeyCode.ENTER) || key.isChar(' '))) {
-            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
-            if (idx >= 0
-                    && idx < vulnDisplayRows.size()
-                    && vulnDisplayRows.get(idx).isGroupHeader()) {
-                var group = vulnDisplayRows.get(idx).group();
-                group.expanded = !group.expanded;
-                rebuildVulnDisplayRows();
-            }
-            return true;
-        }
-
-        // ←/→ for expand/collapse in grouped licenses view
-        if (key.isRight() && view == View.LICENSES && licensesGrouped) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
-                if (!byLicenseRows.get(idx).expanded) {
-                    byLicenseRows.get(idx).expanded = true;
-                    rebuildByLicenseRows();
-                } else {
-                    byLicenseTableState.selectNext(byLicenseRows.size());
-                }
-                return true;
-            }
-        }
-        if (key.isLeft() && view == View.LICENSES && licensesGrouped) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size()) {
-                LicenseRow row = byLicenseRows.get(idx);
-                if (row.isGroup() && row.expanded) {
-                    row.expanded = false;
-                    rebuildByLicenseRows();
-                    return true;
-                } else if (!row.isGroup()) {
-                    for (int i = idx - 1; i >= 0; i--) {
-                        if (byLicenseRows.get(i).isGroup()) {
-                            byLicenseTableState.select(i);
-                            break;
-                        }
-                    }
-                    return true;
-                }
-            }
-        }
-
-        // Grouped licenses: Enter/Space to expand/collapse groups
-        if (view == View.LICENSES && licensesGrouped && (key.isKey(KeyCode.ENTER) || key.isChar(' '))) {
-            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
-                byLicenseRows.get(idx).expanded = !byLicenseRows.get(idx).expanded;
-                rebuildByLicenseRows();
-            }
-            return true;
-        }
+        if (view == View.VULNERABILITIES && handleVulnExpandCollapse(key)) return true;
+        if (view == View.LICENSES && licensesGrouped && handleLicenseExpandCollapse(key)) return true;
 
         if (key.isCharIgnoreCase('m')) {
             addManagedDependency();
@@ -613,6 +524,98 @@ public class AuditTui extends ToolPanel {
             return true;
         }
 
+        return false;
+    }
+
+    private boolean handleVulnExpandCollapse(KeyEvent key) {
+        if (key.isRight()) {
+            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
+            if (idx >= 0
+                    && idx < vulnDisplayRows.size()
+                    && vulnDisplayRows.get(idx).isGroupHeader()) {
+                var group = vulnDisplayRows.get(idx).group();
+                if (!group.expanded) {
+                    group.expanded = true;
+                    rebuildVulnDisplayRows();
+                } else {
+                    vulnTableState.selectNext(vulnDisplayRows.size());
+                }
+                return true;
+            }
+        }
+        if (key.isLeft()) {
+            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
+            if (idx >= 0 && idx < vulnDisplayRows.size()) {
+                var dr = vulnDisplayRows.get(idx);
+                if (dr.isGroupHeader() && dr.group().expanded) {
+                    dr.group().expanded = false;
+                    rebuildVulnDisplayRows();
+                    return true;
+                } else if (!dr.isGroupHeader()) {
+                    for (int i = idx - 1; i >= 0; i--) {
+                        if (vulnDisplayRows.get(i).isGroupHeader()) {
+                            vulnTableState.select(i);
+                            break;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        if (key.isKey(KeyCode.ENTER) || key.isChar(' ')) {
+            int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
+            if (idx >= 0
+                    && idx < vulnDisplayRows.size()
+                    && vulnDisplayRows.get(idx).isGroupHeader()) {
+                var group = vulnDisplayRows.get(idx).group();
+                group.expanded = !group.expanded;
+                rebuildVulnDisplayRows();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleLicenseExpandCollapse(KeyEvent key) {
+        if (key.isRight()) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
+                if (!byLicenseRows.get(idx).expanded) {
+                    byLicenseRows.get(idx).expanded = true;
+                    rebuildByLicenseRows();
+                } else {
+                    byLicenseTableState.selectNext(byLicenseRows.size());
+                }
+                return true;
+            }
+        }
+        if (key.isLeft()) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size()) {
+                LicenseRow row = byLicenseRows.get(idx);
+                if (row.isGroup() && row.expanded) {
+                    row.expanded = false;
+                    rebuildByLicenseRows();
+                    return true;
+                } else if (!row.isGroup()) {
+                    for (int i = idx - 1; i >= 0; i--) {
+                        if (byLicenseRows.get(i).isGroup()) {
+                            byLicenseTableState.select(i);
+                            break;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        if (key.isKey(KeyCode.ENTER) || key.isChar(' ')) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            if (idx >= 0 && idx < byLicenseRows.size() && byLicenseRows.get(idx).isGroup()) {
+                byLicenseRows.get(idx).expanded = !byLicenseRows.get(idx).expanded;
+                rebuildByLicenseRows();
+            }
+            return true;
+        }
         return false;
     }
 
@@ -1107,18 +1110,6 @@ public class AuditTui extends ToolPanel {
             return row.licenseName != null && row.licenseName.toLowerCase().contains(query);
         }
         return auditEntryMatchesSearch(row.entry, query);
-    }
-
-    @Override
-    protected Line buildSubViewTabLine() {
-        Line base = super.buildSubViewTabLine();
-        if (vulnsLoaded < entries.size()) {
-            List<Span> spans = new ArrayList<>(base.spans());
-            spans.add(Span.raw("  Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size())
-                    .fg(Color.DARK_GRAY));
-            return Line.from(spans);
-        }
-        return base;
     }
 
     @Override

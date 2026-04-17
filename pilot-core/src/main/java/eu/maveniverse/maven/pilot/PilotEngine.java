@@ -241,7 +241,7 @@ public class PilotEngine {
         }
     }
 
-    private ToolPanel createPomPanel(PilotProject proj, PomEditSession session) throws Exception {
+    private ToolPanel createPomPanel(PilotProject proj, PomEditSession session) throws java.io.IOException {
         String rawPom = (session != null && session.isDirty()) ? session.currentXml() : Files.readString(proj.pomPath);
         String effectivePom = resolver.effectivePom(proj);
         XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
