@@ -146,7 +146,6 @@ public class SearchTui extends ToolPanel {
 
     // Dependencies
     private final SearchClient client;
-    private TuiRunner runner;
     private int lastContentHeight;
 
     /**
@@ -348,11 +347,6 @@ public class SearchTui extends ToolPanel {
                 Enter           Select artifact / confirm search
                 Esc             Back to search / quit
                 """);
-    }
-
-    @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
     }
 
     private boolean handleSearchKeys(KeyEvent key) {

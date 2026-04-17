@@ -522,6 +522,10 @@ public class PilotShell {
     }
 
     private void refreshActivePanel() {
+        refreshActivePanel(true);
+    }
+
+    private void refreshActivePanel(boolean clearPanel) {
         ToolDef tool = TOOLS.get(activeToolIndex);
         if (!isToolAvailable(activeToolIndex)) {
             activePanel = null;
@@ -535,22 +539,21 @@ public class PilotShell {
                 ? tool.id
                 : tool.id + ":" + (selectedProject != null ? selectedProject.ga() : "null");
 
-        ToolPanel cached = panelCache.get(cacheKey);
-        if (cached != null) {
-            activePanel = cached;
-            // Restore sub-view to keep navigation homogeneous across modules
-            if (currentSubView < activePanel.subViewCount()) {
-                activePanel.setActiveSubView(currentSubView);
-            }
-            loadingCacheKey = null;
+        if (activateCachedPanel(cacheKey, currentSubView)) {
             return;
         }
 
-        // Already loading this exact panel — just re-attach
+        // Already loading this exact panel — keep waiting
         if (cacheKey.equals(loadingCacheKey)) {
+            if (clearPanel) {
+                activePanel = null;
+            }
             return;
         }
 
+        if (clearPanel) {
+            activePanel = null;
+        }
         panelError = null;
         panelLoadingStatus = null;
         loadingCacheKey = cacheKey;
@@ -561,9 +564,26 @@ public class PilotShell {
             return;
         }
 
+        submitPanelLoadTask(tool, cacheKey, currentSubView);
+    }
+
+    private boolean activateCachedPanel(String cacheKey, int currentSubView) {
+        ToolPanel cached = panelCache.get(cacheKey);
+        if (cached == null) {
+            return false;
+        }
+        activePanel = cached;
+        // Restore sub-view to keep navigation homogeneous across modules
+        if (currentSubView < activePanel.subViewCount()) {
+            activePanel.setActiveSubView(currentSubView);
+        }
+        loadingCacheKey = null;
+        return true;
+    }
+
+    private void submitPanelLoadTask(ToolDef tool, String cacheKey, int subView) {
         final PilotProject proj = selectedProject;
-        final List<PilotProject> scope = selectedScope;
-        final int subView = currentSubView;
+        final List<PilotProject> scope = tool.isModuleIndependent() ? projects : selectedScope;
         // Get or create session for this module's POM
         final PomEditSession session;
         if (proj != null && !tool.isModuleIndependent()) {
@@ -582,38 +602,44 @@ public class PilotShell {
                     }
                 });
                 if (panel != null && runner != null) {
-                    runner.runOnRenderThread(() -> {
-                        panel.setRunner(runner);
-                        panelCache.put(cacheKey, panel);
-                        runningTasks.remove(cacheKey);
-                        // Only set active if still waiting for this panel
-                        if (cacheKey.equals(loadingCacheKey)) {
-                            activePanel = panel;
-                            activePanel.setFocused(focus == Focus.CONTENT);
-                            // Restore sub-view
-                            if (subView < activePanel.subViewCount()) {
-                                activePanel.setActiveSubView(subView);
-                            }
-                            loadingCacheKey = null;
-                        }
-                    });
+                    runner.runOnRenderThread(() -> onPanelLoaded(cacheKey, panel, subView));
                 }
             } catch (Exception e) {
-                String msg = e.getMessage();
-                if (msg == null) msg = e.getClass().getSimpleName();
-                final String errorMsg = msg;
-                runningTasks.remove(cacheKey);
-                if (runner != null) {
-                    runner.runOnRenderThread(() -> {
-                        if (cacheKey.equals(loadingCacheKey)) {
-                            loadingCacheKey = null;
-                            panelError = errorMsg;
-                        }
-                    });
-                }
+                handlePanelLoadError(cacheKey, e);
             }
         });
         runningTasks.put(cacheKey, task);
+    }
+
+    private void onPanelLoaded(String cacheKey, ToolPanel panel, int subView) {
+        panel.setRunner(runner);
+        panelCache.put(cacheKey, panel);
+        runningTasks.remove(cacheKey);
+        // Only set active if still waiting for this panel
+        if (cacheKey.equals(loadingCacheKey)) {
+            activePanel = panel;
+            activePanel.setFocused(focus == Focus.CONTENT);
+            // Restore sub-view
+            if (subView < activePanel.subViewCount()) {
+                activePanel.setActiveSubView(subView);
+            }
+            loadingCacheKey = null;
+        }
+    }
+
+    private void handlePanelLoadError(String cacheKey, Exception e) {
+        String msg = e.getMessage();
+        if (msg == null) msg = e.getClass().getSimpleName();
+        final String errorMsg = msg;
+        runningTasks.remove(cacheKey);
+        if (runner != null) {
+            runner.runOnRenderThread(() -> {
+                if (cacheKey.equals(loadingCacheKey)) {
+                    loadingCacheKey = null;
+                    panelError = errorMsg;
+                }
+            });
+        }
     }
 
     private void onModuleSelected(PilotProject project) {
@@ -623,7 +649,7 @@ public class PilotShell {
 
         ToolDef activeTool = TOOLS.get(activeToolIndex);
         if (!activeTool.isModuleIndependent()) {
-            refreshActivePanel();
+            refreshActivePanel(false);
         }
     }
 

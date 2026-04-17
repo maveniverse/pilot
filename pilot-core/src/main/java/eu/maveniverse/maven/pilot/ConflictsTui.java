@@ -41,8 +41,13 @@ import dev.tamboui.widgets.table.TableState;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -98,18 +103,28 @@ public class ConflictsTui extends ToolPanel {
         }
     }
 
-    private final List<ConflictGroup> conflicts;
+    @FunctionalInterface
+    public interface TreeResolver {
+        DependencyTreeModel resolve(PilotProject project);
+    }
+
+    private List<ConflictGroup> conflicts;
     private final String projectGav;
     private final TableState tableState = new TableState();
     private boolean showDetails = true;
     private boolean showAll = false;
     private String status;
 
+    private boolean loading;
+    private int loadedCount;
+    private int totalModules;
+    private volatile String loadingModule;
+    private TreeResolver treeResolver;
+    private List<PilotProject> pendingProjects;
+
     private boolean pendingQuit;
     private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
-
-    private TuiRunner runner;
 
     /**
      * Get the currently selected table-row index, or -1 when no selection exists.
@@ -147,6 +162,20 @@ public class ConflictsTui extends ToolPanel {
         if (!displayedConflicts().isEmpty()) {
             tableState.select(0);
         }
+    }
+
+    /** Async-loading constructor — collects conflicts in the background after setRunner(). */
+    public ConflictsTui(
+            List<PilotProject> projects, PomEditSession session, String projectGav, TreeResolver treeResolver) {
+        this.editSession = session;
+        this.conflicts = new ArrayList<>();
+        this.projectGav = projectGav;
+        this.totalModules = projects.size();
+        this.loading = !projects.isEmpty();
+        this.treeResolver = treeResolver;
+        this.pendingProjects = projects;
+        this.status = loading ? "Collecting conflicts…" : "0 dependency group(s) with version variance";
+        this.sortState = new SortState(4);
     }
 
     /**
@@ -236,6 +265,10 @@ public class ConflictsTui extends ToolPanel {
     @Override
     public void render(Frame frame, Rect area) {
         lastContentHeight = area.height();
+        if (loading) {
+            renderConflicts(frame, area);
+            return;
+        }
         if (diffOverlay.isActive()) {
             diffOverlay.render(frame, area, " POM Changes ");
         } else if (helpOverlay.isActive()) {
@@ -248,6 +281,7 @@ public class ConflictsTui extends ToolPanel {
                         .split(area);
                 lastContentHeight = zones.get(0).height();
                 renderConflicts(frame, zones.get(0));
+                renderDivider(frame, zones.get(1));
                 renderDetails(frame, zones.get(2));
             } else {
                 renderConflicts(frame, area);
@@ -394,9 +428,8 @@ public class ConflictsTui extends ToolPanel {
                 versions        All distinct versions requested
 
                 ## Colors
-                yellow          Actual conflict — different versions requested
-                default         No conflict — all requests agree on version
-                dim             Dependency path in details pane
+                white           Actual conflict — different versions requested
+                dim             No conflict — all requests agree on version
 
                 ## Conflict Actions
                 ↑ / ↓           Move selection up / down
@@ -419,7 +452,100 @@ public class ConflictsTui extends ToolPanel {
 
     @Override
     public void setRunner(TuiRunner runner) {
-        this.runner = runner;
+        super.setRunner(runner);
+        if (loading && pendingProjects != null) {
+            startConflictCollection();
+        }
+    }
+
+    @SuppressWarnings("java:S2095") // pool is shut down after task submission; daemon threads ensure no leak
+    private void startConflictCollection() {
+        ExecutorService pool =
+                Executors.newFixedThreadPool(Math.min(4, Runtime.getRuntime().availableProcessors()), r -> {
+                    Thread t = new Thread(r, "pilot-conflicts");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        List<PilotProject> projects = this.pendingProjects;
+        boolean multiModule = projects.size() > 1;
+        Map<String, List<ConflictEntry>> mergedMap = new HashMap<>();
+
+        for (PilotProject project : projects) {
+            CompletableFuture.supplyAsync(() -> resolveModule(project, multiModule), pool)
+                    .thenAccept(localMap -> runner.runOnRenderThread(() -> mergeAndAdvance(localMap, mergedMap)))
+                    .exceptionally(ex -> {
+                        runner.runOnRenderThread(() -> mergeAndAdvance(Map.of(), mergedMap));
+                        return null;
+                    });
+        }
+        pool.shutdown();
+    }
+
+    Map<String, List<ConflictEntry>> resolveModule(PilotProject project, boolean multiModule) {
+        loadingModule = project.artifactId;
+        DependencyTreeModel tree = treeResolver.resolve(project);
+        Map<String, List<ConflictEntry>> localMap = new HashMap<>();
+        List<String> modulePath = new ArrayList<>();
+        if (multiModule) modulePath.add("[" + project.artifactId + "]");
+        collectConflicts(tree.root, localMap, modulePath);
+        return localMap;
+    }
+
+    void mergeAndAdvance(Map<String, List<ConflictEntry>> localMap, Map<String, List<ConflictEntry>> mergedMap) {
+        for (var entry : localMap.entrySet()) {
+            mergedMap.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
+        }
+        loadedCount++;
+        status = "Collecting conflicts… " + loadedCount + "/" + totalModules;
+        if (loadedCount >= totalModules) {
+            onCollectionComplete(mergedMap);
+        }
+    }
+
+    void onCollectionComplete(Map<String, List<ConflictEntry>> mergedMap) {
+        conflicts = filterConflictGroups(mergedMap);
+        loading = false;
+        status = conflicts.size() + " dependency group(s) with version variance";
+        if (!displayedConflicts().isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    static void collectConflicts(
+            DependencyTreeModel.TreeNode node, Map<String, List<ConflictEntry>> conflicts, List<String> path) {
+        for (DependencyTreeModel.TreeNode child : node.children) {
+            String ga = child.ga();
+            String requestedVersion = child.version;
+            String resolvedVersion = child.version;
+            if (child.requestedVersion != null) {
+                requestedVersion = child.requestedVersion;
+            }
+
+            List<String> currentPath = new ArrayList<>(path);
+            currentPath.add(ga);
+
+            var entry = new ConflictEntry(
+                    child.groupId,
+                    child.artifactId,
+                    requestedVersion,
+                    resolvedVersion,
+                    String.join(" → ", currentPath),
+                    child.scope);
+
+            conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
+            collectConflicts(child, conflicts, currentPath);
+        }
+    }
+
+    static List<ConflictGroup> filterConflictGroups(Map<String, List<ConflictEntry>> conflictMap) {
+        return conflictMap.entrySet().stream()
+                .filter(e -> e.getValue().size() > 1
+                        || e.getValue().stream()
+                                .anyMatch(c ->
+                                        c.requestedVersion != null && !c.requestedVersion.equals(c.resolvedVersion)))
+                .map(e -> new ConflictGroup(e.getKey(), e.getValue()))
+                .toList();
     }
 
     /**
@@ -515,6 +641,7 @@ public class ConflictsTui extends ToolPanel {
         } else {
             renderConflicts(frame, zones.get(1));
             if (detailsVisible) {
+                renderDivider(frame, zones.get(2));
                 renderDetails(frame, zones.get(3));
             }
         }
@@ -523,12 +650,17 @@ public class ConflictsTui extends ToolPanel {
     }
 
     private void renderHeader(Frame frame, Rect area) {
+        String title = loading ? "Collecting Conflicts…" : "Conflict Resolution";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
         if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
-        renderStandaloneHeader(frame, area, "Conflict Resolution", Line.from(spans));
+        if (loading) {
+            spans.add(Span.raw("  Collecting " + loadedCount + "/" + totalModules + "…")
+                    .dim());
+        }
+        renderStandaloneHeader(frame, area, title, Line.from(spans));
     }
 
     /**
@@ -540,6 +672,18 @@ public class ConflictsTui extends ToolPanel {
      * @param area the rectangular region to render the conflicts widget
      */
     private void renderConflicts(Frame frame, Rect area) {
+        Block block;
+        if (loading) {
+            block = Block.builder()
+                    .title(" Conflicts ")
+                    .borderType(BorderType.ROUNDED)
+                    .borderStyle(borderStyle())
+                    .build();
+            renderLoadingPlaceholder(
+                    frame, area, block, "Collecting conflicts… " + loadedCount + "/" + totalModules, loadingModule);
+            return;
+        }
+
         long conflictCount =
                 conflicts.stream().filter(ConflictGroup::hasConflict).count();
         List<ConflictGroup> displayed = displayedConflicts();
@@ -547,7 +691,7 @@ public class ConflictsTui extends ToolPanel {
                 ? " Conflicts (" + conflictCount + " actual, " + conflicts.size() + " total) "
                 : " Conflicts (" + conflictCount + ") ";
 
-        Block block = Block.builder()
+        block = Block.builder()
                 .title(title)
                 .borderType(BorderType.ROUNDED)
                 .borderStyle(borderStyle())
@@ -576,7 +720,7 @@ public class ConflictsTui extends ToolPanel {
                     .distinct()
                     .collect(Collectors.joining(", "));
 
-            Style style = group.hasConflict() ? theme.conflictWarning() : Style.create();
+            Style style = group.hasConflict() ? Style.create() : Style.create().dim();
 
             rows.add(Row.from(icon, group.ga, group.resolvedVersion(), versions).style(style));
         }

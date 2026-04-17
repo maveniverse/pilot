@@ -163,6 +163,16 @@ class DependenciesTuiRenderTest {
         assertThat(afterNav).isNotEqualTo(initial);
     }
 
+    // ── Divider ────────────────────────────────────────────────────────────
+
+    @Test
+    void panelModeDividerBetweenTableAndDetails() {
+        var tui = createTuiWithDeps();
+        String output = render(f -> tui.render(f, f.area()));
+
+        assertThat(output).contains("─".repeat(10));
+    }
+
     // ── Empty state ────────────────────────────────────────────────────────
 
     @Test

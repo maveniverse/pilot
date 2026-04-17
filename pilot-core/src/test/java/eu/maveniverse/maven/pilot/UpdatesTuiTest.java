@@ -241,10 +241,15 @@ class UpdatesTuiTest {
 
         tui.buildDisplayRows();
 
-        // 1 group header + 2 dependencies
-        assertThat(tui.displayRows).hasSize(3);
+        // Groups are collapsed by default — only header visible
+        assertThat(tui.displayRows).hasSize(1);
         assertThat(tui.displayRows.get(0).isGroupHeader()).isTrue();
         assertThat(tui.displayRows.get(0).propertyGroup.propertyName).isEqualTo("jackson.version");
+
+        // After expanding, children become visible
+        result.propertyGroups.get(0).expanded = true;
+        tui.buildDisplayRows();
+        assertThat(tui.displayRows).hasSize(3);
         assertThat(tui.displayRows.get(1).isGroupHeader()).isFalse();
         assertThat(tui.displayRows.get(2).isGroupHeader()).isFalse();
     }
@@ -491,6 +496,7 @@ class UpdatesTuiTest {
         result.allDependencies.get(0).updateType = VersionComparator.UpdateType.MINOR;
         result.propertyGroups.get(0).newestVersion = "2.18.0";
         result.propertyGroups.get(0).updateType = VersionComparator.UpdateType.MINOR;
+        result.propertyGroups.get(0).expanded = true;
 
         tui.loading = false;
         tui.buildDisplayRows();
@@ -673,6 +679,296 @@ class UpdatesTuiTest {
         if (!tui.displayRows.isEmpty()) {
             renderFrame(tui);
         }
+    }
+
+    // -- Dependencies view: left/right navigation tests --
+
+    private UpdatesTui createGroupTui(Path dir) {
+        Properties props = new Properties();
+        props.setProperty("jackson.version", "2.17.0");
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                dir,
+                List.of(
+                        dep("com.fasterxml", "jackson-core", "2.17.0"),
+                        dep("com.fasterxml", "jackson-databind", "2.17.0")),
+                List.of(),
+                List.of(
+                        dep("com.fasterxml", "jackson-core", "${jackson.version}"),
+                        dep("com.fasterxml", "jackson-databind", "${jackson.version}")),
+                List.of(),
+                props);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        var tui = createTui(result, List.of(project));
+
+        for (var d : result.allDependencies) {
+            d.newestVersion = "2.18.0";
+            d.updateType = VersionComparator.UpdateType.MINOR;
+        }
+        result.propertyGroups.get(0).newestVersion = "2.18.0";
+        result.propertyGroups.get(0).updateType = VersionComparator.UpdateType.MINOR;
+
+        tui.buildDisplayRows();
+        return tui;
+    }
+
+    @Test
+    void groupsCollapsedByDefault() throws IOException {
+        var tui = createGroupTui(subdir("navDefault"));
+
+        assertThat(tui.displayRows).hasSize(1);
+        assertThat(tui.displayRows.get(0).isGroupHeader()).isTrue();
+    }
+
+    @Test
+    void leftArrowCollapsesExpandedPropertyGroup() throws IOException {
+        var tui = createGroupTui(subdir("navCollapse"));
+
+        // Expand first
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        assertThat(tui.displayRows).hasSize(3);
+
+        // LEFT → collapse
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        assertThat(tui.displayRows).hasSize(1);
+        assertThat(tui.displayRows.get(0).isGroupHeader()).isTrue();
+    }
+
+    @Test
+    void rightArrowExpandsCollapsedPropertyGroup() throws IOException {
+        var tui = createGroupTui(subdir("navExpand"));
+
+        // Collapsed by default
+        assertThat(tui.displayRows).hasSize(1);
+
+        // RIGHT → expands
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        assertThat(tui.displayRows).hasSize(3);
+    }
+
+    @Test
+    void rightArrowOnExpandedGroupMovesDown() throws IOException {
+        var tui = createGroupTui(subdir("navDown"));
+
+        // Expand first
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        // Group already expanded; RIGHT moves selection past header
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        // Now on child dep; LEFT jumps to parent header, LEFT again collapses
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        assertThat(tui.displayRows).hasSize(1);
+    }
+
+    @Test
+    void leftArrowOnChildDepJumpsToGroupHeader() throws IOException {
+        var tui = createGroupTui(subdir("navChild"));
+
+        // Expand first
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        // Move to child dep
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        // LEFT → jump to parent group header
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        // LEFT again → collapse (proves we're on the header)
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+
+        assertThat(tui.displayRows).hasSize(1);
+    }
+
+    @Test
+    void leftArrowOnUngroupedDepDoesNotJumpToGroup() throws IOException {
+        Path dir = subdir("navUngrouped");
+
+        Properties props = new Properties();
+        props.setProperty("jackson.version", "2.17.0");
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                dir,
+                List.of(dep("com.fasterxml", "jackson-core", "2.17.0"), dep("com.example", "standalone-lib", "1.0")),
+                List.of(),
+                List.of(
+                        dep("com.fasterxml", "jackson-core", "${jackson.version}"),
+                        dep("com.example", "standalone-lib", "1.0")),
+                List.of(),
+                props);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        var tui = createTui(result, List.of(project));
+
+        for (var d : result.allDependencies) {
+            d.newestVersion = "2.0.0";
+            d.updateType = VersionComparator.UpdateType.MAJOR;
+        }
+        result.propertyGroups.get(0).newestVersion = "2.0.0";
+        result.propertyGroups.get(0).updateType = VersionComparator.UpdateType.MAJOR;
+
+        tui.buildDisplayRows();
+        // 1 group header (collapsed) + 1 ungrouped dep
+        assertThat(tui.displayRows).hasSize(2);
+
+        // Move to ungrouped dep
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        // LEFT should NOT jump to the group header (ungrouped dep has no parent)
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        // Verify group is still collapsed (LEFT didn't jump to it and collapse it)
+        assertThat(tui.displayRows).hasSize(2);
+    }
+
+    @Test
+    void buildDisplayRowsRespectsCollapsedGroup() throws IOException {
+        Path dir = subdir("navBuild");
+
+        Properties props = new Properties();
+        props.setProperty("jackson.version", "2.17.0");
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                dir,
+                List.of(
+                        dep("com.fasterxml", "jackson-core", "2.17.0"),
+                        dep("com.fasterxml", "jackson-databind", "2.17.0")),
+                List.of(),
+                List.of(
+                        dep("com.fasterxml", "jackson-core", "${jackson.version}"),
+                        dep("com.fasterxml", "jackson-databind", "${jackson.version}")),
+                List.of(),
+                props);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        var tui = createTui(result, List.of(project));
+
+        for (var d : result.allDependencies) {
+            d.newestVersion = "2.18.0";
+            d.updateType = VersionComparator.UpdateType.MINOR;
+        }
+        result.propertyGroups.get(0).newestVersion = "2.18.0";
+        result.propertyGroups.get(0).updateType = VersionComparator.UpdateType.MINOR;
+
+        result.propertyGroups.get(0).expanded = false;
+        tui.buildDisplayRows();
+
+        assertThat(tui.displayRows).hasSize(1);
+        assertThat(tui.displayRows.get(0).isGroupHeader()).isTrue();
+    }
+
+    // -- Modules view: left/right navigation tests --
+
+    @Test
+    void modulesLeftArrowCollapsesExpandedNode() throws IOException {
+        Path parentDir = subdir("modCollapse");
+        Path childDir = subdir("modCollapse/child");
+
+        PilotProject parent = createProject("com.example", "parent", "1.0", parentDir);
+        PilotProject child = createProject("com.example", "child", "1.0", childDir);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child));
+        ReactorModel model = ReactorModel.build(List.of(parent, child));
+        var tui = new UpdatesTui(result, model, "com.example:parent:1.0", (g, a) -> List.of());
+
+        // Switch to modules view and initialize selection
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.UP), null);
+
+        assertThat(model.root.expanded).isTrue();
+        assertThat(model.visibleNodes()).hasSize(2);
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+
+        assertThat(model.root.expanded).isFalse();
+        assertThat(model.visibleNodes()).hasSize(1);
+    }
+
+    @Test
+    void modulesRightArrowExpandsCollapsedNode() throws IOException {
+        Path parentDir = subdir("modExpand");
+        Path childDir = subdir("modExpand/child");
+
+        PilotProject parent = createProject("com.example", "parent", "1.0", parentDir);
+        PilotProject child = createProject("com.example", "child", "1.0", childDir);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child));
+        ReactorModel model = ReactorModel.build(List.of(parent, child));
+        var tui = new UpdatesTui(result, model, "com.example:parent:1.0", (g, a) -> List.of());
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.UP), null);
+
+        model.root.expanded = false;
+        assertThat(model.visibleNodes()).hasSize(1);
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+
+        assertThat(model.root.expanded).isTrue();
+        assertThat(model.visibleNodes()).hasSize(2);
+    }
+
+    @Test
+    void modulesRightArrowOnExpandedNodeMovesDown() throws IOException {
+        Path parentDir = subdir("modDown");
+        Path childDir = subdir("modDown/child");
+
+        PilotProject parent = createProject("com.example", "parent", "1.0", parentDir);
+        PilotProject child = createProject("com.example", "child", "1.0", childDir);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child));
+        ReactorModel model = ReactorModel.build(List.of(parent, child));
+        var tui = new UpdatesTui(result, model, "com.example:parent:1.0", (g, a) -> List.of());
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.UP), null);
+
+        assertThat(model.root.expanded).isTrue();
+
+        // RIGHT on expanded root → moves down to child
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        // LEFT on child (leaf) → jump to parent; LEFT again → collapse
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+
+        assertThat(model.root.expanded).isFalse();
+    }
+
+    @Test
+    void modulesLeftArrowOnChildJumpsToParent() throws IOException {
+        Path parentDir = subdir("modJump");
+        Path childDir = subdir("modJump/child");
+        Path grandchildDir = subdir("modJump/child/grandchild");
+
+        PilotProject parent = createProject("com.example", "parent", "1.0", parentDir);
+        PilotProject child = createProject("com.example", "child", "1.0", childDir);
+        PilotProject grandchild = createProject("com.example", "grandchild", "1.0", grandchildDir);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child, grandchild));
+        ReactorModel model = ReactorModel.build(List.of(parent, child, grandchild));
+        var tui = new UpdatesTui(result, model, "com.example:parent:1.0", (g, a) -> List.of());
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null);
+
+        // parent(d=0,exp) → child(d=1,exp) → grandchild(d=2)
+        assertThat(model.visibleNodes()).hasSize(3);
+
+        // Move to grandchild
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+
+        // LEFT on grandchild (leaf) → jump to child
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        // LEFT on child (expanded, has children) → collapse
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+
+        assertThat(model.root.children.get(0).expanded).isFalse();
+        assertThat(model.visibleNodes()).hasSize(2);
     }
 
     @Test

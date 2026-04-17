@@ -80,7 +80,6 @@ public class PomTui extends ToolPanel {
     private View view = View.RAW;
     private final TableState tableState = new TableState();
 
-    private TuiRunner runner;
     private int lastContentHeight;
 
     /**
@@ -209,6 +208,7 @@ public class PomTui extends ToolPanel {
                     .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(detailHeight))
                     .split(contentArea);
             renderXmlTree(frame, zones.get(0), snippet);
+            renderDivider(frame, zones.get(1));
             renderOriginDetail(frame, zones.get(2), snippet);
         } else {
             renderXmlTree(frame, contentArea, null);
@@ -376,11 +376,6 @@ public class PomTui extends ToolPanel {
     }
 
     @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
-    }
-
-    @Override
     int subViewCount() {
         return 2;
     }
@@ -509,7 +504,7 @@ public class PomTui extends ToolPanel {
         }
         idx++;
         if (showDetail) {
-            idx++; // skip spacer
+            renderDivider(frame, zones.get(idx++));
             renderOriginDetail(frame, zones.get(idx++), snippet);
         }
         renderFooter(frame, zones.get(idx), showDetail);

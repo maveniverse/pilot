@@ -69,7 +69,6 @@ public class TreeTui extends ToolPanel {
     private List<DependencyTreeModel.TreeNode> reversePath;
     private boolean showReversePath;
 
-    private TuiRunner runner;
     private int lastContentHeight;
 
     public TreeTui(DependencyTreeModel fullModel, String scope, String projectGav) {
@@ -247,11 +246,6 @@ public class TreeTui extends ToolPanel {
                 r               Reverse path (why was this pulled in?)
                 f               Cycle scope: compile → runtime → test
                 """);
-    }
-
-    @Override
-    public void setRunner(TuiRunner runner) {
-        this.runner = runner;
     }
 
     @Override

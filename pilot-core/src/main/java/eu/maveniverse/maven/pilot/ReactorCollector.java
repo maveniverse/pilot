@@ -101,7 +101,7 @@ public class ReactorCollector {
         String newestVersion;
         VersionComparator.UpdateType updateType;
         boolean selected;
-        boolean expanded = true;
+        boolean expanded = false;
         float libYears = -1;
 
         PropertyGroup(String propertyName, String rawExpression, String resolvedVersion, PilotProject origin) {

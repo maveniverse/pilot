@@ -54,6 +54,14 @@ public abstract class ToolPanel {
     /** Theme for all color/style decisions. */
     protected final Theme theme = Theme.DEFAULT;
 
+    /** The TUI runner, set via {@link #setRunner(TuiRunner)} when the panel is activated. */
+    protected TuiRunner runner;
+
+    protected void renderDivider(Frame frame, Rect area) {
+        String div = "─".repeat(area.width());
+        frame.renderWidget(Paragraph.from(Line.from(Span.raw(div).fg(theme.dividerColor()))), area);
+    }
+
     /** Shared POM edit session, or null for read-only tools. */
     protected PomEditSession editSession;
 
@@ -175,7 +183,21 @@ public abstract class ToolPanel {
     }
 
     /** Called when the TuiRunner is available (for async operations). */
-    void setRunner(TuiRunner runner) {}
+    void setRunner(TuiRunner runner) {
+        this.runner = runner;
+    }
+
+    /**
+     * Render a centered loading placeholder with an optional detail line.
+     * Panels call this during their loading phase instead of rendering a table.
+     */
+    protected void renderLoadingPlaceholder(Frame frame, Rect area, Block block, String message, String detail) {
+        String text = detail != null ? message + "\n" + detail : message;
+        Paragraph paragraph =
+                Paragraph.builder().text(text).block(block).centered().build();
+        frame.renderWidget(paragraph, area);
+        clearTableArea();
+    }
 
     /**
      * Handle a TUI event in standalone mode.

@@ -161,8 +161,6 @@ public class AuditTui extends ToolPanel {
     /** Flattened vulnerability row linking back to its parent entry. */
     private record VulnRow(AuditEntry entry, OsvClient.Vulnerability vuln) {}
 
-    private TuiRunner runner;
-
     /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
         this(entries, projectGav, treeModel, new PomEditSession(Path.of(pomPath)));
@@ -671,6 +669,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderLicenseDetail(frame, zones.get(2));
@@ -980,6 +979,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), byLicenseTableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderByLicenseDetail(frame, zones.get(2));
@@ -1120,6 +1120,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), vulnTableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderVulnDetail(frame, zones.get(2));
@@ -1581,7 +1582,7 @@ public class AuditTui extends ToolPanel {
 
     @Override
     public void setRunner(TuiRunner runner) {
-        this.runner = runner;
+        super.setRunner(runner);
         fetchAllData();
     }
 

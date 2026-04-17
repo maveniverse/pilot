@@ -219,6 +219,16 @@ class UpdatesTuiRenderTest {
         assertThat(output).contains("\u2192"); // →
     }
 
+    // ── Divider ────────────────────────────────────────────────────────────
+
+    @Test
+    void panelModeDividerBetweenTableAndDetails() throws Exception {
+        var tui = createTuiWithUpdates();
+        String output = render(f -> tui.render(f, f.area()));
+
+        assertThat(output).contains("─".repeat(10));
+    }
+
     // ── Selection ──────────────────────────────────────────────────────────
 
     @Test
@@ -461,5 +471,123 @@ class UpdatesTuiRenderTest {
 
         String output = render(tui::renderStandalone);
         assertThat(output).contains("Scroll").contains("Close");
+    }
+
+    // ── Property groups ────────────────────────────────────────────────────
+
+    private UpdatesTui createTuiWithPropertyGroup() throws Exception {
+        Path dir = Files.createDirectories(tempDir.resolve("prop-project"));
+        Files.writeString(dir.resolve("pom.xml"), "<project/>");
+
+        var deps = List.of(
+                dep("org.springframework", "spring-core", "5.3.0"),
+                dep("org.springframework", "spring-web", "5.3.0"),
+                dep("com.google.guava", "guava", "33.0.0-jre"));
+        var origDeps = List.of(
+                dep("org.springframework", "spring-core", "${spring.version}"),
+                dep("org.springframework", "spring-web", "${spring.version}"),
+                dep("com.google.guava", "guava", "33.0.0-jre"));
+
+        var props = new Properties();
+        props.setProperty("spring.version", "5.3.0");
+        var project = createProject("com.example", "demo", "1.0.0", dir, deps, List.of(), origDeps, List.of());
+        // Replace properties on the project
+        var projectWithProps = new PilotProject(
+                "com.example",
+                "demo",
+                "1.0.0",
+                "jar",
+                dir,
+                dir.resolve("pom.xml"),
+                deps,
+                List.of(),
+                origDeps,
+                List.of(),
+                props,
+                null,
+                null);
+
+        var result = ReactorCollector.collect(List.of(projectWithProps));
+        var model = ReactorModel.build(List.of(projectWithProps));
+        var tui = new UpdatesTui(result, model, "com.example:demo:1.0.0", (g, a) -> List.of());
+
+        for (var group : result.propertyGroups) {
+            group.newestVersion = "6.1.0";
+            group.updateType = VersionComparator.UpdateType.MAJOR;
+            for (var d : group.dependencies) {
+                d.newestVersion = "6.1.0";
+                d.updateType = VersionComparator.UpdateType.MAJOR;
+            }
+        }
+        for (var d : result.ungroupedDependencies) {
+            if ("guava".equals(d.artifactId)) {
+                d.newestVersion = "33.4.0-jre";
+                d.updateType = VersionComparator.UpdateType.MINOR;
+            }
+        }
+
+        tui.loading = false;
+        tui.buildDisplayRows();
+        tui.status = "3 update(s) available";
+        return tui;
+    }
+
+    @Test
+    void propertyGroupRendersGroupHeader() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        String output = render(tui::renderStandalone);
+
+        assertThat(output).contains("${spring.version}");
+    }
+
+    @Test
+    void rightArrowExpandsPropertyGroup() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+
+        String output = render(tui::renderStandalone);
+        assertThat(output).contains("spring-core").contains("spring-web");
+    }
+
+    @Test
+    void leftArrowCollapsesExpandedPropertyGroup() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        String expanded = render(tui::renderStandalone);
+
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+        String collapsed = render(tui::renderStandalone);
+
+        assertThat(expanded).contains("spring-core").contains("spring-web");
+        assertThat(collapsed).isNotEqualTo(expanded);
+    }
+
+    @Test
+    void leftArrowOnChildDepJumpsToGroupHeader() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.RIGHT), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.LEFT), null);
+
+        String output = render(tui::renderStandalone);
+        assertThat(output).contains("spring-core");
+    }
+
+    @Test
+    void sortCycleTriggersReorder() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        tui.handleEvent(KeyEvent.ofChar('s'), null);
+
+        String output = render(tui::renderStandalone);
+        assertThat(output).contains("${spring.version}").contains("guava");
+    }
+
+    @Test
+    void selectAllIncludesPropertyGroupAndUngrouped() throws Exception {
+        var tui = createTuiWithPropertyGroup();
+        tui.handleEvent(KeyEvent.ofChar('a'), null);
+
+        String output = render(tui::renderStandalone);
+        assertThat(countOccurrences(output, "[\u2713]")).isGreaterThanOrEqualTo(2);
     }
 }
