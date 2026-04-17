@@ -43,6 +43,7 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Path;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -145,6 +146,8 @@ public class UpdatesTui extends ToolPanel {
     boolean loading = true;
     int loadedCount = 0;
     int failedCount = 0;
+    int dateFetchesPending;
+    boolean datesLoading;
 
     private TuiRunner runner;
 
@@ -174,7 +177,7 @@ public class UpdatesTui extends ToolPanel {
         this.singleModule = reactorModel.allModules.size() <= 1;
         this.versionResolver = versionResolver;
         this.sessionProvider = sessionProvider != null ? sessionProvider : defaultSessionProvider();
-        this.sortState = new SortState(6);
+        this.sortState = new SortState(7);
         if (!reactorModel.allModules.isEmpty()) {
             moduleTableState.select(0);
         }
@@ -235,15 +238,115 @@ public class UpdatesTui extends ToolPanel {
         computePropertyGroupVersions();
         updateReactorCounts();
         buildDisplayRows();
+        status = buildStatusMessage();
+        fetchReleaseDates();
+    }
+
+    private void fetchReleaseDates() {
+        int count = 0;
+        for (var dep : reactorResult.allDependencies) {
+            if (dep.hasUpdate()) count += 2;
+        }
+        dateFetchesPending = count;
+        if (dateFetchesPending == 0) return;
+        datesLoading = true;
+        for (var dep : reactorResult.allDependencies) {
+            if (!dep.hasUpdate()) continue;
+            CompletableFuture.supplyAsync(
+                            () -> ReleaseDateFetcher.fetchReleaseDate(dep.groupId, dep.artifactId, dep.primaryVersion),
+                            httpPool)
+                    .thenAccept(date -> runner.runOnRenderThread(() -> {
+                        dep.currentReleaseDate = date;
+                        computeLibYear(dep);
+                        propagateLibYearsToGroups();
+                        if (--dateFetchesPending <= 0) onDatesComplete();
+                    }))
+                    .exceptionally(ex -> {
+                        runner.runOnRenderThread(() -> {
+                            if (--dateFetchesPending <= 0) onDatesComplete();
+                        });
+                        return null;
+                    });
+            CompletableFuture.supplyAsync(
+                            () -> ReleaseDateFetcher.fetchReleaseDate(dep.groupId, dep.artifactId, dep.newestVersion),
+                            httpPool)
+                    .thenAccept(date -> runner.runOnRenderThread(() -> {
+                        dep.newestReleaseDate = date;
+                        computeLibYear(dep);
+                        propagateLibYearsToGroups();
+                        if (--dateFetchesPending <= 0) onDatesComplete();
+                    }))
+                    .exceptionally(ex -> {
+                        runner.runOnRenderThread(() -> {
+                            if (--dateFetchesPending <= 0) onDatesComplete();
+                        });
+                        return null;
+                    });
+        }
+    }
+
+    private void computeLibYear(ReactorCollector.AggregatedDependency dep) {
+        if (dep.currentReleaseDate != null && dep.newestReleaseDate != null) {
+            long weeks = ChronoUnit.WEEKS.between(dep.currentReleaseDate, dep.newestReleaseDate);
+            dep.libYears = Math.max(0, weeks / 52.0f);
+        }
+    }
+
+    private void propagateLibYearsToGroups() {
+        for (var group : reactorResult.propertyGroups) {
+            float maxLy = -1;
+            for (var dep : group.dependencies) {
+                if (dep.libYears > maxLy) {
+                    maxLy = dep.libYears;
+                }
+            }
+            group.libYears = maxLy;
+        }
+    }
+
+    private void onDatesComplete() {
+        datesLoading = false;
+        propagateLibYearsToGroups();
+        status = buildStatusMessage();
+        onSortChanged();
+    }
+
+    private String buildStatusMessage() {
         long updates = reactorResult.allDependencies.stream()
                 .filter(ReactorCollector.AggregatedDependency::hasUpdate)
                 .count();
-        status = singleModule
+        String msg = singleModule
                 ? updates + " update(s) available"
                 : updates + " update(s) available across " + reactorModel.allModules.size() + " modules";
         if (failedCount > 0) {
-            status += "; " + failedCount + " lookup(s) failed";
+            msg += "; " + failedCount + " lookup(s) failed";
         }
+        if (!datesLoading) {
+            float total = totalLibYears();
+            if (total > 0) {
+                int tenths = Math.round(total * 10);
+                msg += " \u2014 " + (tenths / 10) + "." + (tenths % 10) + " libyear(s) behind";
+            }
+        }
+        return msg;
+    }
+
+    private float totalLibYears() {
+        float total = 0;
+        Set<String> seen = new LinkedHashSet<>();
+        for (var dep : reactorResult.allDependencies) {
+            if (dep.hasUpdate() && dep.libYears >= 0 && seen.add(dep.ga())) {
+                total += dep.libYears;
+            }
+        }
+        return total;
+    }
+
+    private String formatAge(float libYears, boolean hasUpdate) {
+        if (!hasUpdate) return "";
+        if (libYears < 0) return datesLoading ? "\u2026" : "";
+        int tenths = Math.round(libYears * 10);
+        return (tenths / 10) + "." + (tenths % 10) + "y";
     }
 
     private void computePropertyGroupVersions() {
@@ -331,6 +434,7 @@ public class UpdatesTui extends ToolPanel {
         extractors.add(this::extractCurrentVersion);
         extractors.add(this::extractArrow);
         extractors.add(this::extractNewestVersion);
+        extractors.add(this::extractAge);
         if (!singleModule) {
             extractors.add(this::extractModuleCount);
         }
@@ -376,6 +480,19 @@ public class UpdatesTui extends ToolPanel {
             return row.dependency.newestVersion;
         }
         return "";
+    }
+
+    private String extractAge(ReactorRow row) {
+        float ly;
+        if (row.isGroupHeader()) {
+            ly = row.propertyGroup.libYears;
+        } else if (row.dependency.isPropertyManaged()) {
+            return "";
+        } else {
+            ly = row.dependency.libYears;
+        }
+        if (ly < 0) return "";
+        return String.format(java.util.Locale.US, "%010.3f", ly);
     }
 
     private String extractModuleCount(ReactorRow row) {
@@ -963,13 +1080,13 @@ public class UpdatesTui extends ToolPanel {
                 .borderStyle(borderStyle())
                 .build();
 
-        List<String> headers = List.of("", "dependency / property", "current", "", "available", "info");
+        List<String> headers = List.of("", "dependency / property", "current", "", "available", "age", "info");
         Row header = sortState.decorateHeader(headers, theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         if (displayRows.isEmpty()) {
             String msg = loading ? "Checking versions…" : "No updates available";
-            int colCount = 6;
+            int colCount = 7;
             List<Cell> cells = new ArrayList<>();
             cells.add(Cell.empty());
             cells.add(Cell.from(msg));
@@ -983,10 +1100,11 @@ public class UpdatesTui extends ToolPanel {
 
         List<Constraint> widths = List.of(
                 Constraint.length(3),
-                Constraint.percentage(40),
-                Constraint.percentage(15),
+                Constraint.percentage(35),
+                Constraint.percentage(14),
                 Constraint.length(3),
-                Constraint.percentage(15),
+                Constraint.percentage(14),
+                Constraint.length(6),
                 Constraint.percentage(10));
         Table table = Table.builder()
                 .header(header)
@@ -1016,11 +1134,12 @@ public class UpdatesTui extends ToolPanel {
         String current = group.resolvedVersion != null ? group.resolvedVersion : "";
         String arrow = group.hasUpdate() ? "→" : "";
         String available = group.hasUpdate() ? group.newestVersion : "";
+        String age = formatAge(group.libYears, group.hasUpdate());
         String info = singleModule ? "" : group.totalModuleCount() + " mod";
 
         Style style = theme.propertyGroupHeader();
         if (highlight) style = style.bg(theme.searchHighlightBg());
-        return Row.from(check, name, current, arrow, available, info).style(style);
+        return Row.from(check, name, current, arrow, available, age, info).style(style);
     }
 
     private Row createDependencyRow(ReactorRow row, boolean highlight) {
@@ -1046,6 +1165,7 @@ public class UpdatesTui extends ToolPanel {
                 : Style.create();
         if (highlight) style = style.bg(theme.searchHighlightBg());
 
+        String age = inGroup ? "" : formatAge(dep.libYears, dep.hasUpdate());
         String info = "";
         if (!singleModule) {
             int modCount = dep.moduleCount();
@@ -1054,7 +1174,7 @@ public class UpdatesTui extends ToolPanel {
                 info += " M";
             }
         }
-        return Row.from(check, ga, current, arrow, available, info).style(style);
+        return Row.from(check, ga, current, arrow, available, age, info).style(style);
     }
 
     private void renderDetailPane(Frame frame, Rect area) {
@@ -1358,7 +1478,7 @@ public class UpdatesTui extends ToolPanel {
         if (!isSubViewEnabled(index)) return;
         view = View.values()[index];
         clearSearch();
-        int depsCols = 6;
+        int depsCols = 7;
         sortState = new SortState(view == View.DEPENDENCIES ? depsCols : 2);
     }
 
@@ -1380,9 +1500,13 @@ public class UpdatesTui extends ToolPanel {
         List<Constraint> widths;
         if (view == View.DEPENDENCIES) {
             widths = List.of(
-                    Constraint.length(3), Constraint.percentage(40),
-                    Constraint.percentage(15), Constraint.length(3),
-                    Constraint.percentage(15), Constraint.percentage(10));
+                    Constraint.length(3),
+                    Constraint.percentage(35),
+                    Constraint.percentage(14),
+                    Constraint.length(3),
+                    Constraint.percentage(14),
+                    Constraint.length(6),
+                    Constraint.percentage(10));
         } else {
             widths = List.of(Constraint.percentage(75), Constraint.percentage(25));
         }
