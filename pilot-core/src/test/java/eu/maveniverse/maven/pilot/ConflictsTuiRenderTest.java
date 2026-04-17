@@ -21,6 +21,9 @@ package eu.maveniverse.maven.pilot;
 import static eu.maveniverse.maven.pilot.TuiTestHelper.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.terminal.TestBackend;
+import dev.tamboui.tui.TuiConfig;
+import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import java.nio.file.Files;
@@ -278,8 +281,7 @@ class ConflictsTuiRenderTest {
         var tui = new ConflictsTui(List.of(p1, p2), session, "com.example:demo:1.0.0", p -> createEmptyTree());
         String output = render(tui::renderStandalone);
 
-        assertThat(output).contains("Collecting Conflicts");
-        assertThat(output).contains("0/2");
+        assertThat(output).contains("Collecting Conflicts").contains("0/2");
     }
 
     @Test
@@ -356,8 +358,43 @@ class ConflictsTuiRenderTest {
         tui.onCollectionComplete(mergedMap);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("Conflict Resolution");
-        assertThat(output).contains("lib-a");
+        assertThat(output).contains("Conflict Resolution").contains("lib-a");
+    }
+
+    // ── async setRunner / startConflictCollection tests ───────────────────
+
+    @Test
+    void asyncSetRunnerTriggersConflictCollection() throws Exception {
+        PomEditSession session = new PomEditSession(Path.of(pomPath));
+        PilotProject project = createDummyProject("mod-a");
+
+        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
+
+        try (var runner = TuiRunner.create(TuiConfig.builder()
+                .backend(new TestBackend(80, 24))
+                .shutdownHook(false)
+                .build())) {
+            tui.setRunner(runner);
+            Thread.sleep(200);
+        }
+    }
+
+    @Test
+    void asyncCollectionHandlesResolverFailure() throws Exception {
+        PomEditSession session = new PomEditSession(Path.of(pomPath));
+        PilotProject project = createDummyProject("mod-a");
+
+        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+            throw new RuntimeException("resolver failed");
+        });
+
+        try (var runner = TuiRunner.create(TuiConfig.builder()
+                .backend(new TestBackend(80, 24))
+                .shutdownHook(false)
+                .build())) {
+            tui.setRunner(runner);
+            Thread.sleep(200);
+        }
     }
 
     private DependencyTreeModel createTreeWithConflict() {
