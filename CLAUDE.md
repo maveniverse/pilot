@@ -9,6 +9,14 @@ Use `./mvnw` instead of `mvn` for all Maven commands. Always add `-B` (batch mod
 ./mvnw test -B
 ```
 
+## Run CLI
+
+After packaging (`./mvnw package -B -DskipTests`), run the CLI with:
+
+```bash
+java -jar "$(ls -t "$(pwd)"/pilot-cli/target/pilot-cli-*-SNAPSHOT.jar | head -1)"
+```
+
 ## After Creating a PR
 
 After pushing a PR, monitor and address all automated feedback:

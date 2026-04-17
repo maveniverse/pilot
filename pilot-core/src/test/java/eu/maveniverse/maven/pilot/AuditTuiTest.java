@@ -241,6 +241,88 @@ class AuditTuiTest {
         assertThat(entries).isEmpty();
     }
 
+    // -- formatPublished --
+
+    @Test
+    void formatPublishedTruncatesIsoTimestamp() {
+        assertThat(AuditTui.formatPublished("2024-06-01T00:00:00Z")).isEqualTo("2024-06-01");
+    }
+
+    @Test
+    void formatPublishedReturnsEmptyForNull() {
+        assertThat(AuditTui.formatPublished(null)).isEmpty();
+    }
+
+    @Test
+    void formatPublishedReturnsShortValueAsIs() {
+        assertThat(AuditTui.formatPublished("2024-06")).isEqualTo("2024-06");
+    }
+
+    @Test
+    void formatPublishedReturnsExactTenChars() {
+        assertThat(AuditTui.formatPublished("2024-06-01")).isEqualTo("2024-06-01");
+    }
+
+    @Test
+    void formatPublishedReturnsEmptyStringAsIs() {
+        assertThat(AuditTui.formatPublished("")).isEmpty();
+    }
+
+    // -- truncateSummary --
+
+    @Test
+    void truncateSummaryReturnsShortStringAsIs() {
+        assertThat(AuditTui.truncateSummary("short", 50)).isEqualTo("short");
+    }
+
+    @Test
+    void truncateSummaryTruncatesLongString() {
+        String long51 = "a".repeat(51);
+        String result = AuditTui.truncateSummary(long51, 50);
+        assertThat(result).hasSize(50).endsWith("...");
+    }
+
+    @Test
+    void truncateSummaryReturnsExactLengthAsIs() {
+        String exact50 = "b".repeat(50);
+        assertThat(AuditTui.truncateSummary(exact50, 50)).isEqualTo(exact50);
+    }
+
+    @Test
+    void truncateSummaryReturnsEmptyForNull() {
+        assertThat(AuditTui.truncateSummary(null, 50)).isEmpty();
+    }
+
+    @Test
+    void truncateSummaryReturnsEmptyForEmptyString() {
+        assertThat(AuditTui.truncateSummary("", 50)).isEmpty();
+    }
+
+    // -- normalizeSeverity --
+
+    @Test
+    void normalizeSeverityReturnsUnknownForNull() {
+        assertThat(AuditTui.normalizeSeverity(null)).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void normalizeSeverityUppercasesInput() {
+        assertThat(AuditTui.normalizeSeverity("high")).isEqualTo("HIGH");
+    }
+
+    @Test
+    void normalizeSeverityPreservesUppercase() {
+        assertThat(AuditTui.normalizeSeverity("CRITICAL")).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    void normalizeSeverityConvertsModerateToMedium() {
+        assertThat(AuditTui.normalizeSeverity("moderate")).isEqualTo("MEDIUM");
+        assertThat(AuditTui.normalizeSeverity("MODERATE")).isEqualTo("MEDIUM");
+    }
+
+    // -- getScopeStyle --
+
     @Test
     void getScopeStyleReturnsDefaultForNull() {
         Style style = AuditTui.getScopeStyle(null);
@@ -284,6 +366,235 @@ class AuditTuiTest {
     void getScopeStyleReturnsDefaultForUnknown() {
         assertThat(AuditTui.getScopeStyle("system")).isEqualTo(Style.create());
         assertThat(AuditTui.getScopeStyle("import")).isEqualTo(Style.create());
+    }
+
+    // -- normalizeLicense --
+
+    @Test
+    void normalizeLicenseReturnsNullForNullNameAndUrl() {
+        assertThat(AuditTui.normalizeLicense(null, null)).isNull();
+    }
+
+    @Test
+    void normalizeLicenseMatchesByUrl() {
+        assertThat(AuditTui.normalizeLicense("Some License", "https://www.apache.org/licenses/LICENSE-2.0.txt"))
+                .isEqualTo("Apache-2.0");
+        assertThat(AuditTui.normalizeLicense("License", "https://opensource.org/licenses/MIT"))
+                .isEqualTo("MIT");
+        assertThat(AuditTui.normalizeLicense("License", "https://www.eclipse.org/legal/epl-2.0/"))
+                .isEqualTo("EPL-2.0");
+    }
+
+    @Test
+    void normalizeLicenseUrlMatchIgnoresSchemeAndSuffix() {
+        assertThat(AuditTui.normalizeLicense("L", "http://apache.org/licenses/license-2.0.html"))
+                .isEqualTo("Apache-2.0");
+        assertThat(AuditTui.normalizeLicense("L", "https://opensource.org/licenses/bsd-3-clause.php"))
+                .isEqualTo("BSD-3-Clause");
+    }
+
+    @Test
+    void normalizeLicenseMatchesSpdxShortIds() {
+        assertThat(AuditTui.normalizeLicense("Apache-2.0", null)).isEqualTo("Apache-2.0");
+        assertThat(AuditTui.normalizeLicense("MIT", null)).isEqualTo("MIT");
+        assertThat(AuditTui.normalizeLicense("EPL-2.0", null)).isEqualTo("EPL-2.0");
+        assertThat(AuditTui.normalizeLicense("LGPL-2.1", null)).isEqualTo("LGPL-2.1");
+        assertThat(AuditTui.normalizeLicense("GPL-3.0", null)).isEqualTo("GPL-3.0");
+        assertThat(AuditTui.normalizeLicense("MPL-2.0", null)).isEqualTo("MPL-2.0");
+        assertThat(AuditTui.normalizeLicense("CDDL-1.0", null)).isEqualTo("CDDL-1.0");
+        assertThat(AuditTui.normalizeLicense("CC0-1.0", null)).isEqualTo("CC0-1.0");
+        assertThat(AuditTui.normalizeLicense("ISC", null)).isEqualTo("ISC");
+    }
+
+    @Test
+    void normalizeLicenseMatchesCommonNameVariations() {
+        assertThat(AuditTui.normalizeLicense("The Apache Software License, Version 2.0", null))
+                .isEqualTo("Apache-2.0");
+        assertThat(AuditTui.normalizeLicense("The MIT License", null)).isEqualTo("MIT");
+        assertThat(AuditTui.normalizeLicense("BSD 3-Clause License", null)).isEqualTo("BSD-3-Clause");
+        assertThat(AuditTui.normalizeLicense("Eclipse Public License 2.0", null))
+                .isEqualTo("EPL-2.0");
+        assertThat(AuditTui.normalizeLicense("GNU Lesser General Public License v2.1", null))
+                .isEqualTo("LGPL-2.1");
+    }
+
+    @Test
+    void normalizeLicenseHandlesDualLicenses() {
+        assertThat(AuditTui.normalizeLicense("CDDL + GPL with classpath exception", null))
+                .isEqualTo("CDDL-1.0");
+        assertThat(AuditTui.normalizeLicense("CDDL/GPLv2+CE", null)).isEqualTo("CDDL-1.0");
+    }
+
+    @Test
+    void normalizeLicenseHandlesClasspathException() {
+        assertThat(AuditTui.normalizeLicense("GPL v2 with classpath exception", null))
+                .isEqualTo("GPL-2.0-CE");
+    }
+
+    @Test
+    void normalizeLicenseReturnsOriginalForUnknown() {
+        assertThat(AuditTui.normalizeLicense("My Custom License", null)).isEqualTo("My Custom License");
+    }
+
+    @Test
+    void normalizeLicenseUrlTakesPrecedenceOverName() {
+        // URL says MIT but name says Apache — URL wins
+        assertThat(AuditTui.normalizeLicense("Apache License 2.0", "https://opensource.org/licenses/MIT"))
+                .isEqualTo("MIT");
+    }
+
+    @Test
+    void normalizeLicenseHandlesPublicDomain() {
+        assertThat(AuditTui.normalizeLicense("Public Domain", null)).isEqualTo("Public Domain");
+        assertThat(AuditTui.normalizeLicense("The Unlicense", null)).isEqualTo("Unlicense");
+    }
+
+    @Test
+    void normalizeLicenseHandlesOnlyVariants() {
+        assertThat(AuditTui.normalizeLicense("LGPL-2.1-only", null)).isEqualTo("LGPL-2.1");
+        assertThat(AuditTui.normalizeLicense("GPL-2.0-only", null)).isEqualTo("GPL-2.0");
+        assertThat(AuditTui.normalizeLicense("AGPL-3.0-only", null)).isEqualTo("AGPL-3.0");
+    }
+
+    @Test
+    void normalizeLicenseIsCaseInsensitive() {
+        assertThat(AuditTui.normalizeLicense("apache-2.0", null)).isEqualTo("Apache-2.0");
+        assertThat(AuditTui.normalizeLicense("mit", null)).isEqualTo("MIT");
+        assertThat(AuditTui.normalizeLicense("ASL 2.0", null)).isEqualTo("Apache-2.0");
+    }
+
+    // -- rebuildVulnRows --
+
+    @Test
+    void rebuildVulnRowsIncludesAllVulnerableEntries(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        List<AuditTui.AuditEntry> entries = buildTestEntries();
+        AuditTui tui = new AuditTui(entries, "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        // 3 entries have vulns (vuln-lib, prod-lib, provided-lib), runtime-lib has none
+        assertThat(tui.vulnRows).hasSize(3);
+    }
+
+    @Test
+    void rebuildVulnRowsExcludesEntriesWithoutVulns(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        var e = new AuditTui.AuditEntry("org.example", "safe-lib", "1.0.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+
+        AuditTui tui = new AuditTui(List.of(e), "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        assertThat(tui.vulnRows).isEmpty();
+    }
+
+    @Test
+    void rebuildVulnRowsExpandsMultipleVulnsPerEntry(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        var e = new AuditTui.AuditEntry("org.example", "multi-vuln", "1.0.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of(
+                new OsvClient.Vulnerability("CVE-2024-0001", "First", "HIGH", "2024-01-01", List.of()),
+                new OsvClient.Vulnerability("CVE-2024-0002", "Second", "LOW", "2024-02-01", List.of()),
+                new OsvClient.Vulnerability("CVE-2024-0003", "Third", "CRITICAL", "2024-03-01", List.of()));
+
+        AuditTui tui = new AuditTui(List.of(e), "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        assertThat(tui.vulnRows).hasSize(3);
+    }
+
+    // -- published date column rendering --
+
+    @Test
+    void vulnerabilitiesViewRendersPublishedDateColumn(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        var e = new AuditTui.AuditEntry("org.example", "dated-lib", "1.0.0", "compile");
+        e.licenseLoaded = true;
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of(
+                new OsvClient.Vulnerability("CVE-2024-1234", "A test vuln", "HIGH", "2024-06-15T00:00:00Z", List.of()));
+
+        AuditTui tui = new AuditTui(List.of(e), "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(120, 30))) {
+            var pilot = testRunner.pilot();
+
+            // Navigate to Vulnerabilities tab
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.pause();
+
+            // Exercise detail pane rendering with the published date
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
+    }
+
+    @Test
+    void vulnerabilitiesViewHandlesNullPublishedDate(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        var e = new AuditTui.AuditEntry("org.example", "no-date-lib", "1.0.0", "compile");
+        e.licenseLoaded = true;
+        e.vulnsLoaded = true;
+        e.vulnerabilities =
+                List.of(new OsvClient.Vulnerability("CVE-2024-5678", "No date vuln", "MEDIUM", null, List.of()));
+
+        AuditTui tui = new AuditTui(List.of(e), "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(120, 30))) {
+            var pilot = testRunner.pilot();
+
+            // Navigate to Vulnerabilities tab — should not crash with null date
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.pause();
+
+            // Exercise detail pane rendering — should not crash with null date
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
+    }
+
+    @Test
+    void vulnerabilitiesDetailPaneHandlesNullSummary(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+
+        var e = new AuditTui.AuditEntry("org.example", "null-summary-lib", "1.0.0", "compile");
+        e.licenseLoaded = true;
+        e.vulnsLoaded = true;
+        e.vulnerabilities =
+                List.of(new OsvClient.Vulnerability("CVE-2024-9999", null, "HIGH", "2024-01-01", List.of()));
+
+        AuditTui tui = new AuditTui(List.of(e), "com.example:test:1.0", null, pomPath);
+        tui.rebuildVulnRows();
+
+        try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(120, 30))) {
+            var pilot = testRunner.pilot();
+
+            // Navigate to Vulnerabilities tab and select the entry to render detail pane
+            pilot.press(KeyCode.TAB);
+            pilot.press(KeyCode.TAB);
+            pilot.pause();
+
+            // Should not crash with null summary in detail pane
+            pilot.press(KeyCode.DOWN);
+            pilot.pause();
+        }
     }
 
     private static List<AuditTui.AuditEntry> buildTestEntries() {

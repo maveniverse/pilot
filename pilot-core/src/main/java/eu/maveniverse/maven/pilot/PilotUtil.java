@@ -18,27 +18,37 @@
  */
 package eu.maveniverse.maven.pilot;
 
-import java.lang.reflect.Method;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * Shared utilities for the Pilot core that have no Maven dependencies.
  */
 public final class PilotUtil {
 
+    private static final int MAX_CONCURRENT = 32;
+
     private PilotUtil() {}
 
     /**
-     * Create an ExecutorService using virtual threads (Java 21+) if available,
-     * falling back to a fixed thread pool sized at 2x available processors.
+     * Create a bounded ExecutorService for HTTP I/O.
+     * Uses virtual threads (Java 21+) if available, falling back to platform threads.
+     * Concurrency is capped to avoid overwhelming remote APIs and the render thread.
      */
     public static ExecutorService newHttpPool() {
         try {
-            Method m = Executors.class.getMethod("newVirtualThreadPerTaskExecutor");
-            return (ExecutorService) m.invoke(null);
+            // Thread.ofVirtual().factory() — Java 21+
+            Object builder = Thread.class.getMethod("ofVirtual").invoke(null);
+            ThreadFactory factory =
+                    (ThreadFactory) builder.getClass().getMethod("factory").invoke(builder);
+            return Executors.newFixedThreadPool(MAX_CONCURRENT, factory);
         } catch (Exception e) {
-            return Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
+            return Executors.newFixedThreadPool(MAX_CONCURRENT, r -> {
+                Thread t = new Thread(r);
+                t.setDaemon(true);
+                return t;
+            });
         }
     }
 }
