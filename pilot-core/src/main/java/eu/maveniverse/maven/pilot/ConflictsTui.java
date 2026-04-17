@@ -715,7 +715,12 @@ public class ConflictsTui extends ToolPanel {
         List<Row> rows = new ArrayList<>();
         for (var group : displayed) {
             boolean pinned = editSession != null && editSession.isChanged(group.ga);
-            String icon = pinned ? "✓" : (group.hasConflict() ? "⚠" : "✓");
+            String icon;
+            if (pinned || !group.hasConflict()) {
+                icon = "✓";
+            } else {
+                icon = "⚠";
+            }
             String versions = group.entries.stream()
                     .map(e -> e.requestedVersion)
                     .distinct()

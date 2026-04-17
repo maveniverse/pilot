@@ -95,6 +95,7 @@ public class AuditTui extends ToolPanel {
     private static final String SEVERITY_HIGH = "HIGH";
     private static final String SEVERITY_MEDIUM = "MEDIUM";
     private static final String SEVERITY_LOW = "LOW";
+    private static final String TO_DEPENDENCY_MANAGEMENT = " to dependencyManagement";
 
     private enum View {
         VULNERABILITIES,
@@ -693,11 +694,12 @@ public class AuditTui extends ToolPanel {
                 int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
                 if (idx >= 0 && idx < vulnDisplayRows.size()) {
                     var dr = vulnDisplayRows.get(idx);
-                    yield dr.row() != null
-                            ? dr.row().entry()
-                            : (dr.group().rows.isEmpty()
-                                    ? null
-                                    : dr.group().rows.get(0).entry());
+                    if (dr.row() != null) {
+                        yield dr.row().entry();
+                    }
+                    yield dr.group().rows.isEmpty()
+                            ? null
+                            : dr.group().rows.get(0).entry();
                 }
                 yield null;
             }
@@ -735,9 +737,9 @@ public class AuditTui extends ToolPanel {
                     PomEditSession.ChangeType.ADD,
                     "managed",
                     entry.ga(),
-                    "added " + entry.version + " to dependencyManagement",
+                    "added " + entry.version + TO_DEPENDENCY_MANAGEMENT,
                     "audit");
-            status = "Added " + entry.ga() + ":" + entry.version + " to dependencyManagement";
+            status = "Added " + entry.ga() + ":" + entry.version + TO_DEPENDENCY_MANAGEMENT;
         } catch (Exception e) {
             status = "Failed: " + e.getMessage();
         }
@@ -754,7 +756,7 @@ public class AuditTui extends ToolPanel {
         if (count == 0) {
             status = "All artifacts in " + group.id + " already managed";
         } else {
-            status = "Added " + count + " artifact(s) from " + group.id + " to dependencyManagement";
+            status = "Added " + count + " artifact(s) from " + group.id + TO_DEPENDENCY_MANAGEMENT;
         }
     }
 

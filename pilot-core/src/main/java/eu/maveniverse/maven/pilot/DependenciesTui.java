@@ -1111,7 +1111,14 @@ public class DependenciesTui extends ToolPanel {
         for (int i = 0; i < managed.size(); i++) {
             ManagedEntry e = managed.get(i);
             boolean changed = editSession != null && editSession.isChanged(e.ga());
-            String icon = changed ? "✓" : (e.isBom ? "B" : " ");
+            String icon;
+            if (changed) {
+                icon = "✓";
+            } else if (e.isBom) {
+                icon = "B";
+            } else {
+                icon = " ";
+            }
             String typeLabel = e.isBom ? "bom" : e.scope;
             Style rowStyle = "inherited".equals(e.source) ? Style.create().dim() : Style.create();
             if (isSearchMatch(i)) {

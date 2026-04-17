@@ -1279,7 +1279,14 @@ public class UpdatesTui extends ToolPanel {
 
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
-        String check = group.applied ? "[·]" : (group.selected ? "[✓]" : "[ ]");
+        String check;
+        if (group.applied) {
+            check = "[·]";
+        } else if (group.selected) {
+            check = "[✓]";
+        } else {
+            check = "[ ]";
+        }
         String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
@@ -1314,7 +1321,14 @@ public class UpdatesTui extends ToolPanel {
     }
 
     private Row createStandaloneDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
-        String check = dep.applied ? "[·]" : (dep.selected ? "[✓]" : "[ ]");
+        String check;
+        if (dep.applied) {
+            check = "[·]";
+        } else if (dep.selected) {
+            check = "[✓]";
+        } else {
+            check = "[ ]";
+        }
         String ga = dep.artifactId;
         String current = dep.primaryVersion != null ? dep.primaryVersion : "";
         String arrow = dep.hasUpdate() ? "→" : "";
