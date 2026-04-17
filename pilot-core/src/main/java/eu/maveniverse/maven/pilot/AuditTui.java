@@ -671,6 +671,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderLicenseDetail(frame, zones.get(2));
@@ -980,6 +981,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), byLicenseTableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderByLicenseDetail(frame, zones.get(2));
@@ -1120,6 +1122,7 @@ public class AuditTui extends ToolPanel {
 
         setTableArea(zones.get(0), block);
         frame.renderStatefulWidget(table, zones.get(0), vulnTableState);
+        renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
         renderVulnDetail(frame, zones.get(2));

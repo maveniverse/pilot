@@ -1099,10 +1099,11 @@ public class UpdatesTui extends ToolPanel {
                 boolean detailsVisible = showDetails && !displayRows.isEmpty();
                 if (detailsVisible) {
                     var split = Layout.vertical()
-                            .constraints(Constraint.fill(), Constraint.percentage(30))
+                            .constraints(Constraint.fill(), Constraint.length(1), Constraint.percentage(30))
                             .split(contentArea);
                     renderDepsTable(frame, split.get(0));
-                    renderDetailPane(frame, split.get(1));
+                    renderDivider(frame, split.get(1));
+                    renderDetailPane(frame, split.get(2));
                 } else {
                     renderDepsTable(frame, contentArea);
                 }

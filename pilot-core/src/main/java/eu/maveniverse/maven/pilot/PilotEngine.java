@@ -24,14 +24,12 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
  * Panel creation logic decoupled from Maven plugin API.
@@ -162,35 +160,12 @@ public class PilotEngine {
 
     private ToolPanel createConflictsPanel(
             PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
-        if (projects.size() > 1) {
-            Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
-            for (int i = 0; i < projects.size(); i++) {
-                PilotProject p = projects.get(i);
-                if (projects.size() >= 100) {
-                    progress.accept("Collecting conflicts… " + (i + 1) + "/" + projects.size() + "\n" + p.artifactId);
-                }
-                DependencyTreeModel tree = cachedCollectDependencies(p);
-                List<String> modulePath = new ArrayList<>();
-                modulePath.add("[" + p.artifactId + "]");
-                collectConflicts(tree.root, mergedMap, modulePath);
-            }
-            List<ConflictsTui.ConflictGroup> conflicts = filterConflictGroups(mergedMap);
-            PilotProject root = projects.get(0);
-            String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
-            if (session != null) {
-                return new ConflictsTui(conflicts, session, gav);
-            }
-            return new ConflictsTui(conflicts, root.pomPath.toString(), gav);
-        } else {
-            DependencyTreeModel tree = cachedCollectDependencies(proj);
-            Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
-            collectConflicts(tree.root, conflictMap, new ArrayList<>());
-            List<ConflictsTui.ConflictGroup> conflicts = filterConflictGroups(conflictMap);
-            if (session != null) {
-                return new ConflictsTui(conflicts, session, proj.gav());
-            }
-            return new ConflictsTui(conflicts, proj.pomPath.toString(), proj.gav());
-        }
+        List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
+        String gav = projects.size() > 1
+                ? projects.get(0).gav() + " (reactor: " + projects.size() + " modules)"
+                : proj.gav();
+        PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
+        return new ConflictsTui(targetProjects, s, gav, this::cachedCollectDependencies);
     }
 
     private ToolPanel createAlignPanel(PilotProject proj, List<PilotProject> projects) throws Exception {
@@ -346,45 +321,6 @@ public class PilotEngine {
         }
 
         return projects.get(0);
-    }
-
-    private static void collectConflicts(
-            DependencyTreeModel.TreeNode node,
-            Map<String, List<ConflictsTui.ConflictEntry>> conflicts,
-            List<String> path) {
-        for (DependencyTreeModel.TreeNode child : node.children) {
-            String ga = child.ga();
-            String requestedVersion = child.version;
-            String resolvedVersion = child.version;
-            if (child.requestedVersion != null) {
-                requestedVersion = child.requestedVersion;
-            }
-
-            List<String> currentPath = new ArrayList<>(path);
-            currentPath.add(ga);
-
-            var entry = new ConflictsTui.ConflictEntry(
-                    child.groupId,
-                    child.artifactId,
-                    requestedVersion,
-                    resolvedVersion,
-                    String.join(" → ", currentPath),
-                    child.scope);
-
-            conflicts.computeIfAbsent(ga, k -> new ArrayList<>()).add(entry);
-            collectConflicts(child, conflicts, currentPath);
-        }
-    }
-
-    private static List<ConflictsTui.ConflictGroup> filterConflictGroups(
-            Map<String, List<ConflictsTui.ConflictEntry>> conflictMap) {
-        return conflictMap.entrySet().stream()
-                .filter(e -> e.getValue().size() > 1
-                        || e.getValue().stream()
-                                .anyMatch(c ->
-                                        c.requestedVersion != null && !c.requestedVersion.equals(c.resolvedVersion)))
-                .map(e -> new ConflictsTui.ConflictGroup(e.getKey(), e.getValue()))
-                .collect(Collectors.toList());
     }
 
     private static void collectAuditNode(

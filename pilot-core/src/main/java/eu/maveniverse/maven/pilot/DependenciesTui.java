@@ -405,11 +405,12 @@ public class DependenciesTui extends ToolPanel {
             renderManagedTable(frame, contentArea);
         } else {
             var zones = Layout.vertical()
-                    .constraints(Constraint.fill(), Constraint.percentage(25))
+                    .constraints(Constraint.fill(), Constraint.length(1), Constraint.percentage(25))
                     .split(contentArea);
             lastContentHeight = zones.get(0).height();
             renderTable(frame, zones.get(0), null);
-            renderDetails(frame, zones.get(1));
+            renderDivider(frame, zones.get(1));
+            renderDetails(frame, zones.get(2));
         }
     }
 

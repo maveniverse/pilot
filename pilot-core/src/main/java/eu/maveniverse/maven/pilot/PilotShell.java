@@ -521,6 +521,10 @@ public class PilotShell {
     }
 
     private void refreshActivePanel() {
+        refreshActivePanel(true);
+    }
+
+    private void refreshActivePanel(boolean clearPanel) {
         ToolDef tool = TOOLS.get(activeToolIndex);
         if (!isToolAvailable(activeToolIndex)) {
             activePanel = null;
@@ -545,11 +549,17 @@ public class PilotShell {
             return;
         }
 
-        // Already loading this exact panel — just re-attach
+        // Already loading this exact panel — keep waiting
         if (cacheKey.equals(loadingCacheKey)) {
+            if (clearPanel) {
+                activePanel = null;
+            }
             return;
         }
 
+        if (clearPanel) {
+            activePanel = null;
+        }
         panelError = null;
         panelLoadingStatus = null;
         loadingCacheKey = cacheKey;
@@ -561,7 +571,7 @@ public class PilotShell {
         }
 
         final PilotProject proj = selectedProject;
-        final List<PilotProject> scope = selectedScope;
+        final List<PilotProject> scope = tool.isModuleIndependent() ? projects : selectedScope;
         final int subView = currentSubView;
         // Get or create session for this module's POM
         final PomEditSession session;
@@ -622,7 +632,7 @@ public class PilotShell {
 
         ToolDef activeTool = TOOLS.get(activeToolIndex);
         if (!activeTool.isModuleIndependent()) {
-            refreshActivePanel();
+            refreshActivePanel(false);
         }
     }
 

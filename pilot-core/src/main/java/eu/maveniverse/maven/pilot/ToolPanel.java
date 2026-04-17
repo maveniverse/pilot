@@ -54,6 +54,11 @@ public abstract class ToolPanel {
     /** Theme for all color/style decisions. */
     protected final Theme theme = Theme.DEFAULT;
 
+    protected void renderDivider(Frame frame, Rect area) {
+        String div = "─".repeat(area.width());
+        frame.renderWidget(Paragraph.from(Line.from(Span.raw(div).fg(theme.dividerColor()))), area);
+    }
+
     /** Shared POM edit session, or null for read-only tools. */
     protected PomEditSession editSession;
 

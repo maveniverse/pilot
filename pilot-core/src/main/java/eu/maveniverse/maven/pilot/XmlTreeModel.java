@@ -220,7 +220,7 @@ public class XmlTreeModel {
         spans.add(Span.raw(indent));
 
         if (node instanceof Comment comment) {
-            spans.add(Span.raw("<!-- " + comment.content().trim() + " -->").fg(Color.DARK_GRAY));
+            spans.add(Span.raw("  <!-- " + comment.content().trim() + " -->").fg(Color.DARK_GRAY));
             return Line.from(spans);
         }
 

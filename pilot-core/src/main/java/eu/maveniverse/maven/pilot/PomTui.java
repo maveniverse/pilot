@@ -209,6 +209,7 @@ public class PomTui extends ToolPanel {
                     .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(detailHeight))
                     .split(contentArea);
             renderXmlTree(frame, zones.get(0), snippet);
+            renderDivider(frame, zones.get(1));
             renderOriginDetail(frame, zones.get(2), snippet);
         } else {
             renderXmlTree(frame, contentArea, null);
@@ -509,7 +510,7 @@ public class PomTui extends ToolPanel {
         }
         idx++;
         if (showDetail) {
-            idx++; // skip spacer
+            renderDivider(frame, zones.get(idx++));
             renderOriginDetail(frame, zones.get(idx++), snippet);
         }
         renderFooter(frame, zones.get(idx), showDetail);

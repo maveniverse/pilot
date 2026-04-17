@@ -219,6 +219,16 @@ class UpdatesTuiRenderTest {
         assertThat(output).contains("\u2192"); // →
     }
 
+    // ── Divider ────────────────────────────────────────────────────────────
+
+    @Test
+    void panelModeDividerBetweenTableAndDetails() throws Exception {
+        var tui = createTuiWithUpdates();
+        String output = render(f -> tui.render(f, f.area()));
+
+        assertThat(output).contains("─".repeat(10));
+    }
+
     // ── Selection ──────────────────────────────────────────────────────────
 
     @Test

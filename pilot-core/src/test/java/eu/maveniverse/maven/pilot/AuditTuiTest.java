@@ -319,6 +319,17 @@ class AuditTuiTest {
     }
 
     @Test
+    void panelModeDividerBetweenTableAndDetails(@TempDir Path tempDir) throws Exception {
+        String pomPath =
+                Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
+        List<AuditTui.AuditEntry> entries = buildTestEntries();
+        AuditTui tui = new AuditTui(entries, "com.example:test:1.0", null, pomPath);
+
+        String output = TuiTestHelper.render(f -> tui.render(f, f.area()));
+        assertThat(output).contains("─".repeat(10));
+    }
+
+    @Test
     void vulnerabilitiesViewRendersScopeColumn(@TempDir Path tempDir) throws Exception {
         String pomPath =
                 Files.writeString(tempDir.resolve("pom.xml"), "<project/>").toString();
