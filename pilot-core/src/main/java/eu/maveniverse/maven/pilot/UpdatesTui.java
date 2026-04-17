@@ -405,8 +405,10 @@ public class UpdatesTui extends ToolPanel {
             }
             if (groupHasUpdate) {
                 displayRows.add(ReactorRow.group(group));
-                for (var dep : group.dependencies) {
-                    displayRows.add(ReactorRow.dep(dep));
+                if (group.expanded) {
+                    for (var dep : group.dependencies) {
+                        displayRows.add(ReactorRow.dep(dep));
+                    }
                 }
             }
         }
@@ -434,6 +436,7 @@ public class UpdatesTui extends ToolPanel {
         extractors.add(this::extractCurrentVersion);
         extractors.add(this::extractArrow);
         extractors.add(this::extractNewestVersion);
+        extractors.add(this::extractUpdateType);
         extractors.add(this::extractAge);
         if (!singleModule) {
             extractors.add(this::extractModuleCount);
@@ -500,6 +503,30 @@ public class UpdatesTui extends ToolPanel {
             return String.valueOf(row.propertyGroup.totalModuleCount());
         }
         return String.valueOf(row.dependency.moduleCount());
+    }
+
+    private String extractUpdateType(ReactorRow row) {
+        VersionComparator.UpdateType type =
+                row.isGroupHeader() ? row.propertyGroup.updateType : row.dependency.updateType;
+        return type != null ? type.name() : "";
+    }
+
+    private static String updateTypeLabel(VersionComparator.UpdateType type) {
+        if (type == null) return "";
+        return switch (type) {
+            case PATCH -> "patch";
+            case MINOR -> "minor";
+            case MAJOR -> "major";
+        };
+    }
+
+    private Style updateTypeStyle(VersionComparator.UpdateType type) {
+        if (type == null) return Style.create().dim();
+        return switch (type) {
+            case PATCH -> Style.create().dim();
+            case MINOR -> Style.create();
+            case MAJOR -> Style.create().fg(Color.YELLOW);
+        };
     }
 
     @Override
@@ -652,6 +679,37 @@ public class UpdatesTui extends ToolPanel {
         if (TableNavigation.handlePageKeys(key, tableState, displayRows.size(), lastContentHeight)) {
             return true;
         }
+        if (key.isRight()) {
+            Integer sel = tableState.selected();
+            if (sel != null && sel < displayRows.size()) {
+                var row = displayRows.get(sel);
+                if (row.isGroupHeader() && !row.propertyGroup.expanded) {
+                    row.propertyGroup.expanded = true;
+                    rebuildDisplayRowsKeepSelection();
+                } else {
+                    tableState.selectNext(displayRows.size());
+                }
+            }
+            return true;
+        }
+        if (key.isLeft()) {
+            Integer sel = tableState.selected();
+            if (sel != null && sel < displayRows.size()) {
+                var row = displayRows.get(sel);
+                if (row.isGroupHeader() && row.propertyGroup.expanded) {
+                    row.propertyGroup.expanded = false;
+                    rebuildDisplayRowsKeepSelection();
+                } else if (!row.isGroupHeader() && row.dependency != null && row.dependency.isPropertyManaged()) {
+                    for (int i = sel - 1; i >= 0; i--) {
+                        if (displayRows.get(i).isGroupHeader()) {
+                            tableState.select(i);
+                            break;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
         if (key.isCharIgnoreCase(' ')) {
             toggleSelection();
             return true;
@@ -705,32 +763,52 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.RIGHT)) {
-            toggleModuleNode(visible);
+            Integer sel = moduleTableState.selected();
+            if (sel != null && sel < visible.size()) {
+                var node = visible.get(sel);
+                if (node.hasChildren() && !node.expanded) {
+                    node.expanded = true;
+                } else {
+                    moduleTableState.selectNext(reactorModel.visibleNodes().size());
+                }
+            }
             return true;
         }
         if (key.isKey(KeyCode.LEFT)) {
-            collapseModuleNode(visible);
+            Integer sel = moduleTableState.selected();
+            if (sel != null && sel < visible.size()) {
+                var node = visible.get(sel);
+                if (node.expanded && node.hasChildren()) {
+                    node.expanded = false;
+                } else {
+                    for (int i = sel - 1; i >= 0; i--) {
+                        if (visible.get(i).depth < node.depth) {
+                            moduleTableState.select(i);
+                            break;
+                        }
+                    }
+                }
+            }
             return true;
         }
         return false;
     }
 
-    private void toggleModuleNode(List<ReactorModel.ModuleNode> visible) {
-        Integer sel = moduleTableState.selected();
-        if (sel != null && sel < visible.size()) {
-            var node = visible.get(sel);
-            if (node.hasChildren()) {
-                node.expanded = !node.expanded;
-            }
-        }
-    }
-
-    private void collapseModuleNode(List<ReactorModel.ModuleNode> visible) {
-        Integer sel = moduleTableState.selected();
-        if (sel != null && sel < visible.size()) {
-            var node = visible.get(sel);
-            if (node.expanded && node.hasChildren()) {
-                node.expanded = false;
+    private void rebuildDisplayRowsKeepSelection() {
+        Integer sel = tableState.selected();
+        ReactorRow current = (sel != null && sel < displayRows.size()) ? displayRows.get(sel) : null;
+        buildDisplayRows();
+        if (current != null) {
+            for (int i = 0; i < displayRows.size(); i++) {
+                var row = displayRows.get(i);
+                if (current.isGroupHeader() && row.isGroupHeader() && row.propertyGroup == current.propertyGroup) {
+                    tableState.select(i);
+                    return;
+                }
+                if (!current.isGroupHeader() && !row.isGroupHeader() && row.dependency == current.dependency) {
+                    tableState.select(i);
+                    return;
+                }
             }
         }
     }
@@ -1018,7 +1096,16 @@ public class UpdatesTui extends ToolPanel {
         } else {
             Rect contentArea = renderTabBar(frame, area);
             if (view == View.DEPENDENCIES) {
-                renderDepsTable(frame, contentArea);
+                boolean detailsVisible = showDetails && !displayRows.isEmpty();
+                if (detailsVisible) {
+                    var split = Layout.vertical()
+                            .constraints(Constraint.fill(), Constraint.percentage(30))
+                            .split(contentArea);
+                    renderDepsTable(frame, split.get(0));
+                    renderDetailPane(frame, split.get(1));
+                } else {
+                    renderDepsTable(frame, contentArea);
+                }
             } else {
                 renderModulesTable(frame, contentArea);
             }
@@ -1080,13 +1167,13 @@ public class UpdatesTui extends ToolPanel {
                 .borderStyle(borderStyle())
                 .build();
 
-        List<String> headers = List.of("", "dependency / property", "current", "", "available", "age", "info");
+        List<String> headers = List.of("", "dependency / property", "current", "", "available", "type", "age", "info");
         Row header = sortState.decorateHeader(headers, theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         if (displayRows.isEmpty()) {
             String msg = loading ? "Checking versions…" : "No updates available";
-            int colCount = 7;
+            int colCount = 8;
             List<Cell> cells = new ArrayList<>();
             cells.add(Cell.empty());
             cells.add(Cell.from(msg));
@@ -1100,10 +1187,11 @@ public class UpdatesTui extends ToolPanel {
 
         List<Constraint> widths = List.of(
                 Constraint.length(3),
-                Constraint.percentage(35),
-                Constraint.percentage(14),
+                Constraint.percentage(30),
+                Constraint.percentage(12),
                 Constraint.length(3),
-                Constraint.percentage(14),
+                Constraint.percentage(12),
+                Constraint.length(5),
                 Constraint.length(6),
                 Constraint.percentage(10));
         Table table = Table.builder()
@@ -1127,45 +1215,53 @@ public class UpdatesTui extends ToolPanel {
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
         String check = group.selected ? "[✓]" : "[ ]";
-        String name = "${" + group.propertyName + "}";
+        String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
         }
         String current = group.resolvedVersion != null ? group.resolvedVersion : "";
         String arrow = group.hasUpdate() ? "→" : "";
         String available = group.hasUpdate() ? group.newestVersion : "";
+        String type = updateTypeLabel(group.updateType);
         String age = formatAge(group.libYears, group.hasUpdate());
         String info = singleModule ? "" : group.totalModuleCount() + " mod";
 
-        Style style = theme.propertyGroupHeader();
+        Style style = updateTypeStyle(group.updateType);
         if (highlight) style = style.bg(theme.searchHighlightBg());
-        return Row.from(check, name, current, arrow, available, age, info).style(style);
+        return Row.from(check, name, current, arrow, available, type, age, info).style(style);
     }
 
     private Row createDependencyRow(ReactorRow row, boolean highlight) {
         var dep = row.dependency;
-        String check = dep.selected ? "[✓]" : "   ";
-        String ga = "  ↳ " + dep.artifactId;
         boolean inGroup = dep.isPropertyManaged();
-        String current;
-        if (inGroup || dep.primaryVersion == null) {
-            current = "";
-        } else {
-            current = dep.primaryVersion;
-        }
-        String arrow = !inGroup && dep.hasUpdate() ? "→" : "";
-        String available = !inGroup && dep.hasUpdate() ? dep.newestVersion : "";
 
-        Style style = dep.updateType != null
-                ? switch (dep.updateType) {
-                    case PATCH -> theme.updatePatch();
-                    case MINOR -> theme.updateMinor();
-                    case MAJOR -> theme.updateMajor();
+        if (inGroup) {
+            String check = "   ";
+            String ga = "  ↳ " + dep.artifactId;
+            Style style = Style.create();
+            if (highlight) style = style.bg(theme.searchHighlightBg());
+            String info = "";
+            if (!singleModule) {
+                int modCount = dep.moduleCount();
+                info = modCount + " mod";
+                if (dep.usages.stream().anyMatch(u -> u.managed)) {
+                    info += " M";
                 }
-                : Style.create();
+            }
+            return Row.from(check, ga, "", "", "", "", "", info).style(style);
+        }
+
+        String check = dep.selected ? "[✓]" : "[ ]";
+        String ga = dep.artifactId;
+        String current = dep.primaryVersion != null ? dep.primaryVersion : "";
+        String arrow = dep.hasUpdate() ? "→" : "";
+        String available = dep.hasUpdate() ? dep.newestVersion : "";
+        String type = updateTypeLabel(dep.updateType);
+        String age = formatAge(dep.libYears, dep.hasUpdate());
+
+        Style style = updateTypeStyle(dep.updateType);
         if (highlight) style = style.bg(theme.searchHighlightBg());
 
-        String age = inGroup ? "" : formatAge(dep.libYears, dep.hasUpdate());
         String info = "";
         if (!singleModule) {
             int modCount = dep.moduleCount();
@@ -1174,7 +1270,7 @@ public class UpdatesTui extends ToolPanel {
                 info += " M";
             }
         }
-        return Row.from(check, ga, current, arrow, available, age, info).style(style);
+        return Row.from(check, ga, current, arrow, available, type, age, info).style(style);
     }
 
     private void renderDetailPane(Frame frame, Rect area) {
@@ -1244,9 +1340,21 @@ public class UpdatesTui extends ToolPanel {
         }
         rows.add(Row.from(Cell.from(Line.from(artSpans))));
 
-        // Module count
-        rows.add(Row.from(Cell.from(Line.from(
-                List.of(Span.raw("Modules:   ").bold(), Span.raw(String.valueOf(group.totalModuleCount())))))));
+        // Modules using this group
+        Set<String> moduleNames = new LinkedHashSet<>();
+        for (var dep : group.dependencies) {
+            for (var usage : dep.usages) {
+                moduleNames.add(usage.project.artifactId);
+            }
+        }
+        List<Span> modSpans = new ArrayList<>();
+        modSpans.add(Span.raw("Modules:   ").bold());
+        int idx = 0;
+        for (String mod : moduleNames) {
+            if (idx++ > 0) modSpans.add(Span.raw(", ").dim());
+            modSpans.add(Span.raw(mod));
+        }
+        rows.add(Row.from(Cell.from(Line.from(modSpans))));
 
         return rows;
     }
@@ -1424,6 +1532,8 @@ public class UpdatesTui extends ToolPanel {
     private void buildDepsKeyHints(List<Span> spans) {
         spans.add(Span.raw("↑↓").bold());
         spans.add(Span.raw(KEY_NAV));
+        spans.add(Span.raw("←→").bold());
+        spans.add(Span.raw(":Expand  "));
         spans.add(Span.raw(KEY_SPACE).bold());
         spans.add(Span.raw(":Toggle  "));
         spans.add(Span.raw("a").bold());
@@ -1478,7 +1588,7 @@ public class UpdatesTui extends ToolPanel {
         if (!isSubViewEnabled(index)) return;
         view = View.values()[index];
         clearSearch();
-        int depsCols = 7;
+        int depsCols = 8;
         sortState = new SortState(view == View.DEPENDENCIES ? depsCols : 2);
     }
 
@@ -1628,14 +1738,14 @@ public class UpdatesTui extends ToolPanel {
                 new HelpOverlay.Section(
                         "Colors",
                         List.of(
-                                new HelpOverlay.Entry("green", "Patch update — bug fixes, safe to apply"),
-                                new HelpOverlay.Entry("yellow", "Minor update — new features, usually compatible"),
-                                new HelpOverlay.Entry("red", "Major update — breaking changes possible"),
-                                new HelpOverlay.Entry("cyan", "Property group header (${property.name})"))),
+                                new HelpOverlay.Entry("dim", "Patch update — bug fixes, safe to apply"),
+                                new HelpOverlay.Entry("white", "Minor update — new features, usually compatible"),
+                                new HelpOverlay.Entry("yellow", "Major update — breaking changes possible"))),
                 new HelpOverlay.Section(
                         actionsTitle,
                         List.of(
                                 new HelpOverlay.Entry("↑ / ↓", "Move selection up / down"),
+                                new HelpOverlay.Entry("← / →", "Collapse / expand property group"),
                                 new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
                                 new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
                                 new HelpOverlay.Entry(KEY_SPACE, "Toggle selection (group or individual)"),
