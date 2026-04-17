@@ -32,6 +32,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -368,14 +370,18 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
+        CountDownLatch resolved = new CountDownLatch(1);
+        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+            resolved.countDown();
+            return createTreeWithConflict();
+        });
 
         try (var runner = TuiRunner.create(TuiConfig.builder()
                 .backend(new TestBackend(80, 24))
                 .shutdownHook(false)
                 .build())) {
             tui.setRunner(runner);
-            Thread.sleep(200);
+            assertThat(resolved.await(5, TimeUnit.SECONDS)).isTrue();
         }
     }
 
@@ -384,7 +390,9 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
+        CountDownLatch failed = new CountDownLatch(1);
         var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+            failed.countDown();
             throw new RuntimeException("resolver failed");
         });
 
@@ -393,7 +401,7 @@ class ConflictsTuiRenderTest {
                 .shutdownHook(false)
                 .build())) {
             tui.setRunner(runner);
-            Thread.sleep(200);
+            assertThat(failed.await(5, TimeUnit.SECONDS)).isTrue();
         }
     }
 
