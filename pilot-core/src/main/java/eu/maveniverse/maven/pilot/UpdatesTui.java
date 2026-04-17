@@ -394,22 +394,31 @@ public class UpdatesTui extends ToolPanel {
     void buildDisplayRows() {
         displayRows = new ArrayList<>();
         duplicatePropertyNames = computeDuplicatePropertyNames(reactorResult.propertyGroups);
+        addPropertyGroupRows();
+        addUngroupedRows();
+        if (!displayRows.isEmpty()) {
+            tableState.select(0);
+        }
+    }
 
+    private void addPropertyGroupRows() {
         for (var group : reactorResult.propertyGroups) {
             boolean groupHasUpdate = group.hasUpdate()
                     || group.dependencies.stream().anyMatch(ReactorCollector.AggregatedDependency::hasUpdate);
             if (filter != Filter.ALL) {
                 groupHasUpdate = matchesFilter(group.updateType);
             }
-            if (groupHasUpdate) {
-                displayRows.add(ReactorRow.group(group));
-                if (group.expanded) {
-                    for (var dep : group.dependencies) {
-                        displayRows.add(ReactorRow.dep(dep));
-                    }
+            if (!groupHasUpdate) continue;
+            displayRows.add(ReactorRow.group(group));
+            if (group.expanded) {
+                for (var dep : group.dependencies) {
+                    displayRows.add(ReactorRow.dep(dep));
                 }
             }
         }
+    }
+
+    private void addUngroupedRows() {
         for (var dep : reactorResult.ungroupedDependencies) {
             boolean show =
                     switch (filter) {
@@ -421,9 +430,6 @@ public class UpdatesTui extends ToolPanel {
             if (show) {
                 displayRows.add(ReactorRow.dep(dep));
             }
-        }
-        if (!displayRows.isEmpty()) {
-            tableState.select(0);
         }
     }
 
