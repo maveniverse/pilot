@@ -23,6 +23,7 @@ import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -32,6 +33,7 @@ import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.TickEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -233,7 +235,33 @@ public class PilotShell {
             return handleMouseEvent(mouse);
         }
 
+        // Only redraw on tick if there's an active animation or loading
+        if (event instanceof TickEvent) {
+            return needsTickRedraw();
+        }
+
         return true;
+    }
+
+    private boolean needsTickRedraw() {
+        // Tree width animation in progress
+        if (currentTreeCols >= 0) {
+            int fullWidth = 120;
+            int narrowWidth = 30;
+            int target =
+                    switch (targetTreeWidth) {
+                        case FULL -> fullWidth;
+                        case NARROW -> narrowWidth;
+                        case HIDDEN -> 0;
+                    };
+            if (currentTreeCols != target) return true;
+        }
+        // Help overlay animating
+        if (helpOverlay.isAnimating()) return true;
+        // Panel loading in progress
+        if (panelLoadingStatus != null) return true;
+        if (loadingStatusSupplier != null && loadingStatusSupplier.get() != null) return true;
+        return false;
     }
 
     private boolean handleKeyEvent(KeyEvent key) {
@@ -825,10 +853,11 @@ public class PilotShell {
             title = " No Tool Selected ";
             message = "Select a tool with Alt+letter";
         }
+        Style border = focus == Focus.CONTENT ? theme.focusedBorder() : theme.unfocusedBorder();
         Block block = Block.builder()
                 .title(title)
                 .borderType(BorderType.ROUNDED)
-                .borderStyle(theme.placeholderBorder())
+                .borderStyle(border)
                 .build();
         Paragraph p = Paragraph.builder().text(message).block(block).centered().build();
         frame.renderWidget(p, area);
