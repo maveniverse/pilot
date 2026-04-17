@@ -326,29 +326,10 @@ public class AuditTui extends ToolPanel {
         Map<String, VulnGroup> groupMap = new LinkedHashMap<>();
         Map<String, String> aliasToId = new HashMap<>();
         for (var vr : vulnRows) {
-            String id = vr.vuln().id;
-            String groupId = aliasToId.getOrDefault(id, id);
-            if (vr.vuln().aliases != null) {
-                for (String alias : vr.vuln().aliases) {
-                    String mapped = aliasToId.get(alias);
-                    if (mapped != null) {
-                        groupId = mapped;
-                        break;
-                    }
-                }
-            }
+            String groupId = resolveGroupId(vr.vuln(), aliasToId);
             VulnGroup group = groupMap.get(groupId);
             if (group == null) {
-                String severity = normalizeSeverity(vr.vuln().severity);
-                group = new VulnGroup(id, vr.vuln().summary, severity, vr.vuln().published);
-                group.expanded = expandedIds.contains(id);
-                groupMap.put(groupId, group);
-                aliasToId.put(id, groupId);
-                if (vr.vuln().aliases != null) {
-                    for (String alias : vr.vuln().aliases) {
-                        aliasToId.put(alias, groupId);
-                    }
-                }
+                group = createVulnGroup(vr, groupId, expandedIds, aliasToId, groupMap);
             }
             boolean alreadyPresent = group.rows.stream()
                     .anyMatch(r -> r.entry().gav().equals(vr.entry().gav()));
@@ -357,6 +338,39 @@ public class AuditTui extends ToolPanel {
             }
         }
         return new ArrayList<>(groupMap.values());
+    }
+
+    private static String resolveGroupId(OsvClient.Vulnerability vuln, Map<String, String> aliasToId) {
+        String groupId = aliasToId.getOrDefault(vuln.id, vuln.id);
+        if (vuln.aliases != null) {
+            for (String alias : vuln.aliases) {
+                String mapped = aliasToId.get(alias);
+                if (mapped != null) {
+                    return mapped;
+                }
+            }
+        }
+        return groupId;
+    }
+
+    private VulnGroup createVulnGroup(
+            VulnRow vr,
+            String groupId,
+            Set<String> expandedIds,
+            Map<String, String> aliasToId,
+            Map<String, VulnGroup> groupMap) {
+        String id = vr.vuln().id;
+        String severity = normalizeSeverity(vr.vuln().severity);
+        VulnGroup group = new VulnGroup(id, vr.vuln().summary, severity, vr.vuln().published);
+        group.expanded = expandedIds.contains(id);
+        groupMap.put(groupId, group);
+        aliasToId.put(id, groupId);
+        if (vr.vuln().aliases != null) {
+            for (String alias : vr.vuln().aliases) {
+                aliasToId.put(alias, groupId);
+            }
+        }
+        return group;
     }
 
     private void rebuildVulnDisplayRows() {
@@ -1382,31 +1396,33 @@ public class AuditTui extends ToolPanel {
     }
 
     private Row buildVulnTableRow(VulnDisplayRow dr, int i) {
-        if (dr.isGroupHeader()) {
-            var group = dr.group();
-            boolean allManaged = editSession != null
-                    && group.rows.stream()
-                            .allMatch(r -> editSession.isChanged(r.entry().ga()));
-            String arrow = group.expanded ? "▾ " : "▸ ";
-            String severity = normalizeSeverity(group.severity);
-            String published = formatPublished(group.published);
-            int affected = group.rows.size();
-            String countLabel = affected > 1 ? " (" + affected + " artifacts)" : "";
-            Style style = allManaged
-                    ? Style.create().dim()
-                    : getSeverityStyle(severity).bold();
-            if (view == View.VULNERABILITIES && isSearchMatch(i)) {
-                style = style.bg(theme.searchHighlightBg());
-            }
-            String statusIcon = allManaged ? "✓ " : "";
-            return Row.from(
-                    Cell.from(statusIcon + arrow + group.id + countLabel).style(style),
-                    Cell.from(severity).style(style),
-                    Cell.from("").style(style),
-                    Cell.from(published).style(style),
-                    Cell.from(truncateSummary(group.summary, 50)).style(style));
+        return dr.isGroupHeader() ? buildVulnGroupHeaderRow(dr.group(), i) : buildVulnArtifactRow(dr.row(), i);
+    }
+
+    private Row buildVulnGroupHeaderRow(VulnGroup group, int i) {
+        boolean allManaged = editSession != null
+                && group.rows.stream()
+                        .allMatch(r -> editSession.isChanged(r.entry().ga()));
+        String arrow = group.expanded ? "▾ " : "▸ ";
+        String severity = normalizeSeverity(group.severity);
+        String published = formatPublished(group.published);
+        int affected = group.rows.size();
+        String countLabel = affected > 1 ? " (" + affected + " artifacts)" : "";
+        Style style =
+                allManaged ? Style.create().dim() : getSeverityStyle(severity).bold();
+        if (view == View.VULNERABILITIES && isSearchMatch(i)) {
+            style = style.bg(theme.searchHighlightBg());
         }
-        var vr = dr.row();
+        String statusIcon = allManaged ? "✓ " : "";
+        return Row.from(
+                Cell.from(statusIcon + arrow + group.id + countLabel).style(style),
+                Cell.from(severity).style(style),
+                Cell.from("").style(style),
+                Cell.from(published).style(style),
+                Cell.from(truncateSummary(group.summary, 50)).style(style));
+    }
+
+    private Row buildVulnArtifactRow(VulnRow vr, int i) {
         boolean managed =
                 editSession != null && editSession.isChanged(vr.entry().ga());
         String severity = normalizeSeverity(vr.vuln().severity);

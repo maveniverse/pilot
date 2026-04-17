@@ -306,6 +306,9 @@ public class DependenciesTui extends ToolPanel {
         if (editSession == null) return true;
         Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(java.util.stream.Collectors.toSet());
         for (PomEditSession.Change change : editSession.changes()) {
+            if (change.type() == PomEditSession.ChangeType.REMOVE) {
+                return false;
+            }
             if (change.type() != PomEditSession.ChangeType.ADD
                     || !"managed".equals(change.target())
                     || existingGAs.contains(change.ga())) {
