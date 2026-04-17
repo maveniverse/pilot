@@ -76,6 +76,9 @@ final class TuiTestHelper {
      * Count non-overlapping occurrences of a substring in a string.
      */
     static int countOccurrences(String text, String target) {
+        if (target.isEmpty()) {
+            return 0;
+        }
         int count = 0;
         int idx = 0;
         while ((idx = text.indexOf(target, idx)) != -1) {
