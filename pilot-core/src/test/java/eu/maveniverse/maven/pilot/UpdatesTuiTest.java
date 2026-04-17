@@ -683,7 +683,7 @@ class UpdatesTuiTest {
 
     // -- Dependencies view: left/right navigation tests --
 
-    private UpdatesTui createGroupTui(Path dir) throws IOException {
+    private UpdatesTui createGroupTui(Path dir) {
         Properties props = new Properties();
         props.setProperty("jackson.version", "2.17.0");
         PilotProject project = createProject(

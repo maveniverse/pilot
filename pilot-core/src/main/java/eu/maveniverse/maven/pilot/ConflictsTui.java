@@ -172,11 +172,11 @@ public class ConflictsTui extends ToolPanel {
         this.editSession = session;
         this.conflicts = new ArrayList<>();
         this.projectGav = projectGav;
-        this.loading = true;
         this.totalModules = projects.size();
+        this.loading = !projects.isEmpty();
         this.treeResolver = treeResolver;
         this.pendingProjects = projects;
-        this.status = "Collecting conflicts…";
+        this.status = loading ? "Collecting conflicts…" : "0 dependency group(s) with version variance";
         this.sortState = new SortState(4);
     }
 
@@ -474,12 +474,13 @@ public class ConflictsTui extends ToolPanel {
 
         for (PilotProject project : projects) {
             CompletableFuture.supplyAsync(() -> resolveModule(project, multiModule), pool)
-                    .thenAccept(localMap -> runner.runOnRenderThread(() -> mergeAndAdvance(localMap, mergedMap, pool)))
+                    .thenAccept(localMap -> runner.runOnRenderThread(() -> mergeAndAdvance(localMap, mergedMap)))
                     .exceptionally(ex -> {
-                        runner.runOnRenderThread(() -> mergeAndAdvance(Map.of(), mergedMap, pool));
+                        runner.runOnRenderThread(() -> mergeAndAdvance(Map.of(), mergedMap));
                         return null;
                     });
         }
+        pool.shutdown();
     }
 
     private Map<String, List<ConflictEntry>> resolveModule(PilotProject project, boolean multiModule) {
@@ -493,9 +494,7 @@ public class ConflictsTui extends ToolPanel {
     }
 
     private void mergeAndAdvance(
-            Map<String, List<ConflictEntry>> localMap,
-            Map<String, List<ConflictEntry>> mergedMap,
-            ExecutorService pool) {
+            Map<String, List<ConflictEntry>> localMap, Map<String, List<ConflictEntry>> mergedMap) {
         for (var entry : localMap.entrySet()) {
             mergedMap.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
         }
@@ -503,7 +502,6 @@ public class ConflictsTui extends ToolPanel {
         status = "Collecting conflicts… " + loadedCount + "/" + totalModules;
         if (loadedCount >= totalModules) {
             onCollectionComplete(mergedMap);
-            pool.shutdown();
         }
     }
 
