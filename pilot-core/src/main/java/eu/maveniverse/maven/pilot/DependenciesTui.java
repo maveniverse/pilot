@@ -306,26 +306,30 @@ public class DependenciesTui extends ToolPanel {
         if (editSession == null) return true;
         Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(java.util.stream.Collectors.toSet());
         for (PomEditSession.Change change : editSession.changes()) {
-            if (change.type() == PomEditSession.ChangeType.ADD
-                    && "managed".equals(change.target())
-                    && !existingGAs.contains(change.ga())) {
-                String[] parts = change.ga().split(":");
-                if (parts.length == 2) {
-                    String version = "";
-                    String desc = change.description();
-                    int idx = desc.indexOf("pinned to ");
-                    if (idx >= 0) version = desc.substring(idx + 10);
-                    idx = desc.indexOf("added ");
-                    if (idx >= 0) {
-                        int toIdx = desc.indexOf(" to ");
-                        if (toIdx > idx) version = desc.substring(idx + 6, toIdx);
-                    }
-                    managed.add(new ManagedEntry(parts[0], parts[1], version, "compile", "jar", "own"));
-                    existingGAs.add(change.ga());
-                }
+            if (change.type() != PomEditSession.ChangeType.ADD
+                    || !"managed".equals(change.target())
+                    || existingGAs.contains(change.ga())) {
+                continue;
+            }
+            String[] parts = change.ga().split(":");
+            if (parts.length == 2) {
+                String version = parseVersionFromDescription(change.description());
+                managed.add(new ManagedEntry(parts[0], parts[1], version, COMPILE_SCOPE, "jar", "own"));
+                existingGAs.add(change.ga());
             }
         }
         return true;
+    }
+
+    private static String parseVersionFromDescription(String desc) {
+        int idx = desc.indexOf("pinned to ");
+        if (idx >= 0) return desc.substring(idx + 10);
+        idx = desc.indexOf("added ");
+        if (idx >= 0) {
+            int toIdx = desc.indexOf(" to ");
+            if (toIdx > idx) return desc.substring(idx + 6, toIdx);
+        }
+        return "";
     }
 
     private void updateStatus() {

@@ -957,26 +957,40 @@ public class UpdatesTui extends ToolPanel {
     // -- Diff preview --
 
     private void toggleDiffView() {
-        Map<String, Map.Entry<String, String>> fileDiffs = new LinkedHashMap<>();
+        Map<Path, PomEditor> previewEditors = buildPreviewEditors();
 
-        // Build preview editors from session state (not disk)
-        Map<Path, PomEditor> previewEditors = new LinkedHashMap<>();
+        Map<String, Map.Entry<String, String>> fileDiffs;
+        if (previewEditors.isEmpty()) {
+            fileDiffs = collectAppliedDiffs();
+            if (fileDiffs.isEmpty()) {
+                status = "No updates selected";
+                return;
+            }
+        } else {
+            fileDiffs = collectPreviewDiffs(previewEditors);
+        }
 
+        long changes = diffOverlay.openMulti(fileDiffs);
+        status = changes == 0
+                ? "No changes to show"
+                : changes + " line(s) changed across " + fileDiffs.size() + " file(s)";
+    }
+
+    private Map<Path, PomEditor> buildPreviewEditors() {
+        Map<Path, PomEditor> editors = new LinkedHashMap<>();
         for (var group : reactorResult.propertyGroups) {
             if (group.selected && group.hasUpdate()) {
-                Path pomPath = group.origin.pomPath;
-                PomEditor editor = previewEditors.computeIfAbsent(pomPath, p -> {
+                PomEditor editor = editors.computeIfAbsent(group.origin.pomPath, p -> {
                     PomEditSession session = sessionProvider.apply(p);
                     return new PomEditor(Document.of(session.currentXml()));
                 });
                 editor.properties().updateProperty(true, group.propertyName, group.newestVersion);
             }
         }
-
         for (var dep : reactorResult.ungroupedDependencies) {
             if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
                 var loc = findUpdateLocation(dep);
-                PomEditor editor = previewEditors.computeIfAbsent(loc.pomPath, p -> {
+                PomEditor editor = editors.computeIfAbsent(loc.pomPath, p -> {
                     PomEditSession session = sessionProvider.apply(p);
                     return new PomEditor(Document.of(session.currentXml()));
                 });
@@ -988,32 +1002,28 @@ public class UpdatesTui extends ToolPanel {
                 }
             }
         }
+        return editors;
+    }
 
-        // If nothing selected, show diff of already-applied changes
-        if (previewEditors.isEmpty()) {
-            for (PomEditSession session : mutatedSessions) {
-                if (session.isDirty()) {
-                    fileDiffs.put(
-                            session.pomPath().toString(), Map.entry(session.originalContent(), session.currentXml()));
-                }
-            }
-            if (fileDiffs.isEmpty()) {
-                status = "No updates selected";
-                return;
-            }
-        } else {
-            for (var entry : previewEditors.entrySet()) {
-                PomEditSession session = sessionProvider.apply(entry.getKey());
-                String original = session.originalContent();
-                String modified = entry.getValue().toXml();
-                fileDiffs.put(entry.getKey().toString(), Map.entry(original, modified));
+    private Map<String, Map.Entry<String, String>> collectAppliedDiffs() {
+        Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
+        for (PomEditSession session : mutatedSessions) {
+            if (session.isDirty()) {
+                diffs.put(session.pomPath().toString(), Map.entry(session.originalContent(), session.currentXml()));
             }
         }
+        return diffs;
+    }
 
-        long changes = diffOverlay.openMulti(fileDiffs);
-        status = changes == 0
-                ? "No changes to show"
-                : changes + " line(s) changed across " + fileDiffs.size() + " file(s)";
+    private Map<String, Map.Entry<String, String>> collectPreviewDiffs(Map<Path, PomEditor> previewEditors) {
+        Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
+        for (var entry : previewEditors.entrySet()) {
+            PomEditSession session = sessionProvider.apply(entry.getKey());
+            String original = session.originalContent();
+            String modified = entry.getValue().toXml();
+            diffs.put(entry.getKey().toString(), Map.entry(original, modified));
+        }
+        return diffs;
     }
 
     // -- Apply --

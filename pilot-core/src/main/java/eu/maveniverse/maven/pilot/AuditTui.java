@@ -49,6 +49,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
@@ -223,50 +224,8 @@ public class AuditTui extends ToolPanel {
 
     private void fetchAllData() {
         for (var entry : entries) {
-            if (entry.licenseLoaded) {
-                licensesLoaded++;
-            } else {
-                CompletableFuture.supplyAsync(
-                                () -> SearchTui.fetchPomFromCentral(entry.groupId, entry.artifactId, entry.version),
-                                httpPool)
-                        .thenAccept(info -> runner.runOnRenderThread(() -> {
-                            if (info != null && info.license != null) {
-                                entry.license = info.license;
-                                entry.licenseUrl = info.licenseUrl;
-                            }
-                            entry.licenseLoaded = true;
-                            licensesLoaded++;
-                            rebuildByLicenseRows();
-                            updateStatus();
-                        }));
-            }
-
-            if (entry.vulnsLoaded) {
-                vulnsLoaded++;
-                if (entry.hasVulnerabilities()) {
-                    vulnCount += entry.vulnerabilities.size();
-                }
-            } else {
-                CompletableFuture.supplyAsync(
-                                () -> {
-                                    try {
-                                        return osvClient.query(entry.groupId, entry.artifactId, entry.version);
-                                    } catch (Exception e) {
-                                        return List.<OsvClient.Vulnerability>of();
-                                    }
-                                },
-                                httpPool)
-                        .thenAccept(vulns -> runner.runOnRenderThread(() -> {
-                            entry.vulnerabilities = vulns;
-                            entry.vulnsLoaded = true;
-                            vulnsLoaded++;
-                            if (!vulns.isEmpty()) {
-                                vulnCount += vulns.size();
-                                rebuildVulnRows();
-                            }
-                            updateStatus();
-                        }));
-            }
+            fetchLicenseForEntry(entry);
+            fetchVulnsForEntry(entry);
         }
         if (licensesLoaded > 0) {
             rebuildByLicenseRows();
@@ -275,6 +234,54 @@ public class AuditTui extends ToolPanel {
             rebuildVulnRows();
         }
         updateStatus();
+    }
+
+    private void fetchLicenseForEntry(AuditEntry entry) {
+        if (entry.licenseLoaded) {
+            licensesLoaded++;
+            return;
+        }
+        CompletableFuture.supplyAsync(
+                        () -> SearchTui.fetchPomFromCentral(entry.groupId, entry.artifactId, entry.version), httpPool)
+                .thenAccept(info -> runner.runOnRenderThread(() -> {
+                    if (info != null && info.license != null) {
+                        entry.license = info.license;
+                        entry.licenseUrl = info.licenseUrl;
+                    }
+                    entry.licenseLoaded = true;
+                    licensesLoaded++;
+                    rebuildByLicenseRows();
+                    updateStatus();
+                }));
+    }
+
+    private void fetchVulnsForEntry(AuditEntry entry) {
+        if (entry.vulnsLoaded) {
+            vulnsLoaded++;
+            if (entry.hasVulnerabilities()) {
+                vulnCount += entry.vulnerabilities.size();
+            }
+            return;
+        }
+        CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                return osvClient.query(entry.groupId, entry.artifactId, entry.version);
+                            } catch (Exception e) {
+                                return List.<OsvClient.Vulnerability>of();
+                            }
+                        },
+                        httpPool)
+                .thenAccept(vulns -> runner.runOnRenderThread(() -> {
+                    entry.vulnerabilities = vulns;
+                    entry.vulnsLoaded = true;
+                    vulnsLoaded++;
+                    if (!vulns.isEmpty()) {
+                        vulnCount += vulns.size();
+                        rebuildVulnRows();
+                    }
+                    updateStatus();
+                }));
     }
 
     void rebuildVulnRows() {
@@ -288,8 +295,18 @@ public class AuditTui extends ToolPanel {
             }
         }
 
-        // Preserve expansion state — save all known IDs and aliases for expanded groups
-        // so that re-ordering due to async loading doesn't lose the state
+        Set<String> expandedIds = collectExpandedIds();
+        vulnGroups = groupVulnsByCve(expandedIds);
+        rebuildVulnDisplayRows();
+
+        if (vulnDisplayRows.isEmpty()) {
+            vulnTableState.clearSelection();
+        } else if (vulnTableState.selected() == null || vulnTableState.selected() >= vulnDisplayRows.size()) {
+            vulnTableState.select(0);
+        }
+    }
+
+    private Set<String> collectExpandedIds() {
         var expandedIds = new HashSet<String>();
         for (var group : vulnGroups) {
             if (group.expanded) {
@@ -302,13 +319,14 @@ public class AuditTui extends ToolPanel {
                 }
             }
         }
+        return expandedIds;
+    }
 
-        // Group by CVE ID, using aliases to unify GHSA/CVE references
+    private List<VulnGroup> groupVulnsByCve(Set<String> expandedIds) {
         Map<String, VulnGroup> groupMap = new LinkedHashMap<>();
         Map<String, String> aliasToId = new HashMap<>();
         for (var vr : vulnRows) {
             String id = vr.vuln().id;
-            // Check if this vuln's ID or any alias matches an existing group
             String groupId = aliasToId.getOrDefault(id, id);
             if (vr.vuln().aliases != null) {
                 for (String alias : vr.vuln().aliases) {
@@ -332,23 +350,13 @@ public class AuditTui extends ToolPanel {
                     }
                 }
             }
-            // Avoid duplicate artifacts in the same group
             boolean alreadyPresent = group.rows.stream()
                     .anyMatch(r -> r.entry().gav().equals(vr.entry().gav()));
             if (!alreadyPresent) {
                 group.rows.add(vr);
             }
         }
-        vulnGroups = new ArrayList<>(groupMap.values());
-
-        // Build display rows
-        rebuildVulnDisplayRows();
-
-        if (vulnDisplayRows.isEmpty()) {
-            vulnTableState.clearSelection();
-        } else if (vulnTableState.selected() == null || vulnTableState.selected() >= vulnDisplayRows.size()) {
-            vulnTableState.select(0);
-        }
+        return new ArrayList<>(groupMap.values());
     }
 
     private void rebuildVulnDisplayRows() {
@@ -677,33 +685,34 @@ public class AuditTui extends ToolPanel {
 
     private AuditEntry selectedEntry() {
         return switch (view) {
-            case LICENSES -> {
-                if (licensesGrouped) {
-                    int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
-                    yield (idx >= 0
-                                    && idx < byLicenseRows.size()
-                                    && !byLicenseRows.get(idx).isGroup())
-                            ? byLicenseRows.get(idx).entry
-                            : null;
-                } else {
-                    int idx = tableState.selected() != null ? tableState.selected() : -1;
-                    yield (idx >= 0 && idx < filteredEntries.size()) ? filteredEntries.get(idx) : null;
-                }
-            }
-            case VULNERABILITIES -> {
-                int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
-                if (idx >= 0 && idx < vulnDisplayRows.size()) {
-                    var dr = vulnDisplayRows.get(idx);
-                    if (dr.row() != null) {
-                        yield dr.row().entry();
-                    }
-                    yield dr.group().rows.isEmpty()
-                            ? null
-                            : dr.group().rows.get(0).entry();
-                }
-                yield null;
-            }
+            case LICENSES -> selectedLicenseEntry();
+            case VULNERABILITIES -> selectedVulnEntry();
         };
+    }
+
+    private AuditEntry selectedLicenseEntry() {
+        if (licensesGrouped) {
+            int idx = byLicenseTableState.selected() != null ? byLicenseTableState.selected() : -1;
+            return (idx >= 0
+                            && idx < byLicenseRows.size()
+                            && !byLicenseRows.get(idx).isGroup())
+                    ? byLicenseRows.get(idx).entry
+                    : null;
+        }
+        int idx = tableState.selected() != null ? tableState.selected() : -1;
+        return (idx >= 0 && idx < filteredEntries.size()) ? filteredEntries.get(idx) : null;
+    }
+
+    private AuditEntry selectedVulnEntry() {
+        int idx = vulnTableState.selected() != null ? vulnTableState.selected() : -1;
+        if (idx >= 0 && idx < vulnDisplayRows.size()) {
+            var dr = vulnDisplayRows.get(idx);
+            if (dr.row() != null) {
+                return dr.row().entry();
+            }
+            return dr.group().rows.isEmpty() ? null : dr.group().rows.get(0).entry();
+        }
+        return null;
     }
 
     private void addManagedDependency() {
@@ -1344,49 +1353,7 @@ public class AuditTui extends ToolPanel {
 
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < vulnDisplayRows.size(); i++) {
-            var dr = vulnDisplayRows.get(i);
-            if (dr.isGroupHeader()) {
-                var group = dr.group();
-                boolean allManaged = editSession != null
-                        && group.rows.stream()
-                                .allMatch(r -> editSession.isChanged(r.entry().ga()));
-                String arrow = group.expanded ? "▾ " : "▸ ";
-                String severity = normalizeSeverity(group.severity);
-                String published = formatPublished(group.published);
-                int affected = group.rows.size();
-                String countLabel = affected > 1 ? " (" + affected + " artifacts)" : "";
-                Style style = allManaged
-                        ? Style.create().dim()
-                        : getSeverityStyle(severity).bold();
-                if (view == View.VULNERABILITIES && isSearchMatch(i)) {
-                    style = style.bg(theme.searchHighlightBg());
-                }
-                String statusIcon = allManaged ? "✓ " : "";
-                rows.add(Row.from(
-                        Cell.from(statusIcon + arrow + group.id + countLabel).style(style),
-                        Cell.from(severity).style(style),
-                        Cell.from("").style(style),
-                        Cell.from(published).style(style),
-                        Cell.from(truncateSummary(group.summary, 50)).style(style)));
-            } else {
-                var vr = dr.row();
-                boolean managed =
-                        editSession != null && editSession.isChanged(vr.entry().ga());
-                String severity = normalizeSeverity(vr.vuln().severity);
-                Style style = managed ? Style.create().dim() : getSeverityStyle(severity);
-                if (view == View.VULNERABILITIES && isSearchMatch(i)) {
-                    style = style.bg(theme.searchHighlightBg());
-                }
-                String marker = managed ? "  ✓ " : "    ";
-                rows.add(Row.from(
-                        Cell.from(marker + vr.entry().ga() + ":" + vr.entry().version)
-                                .style(style),
-                        Cell.from("").style(style),
-                        Cell.from(vr.entry().scope)
-                                .style(managed ? Style.create().dim() : getScopeStyle(vr.entry().scope)),
-                        Cell.from("").style(style),
-                        Cell.from("").style(style)));
-            }
+            rows.add(buildVulnTableRow(vulnDisplayRows.get(i), i));
         }
 
         Row header = sortState.decorateHeader(
@@ -1414,6 +1381,48 @@ public class AuditTui extends ToolPanel {
         renderVulnDetail(frame, zones.get(2));
     }
 
+    private Row buildVulnTableRow(VulnDisplayRow dr, int i) {
+        if (dr.isGroupHeader()) {
+            var group = dr.group();
+            boolean allManaged = editSession != null
+                    && group.rows.stream()
+                            .allMatch(r -> editSession.isChanged(r.entry().ga()));
+            String arrow = group.expanded ? "▾ " : "▸ ";
+            String severity = normalizeSeverity(group.severity);
+            String published = formatPublished(group.published);
+            int affected = group.rows.size();
+            String countLabel = affected > 1 ? " (" + affected + " artifacts)" : "";
+            Style style = allManaged
+                    ? Style.create().dim()
+                    : getSeverityStyle(severity).bold();
+            if (view == View.VULNERABILITIES && isSearchMatch(i)) {
+                style = style.bg(theme.searchHighlightBg());
+            }
+            String statusIcon = allManaged ? "✓ " : "";
+            return Row.from(
+                    Cell.from(statusIcon + arrow + group.id + countLabel).style(style),
+                    Cell.from(severity).style(style),
+                    Cell.from("").style(style),
+                    Cell.from(published).style(style),
+                    Cell.from(truncateSummary(group.summary, 50)).style(style));
+        }
+        var vr = dr.row();
+        boolean managed =
+                editSession != null && editSession.isChanged(vr.entry().ga());
+        String severity = normalizeSeverity(vr.vuln().severity);
+        Style style = managed ? Style.create().dim() : getSeverityStyle(severity);
+        if (view == View.VULNERABILITIES && isSearchMatch(i)) {
+            style = style.bg(theme.searchHighlightBg());
+        }
+        String marker = managed ? "  ✓ " : "    ";
+        return Row.from(
+                Cell.from(marker + vr.entry().ga() + ":" + vr.entry().version).style(style),
+                Cell.from("").style(style),
+                Cell.from(vr.entry().scope).style(managed ? Style.create().dim() : getScopeStyle(vr.entry().scope)),
+                Cell.from("").style(style),
+                Cell.from("").style(style));
+    }
+
     private void renderVulnDetail(Frame frame, Rect area) {
         Block block = Block.builder()
                 .title(" Details ")
@@ -1428,74 +1437,78 @@ public class AuditTui extends ToolPanel {
         }
 
         var dr = vulnDisplayRows.get(idx);
-        List<Line> lines = new ArrayList<>();
-
-        if (dr.isGroupHeader()) {
-            var group = dr.group();
-            String url = vulnUrl(group.id);
-            String severity = normalizeSeverity(group.severity);
-            lines.add(Line.from(
-                    Span.raw(group.id).bold().cyan().hyperlink(url),
-                    Span.raw("  "),
-                    Span.raw(severity).style(getSeverityStyle(severity).bold()),
-                    Span.raw("  " + group.rows.size() + " affected artifact(s)").fg(theme.detailSeparatorColor())));
-            lines.add(Line.from(
-                    Span.raw("↗ ").fg(theme.detailSeparatorColor()),
-                    Span.raw(url).fg(theme.linkColor()).hyperlink(url)));
-            if (group.published != null && !group.published.isEmpty()) {
-                String pub = group.published.length() > 10 ? group.published.substring(0, 10) : group.published;
-                lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
-            }
-            lines.add(Line.from(Span.raw(group.summary != null ? group.summary : "")));
-            List<Span> artifacts = new ArrayList<>();
-            artifacts.add(Span.raw("Artifacts: ").fg(theme.detailSeparatorColor()));
-            for (int i = 0; i < group.rows.size(); i++) {
-                if (i > 0) artifacts.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
-                var r = group.rows.get(i);
-                artifacts.add(Span.raw(r.entry().ga() + ":" + r.entry().version));
-            }
-            lines.add(Line.from(artifacts));
-        } else {
-            var vr = dr.row();
-            var vuln = vr.vuln();
-            String url = vulnUrl(vuln.id);
-            String severity = normalizeSeverity(vuln.severity);
-            String centralUrl = centralUrl(vr.entry().groupId, vr.entry().artifactId);
-            lines.add(Line.from(
-                    Span.raw(vuln.id).bold().cyan().hyperlink(url),
-                    Span.raw("  "),
-                    Span.raw(severity).style(getSeverityStyle(severity).bold()),
-                    Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY),
-                    Span.raw(vr.entry().scope).style(getScopeStyle(vr.entry().scope)),
-                    Span.raw("  "),
-                    Span.raw(vr.entry().ga() + ":" + vr.entry().version)
-                            .fg(theme.detailSeparatorColor())
-                            .hyperlink(centralUrl)));
-            lines.add(Line.from(
-                    Span.raw("↗ ").fg(theme.detailSeparatorColor()),
-                    Span.raw(url).fg(theme.linkColor()).hyperlink(url)));
-            if (!vuln.aliases.isEmpty()) {
-                List<Span> aliasSpans = new ArrayList<>();
-                aliasSpans.add(Span.raw("Aliases: ").fg(theme.detailSeparatorColor()));
-                for (int i = 0; i < vuln.aliases.size(); i++) {
-                    if (i > 0) aliasSpans.add(Span.raw(", "));
-                    String alias = vuln.aliases.get(i);
-                    aliasSpans.add(Span.raw(alias).hyperlink(vulnUrl(alias)));
-                }
-                lines.add(Line.from(aliasSpans));
-            }
-            if (vuln.published != null && !vuln.published.isEmpty()) {
-                String pub = vuln.published.length() > 10 ? vuln.published.substring(0, 10) : vuln.published;
-                lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
-            }
-            lines.add(Line.from(Span.raw(vuln.summary != null ? vuln.summary : "")));
-            Line modulesLine = buildModulesLine(vr.entry());
-            if (modulesLine != null) lines.add(modulesLine);
-        }
+        List<Line> lines = dr.isGroupHeader() ? buildGroupDetailLines(dr.group()) : buildArtifactDetailLines(dr.row());
 
         Paragraph detail =
                 Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(detail, area);
+    }
+
+    private List<Line> buildGroupDetailLines(VulnGroup group) {
+        List<Line> lines = new ArrayList<>();
+        String url = vulnUrl(group.id);
+        String severity = normalizeSeverity(group.severity);
+        lines.add(Line.from(
+                Span.raw(group.id).bold().cyan().hyperlink(url),
+                Span.raw("  "),
+                Span.raw(severity).style(getSeverityStyle(severity).bold()),
+                Span.raw("  " + group.rows.size() + " affected artifact(s)").fg(theme.detailSeparatorColor())));
+        lines.add(Line.from(
+                Span.raw("↗ ").fg(theme.detailSeparatorColor()),
+                Span.raw(url).fg(theme.linkColor()).hyperlink(url)));
+        if (group.published != null && !group.published.isEmpty()) {
+            String pub = group.published.length() > 10 ? group.published.substring(0, 10) : group.published;
+            lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
+        }
+        lines.add(Line.from(Span.raw(group.summary != null ? group.summary : "")));
+        List<Span> artifacts = new ArrayList<>();
+        artifacts.add(Span.raw("Artifacts: ").fg(theme.detailSeparatorColor()));
+        for (int i = 0; i < group.rows.size(); i++) {
+            if (i > 0) artifacts.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
+            var r = group.rows.get(i);
+            artifacts.add(Span.raw(r.entry().ga() + ":" + r.entry().version));
+        }
+        lines.add(Line.from(artifacts));
+        return lines;
+    }
+
+    private List<Line> buildArtifactDetailLines(VulnRow vr) {
+        List<Line> lines = new ArrayList<>();
+        var vuln = vr.vuln();
+        String url = vulnUrl(vuln.id);
+        String severity = normalizeSeverity(vuln.severity);
+        String cUrl = centralUrl(vr.entry().groupId, vr.entry().artifactId);
+        lines.add(Line.from(
+                Span.raw(vuln.id).bold().cyan().hyperlink(url),
+                Span.raw("  "),
+                Span.raw(severity).style(getSeverityStyle(severity).bold()),
+                Span.raw(LABEL_SCOPE).fg(Color.DARK_GRAY),
+                Span.raw(vr.entry().scope).style(getScopeStyle(vr.entry().scope)),
+                Span.raw("  "),
+                Span.raw(vr.entry().ga() + ":" + vr.entry().version)
+                        .fg(theme.detailSeparatorColor())
+                        .hyperlink(cUrl)));
+        lines.add(Line.from(
+                Span.raw("↗ ").fg(theme.detailSeparatorColor()),
+                Span.raw(url).fg(theme.linkColor()).hyperlink(url)));
+        if (!vuln.aliases.isEmpty()) {
+            List<Span> aliasSpans = new ArrayList<>();
+            aliasSpans.add(Span.raw("Aliases: ").fg(theme.detailSeparatorColor()));
+            for (int i = 0; i < vuln.aliases.size(); i++) {
+                if (i > 0) aliasSpans.add(Span.raw(", "));
+                String alias = vuln.aliases.get(i);
+                aliasSpans.add(Span.raw(alias).hyperlink(vulnUrl(alias)));
+            }
+            lines.add(Line.from(aliasSpans));
+        }
+        if (vuln.published != null && !vuln.published.isEmpty()) {
+            String pub = vuln.published.length() > 10 ? vuln.published.substring(0, 10) : vuln.published;
+            lines.add(Line.from(Span.raw("Published: ").fg(theme.detailSeparatorColor()), Span.raw(pub)));
+        }
+        lines.add(Line.from(Span.raw(vuln.summary != null ? vuln.summary : "")));
+        Line modulesLine = buildModulesLine(vr.entry());
+        if (modulesLine != null) lines.add(modulesLine);
+        return lines;
     }
 
     private static String centralUrl(String groupId, String artifactId) {
