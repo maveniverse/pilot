@@ -11,11 +11,7 @@ Use `./mvnw` instead of `mvn` for all Maven commands. Always add `-B` (batch mod
 
 ## Run CLI
 
-After packaging (`./mvnw package -B -DskipTests`), run the CLI with:
-
-```bash
-java -jar "$(ls -t "$(pwd)"/pilot-cli/target/pilot-cli-*-SNAPSHOT.jar | head -1)"
-```
+After packaging (`./mvnw package -B -DskipTests`), compute the full absolute path to the pilot-cli jar (matching `pilot-cli/target/pilot-cli-*-SNAPSHOT.jar` under the project root) and give the `java -jar <path>` command to the user so they can run it from any directory.
 
 ## After Creating a PR
 
