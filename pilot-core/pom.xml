@@ -47,6 +47,10 @@ under the License.
     </dependency>
     <dependency>
       <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-panama-backend</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
       <artifactId>tamboui-jline3-backend</artifactId>
     </dependency>
 

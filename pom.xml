@@ -96,6 +96,11 @@ under the License.
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-panama-backend</artifactId>
+        <version>${tamboui.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-jline3-backend</artifactId>
         <version>${tamboui.version}</version>
       </dependency>

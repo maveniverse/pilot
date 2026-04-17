@@ -188,11 +188,30 @@ public abstract class ToolPanel {
     abstract void renderStandalone(Frame frame);
 
     /**
+     * Configure the TamboUI backend based on the runtime environment.
+     * In mvnd, the daemon process has no real TTY so the Panama backend's native
+     * ioctl() calls fail and corrupt stdin — we must use the JLine backend instead.
+     * For direct Maven (including Maven 4 which bundles JLine), Panama avoids
+     * classloader conflicts with Maven's own JLine.
+     */
+    static void configureBackend() {
+        if (System.getProperty("tamboui.backend") != null) {
+            return; // user has explicitly configured the backend
+        }
+        if (System.getProperty("mvnd.home") != null) {
+            System.setProperty("tamboui.backend", "jline3");
+        } else {
+            System.setProperty("tamboui.backend", "panama,jline3");
+        }
+    }
+
+    /**
      * Run this panel as a standalone TUI (outside of PilotShell).
      * Creates a {@link TuiRunner}, wires up event handling and rendering,
      * and blocks until the user quits.
      */
     public void runStandalone() throws Exception {
+        configureBackend();
         TuiRunner.ConfiguredRunner configured = TuiRunner.builder()
                 .eventHandler(this::handleEvent)
                 .renderer(this::renderStandalone)
