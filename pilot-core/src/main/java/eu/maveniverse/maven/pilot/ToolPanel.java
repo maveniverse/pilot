@@ -65,6 +65,21 @@ public abstract class ToolPanel {
     /** Shared POM edit session, or null for read-only tools. */
     protected PomEditSession editSession;
 
+    /** Mutation count snapshot when this panel was last built/refreshed. */
+    int lastSeenMutationCount;
+
+    /**
+     * Called when the panel is activated and the shared session has been mutated
+     * since this panel was last seen. Panels can override this to refresh their
+     * data models without a full rebuild.
+     *
+     * @return {@code true} if the panel handled the change (re-render is enough),
+     *         {@code false} if the panel must be fully rebuilt (cache invalidated)
+     */
+    boolean onSessionChanged() {
+        return true;
+    }
+
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 

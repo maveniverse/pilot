@@ -139,6 +139,7 @@ public class UpdatesTui extends ToolPanel {
     Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
     private final DiffOverlay diffOverlay = new DiffOverlay();
+    private final Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
     private final TableState detailTableState = new TableState();
     boolean showDetails = true;
     private int lastContentHeight;
@@ -148,6 +149,7 @@ public class UpdatesTui extends ToolPanel {
     int failedCount = 0;
     int dateFetchesPending;
     boolean datesLoading;
+    private boolean pendingQuit;
 
     /**
      * Standalone constructor — creates a local session cache.
@@ -184,6 +186,25 @@ public class UpdatesTui extends ToolPanel {
     private static Function<Path, PomEditSession> defaultSessionProvider() {
         Map<String, PomEditSession> localCache = new ConcurrentHashMap<>();
         return path -> localCache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
+    }
+
+    @Override
+    boolean isDirty() {
+        return mutatedSessions.stream().anyMatch(PomEditSession::isDirty);
+    }
+
+    @Override
+    boolean save() {
+        for (PomEditSession session : mutatedSessions) {
+            if (session.isDirty()) {
+                PomEditSession.SaveResult result = session.save();
+                if (!result.success()) {
+                    status = result.message();
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // -- Version resolution --
@@ -611,6 +632,20 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
 
+        // Pending quit confirmation
+        if (pendingQuit) {
+            if (key.isCharIgnoreCase('y')) {
+                if (save()) runner.quit();
+                else pendingQuit = false;
+            } else if (key.isCharIgnoreCase('n')) {
+                runner.quit();
+            } else if (key.isKey(KeyCode.ESCAPE)) {
+                pendingQuit = false;
+                status = "";
+            }
+            return true;
+        }
+
         // Diff overlay in standalone — allow q to quit
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE)) {
@@ -619,7 +654,7 @@ public class UpdatesTui extends ToolPanel {
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
-                runner.quit();
+                requestQuit();
                 return true;
             }
             return false;
@@ -629,14 +664,14 @@ public class UpdatesTui extends ToolPanel {
         if (helpOverlay.isActive()) {
             if (helpOverlay.handleKey(key)) return true;
             if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
-                runner.quit();
+                requestQuit();
                 return true;
             }
             return false;
         }
 
         if (key.isCtrlC()) {
-            runner.quit();
+            requestQuit();
             return true;
         }
 
@@ -653,7 +688,7 @@ public class UpdatesTui extends ToolPanel {
 
         // Standalone-specific keys
         if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
-            runner.quit();
+            requestQuit();
             return true;
         }
 
@@ -865,6 +900,7 @@ public class UpdatesTui extends ToolPanel {
         var row = displayRows.get(sel);
         if (row.isGroupHeader()) {
             var group = row.propertyGroup;
+            if (group.applied) return;
             boolean newState = !group.selected;
             group.selected = newState;
             for (var dep : group.dependencies) {
@@ -872,6 +908,7 @@ public class UpdatesTui extends ToolPanel {
             }
         } else if (row.dependency != null && row.dependency.hasUpdate()) {
             var dep = row.dependency;
+            if (dep.applied) return;
             boolean newState = !dep.selected;
             dep.selected = newState;
             // If part of a property group, toggle the whole group
@@ -891,12 +928,15 @@ public class UpdatesTui extends ToolPanel {
 
     private void selectAll() {
         for (var row : displayRows) {
-            if (row.isGroupHeader() && row.propertyGroup.hasUpdate()) {
+            if (row.isGroupHeader() && row.propertyGroup.hasUpdate() && !row.propertyGroup.applied) {
                 row.propertyGroup.selected = true;
                 for (var dep : row.propertyGroup.dependencies) {
                     dep.selected = true;
                 }
-            } else if (row.dependency != null && !row.dependency.isPropertyManaged() && row.dependency.hasUpdate()) {
+            } else if (row.dependency != null
+                    && !row.dependency.isPropertyManaged()
+                    && row.dependency.hasUpdate()
+                    && !row.dependency.applied) {
                 row.dependency.selected = true;
             }
         }
@@ -949,16 +989,25 @@ public class UpdatesTui extends ToolPanel {
             }
         }
 
+        // If nothing selected, show diff of already-applied changes
         if (previewEditors.isEmpty()) {
-            status = "No updates selected";
-            return;
-        }
-
-        for (var entry : previewEditors.entrySet()) {
-            PomEditSession session = sessionProvider.apply(entry.getKey());
-            String original = session.originalContent();
-            String modified = entry.getValue().toXml();
-            fileDiffs.put(entry.getKey().toString(), Map.entry(original, modified));
+            for (PomEditSession session : mutatedSessions) {
+                if (session.isDirty()) {
+                    fileDiffs.put(
+                            session.pomPath().toString(), Map.entry(session.originalContent(), session.currentXml()));
+                }
+            }
+            if (fileDiffs.isEmpty()) {
+                status = "No updates selected";
+                return;
+            }
+        } else {
+            for (var entry : previewEditors.entrySet()) {
+                PomEditSession session = sessionProvider.apply(entry.getKey());
+                String original = session.originalContent();
+                String modified = entry.getValue().toXml();
+                fileDiffs.put(entry.getKey().toString(), Map.entry(original, modified));
+            }
         }
 
         long changes = diffOverlay.openMulti(fileDiffs);
@@ -1047,28 +1096,31 @@ public class UpdatesTui extends ToolPanel {
         return count;
     }
 
-    private void clearAppliedUpdates() {
+    private void markAppliedUpdates() {
         for (var group : reactorResult.propertyGroups) {
             if (group.selected && group.hasUpdate()) {
-                group.resolvedVersion = group.newestVersion;
-                group.newestVersion = null;
+                group.applied = true;
                 group.selected = false;
-                group.updateType = null;
                 for (var dep : group.dependencies) {
-                    dep.primaryVersion = group.resolvedVersion;
-                    dep.newestVersion = null;
+                    dep.applied = true;
                     dep.selected = false;
-                    dep.updateType = null;
                 }
             }
         }
         for (var dep : reactorResult.ungroupedDependencies) {
             if (dep.selected && dep.hasUpdate()) {
-                dep.primaryVersion = dep.newestVersion;
-                dep.newestVersion = null;
+                dep.applied = true;
                 dep.selected = false;
-                dep.updateType = null;
             }
+        }
+    }
+
+    private void requestQuit() {
+        if (isDirty()) {
+            pendingQuit = true;
+            status = "Save changes to POM? (y/n/Esc)";
+        } else {
+            runner.quit();
         }
     }
 
@@ -1097,22 +1149,11 @@ public class UpdatesTui extends ToolPanel {
             int totalUpdates = applyPropertyChanges(propertyUpdates, sessions);
             totalUpdates += applyDependencyChanges(depUpdates, sessions);
 
-            // Save all modified sessions
-            int updatedFiles = 0;
-            for (PomEditSession session : sessions.values()) {
-                PomEditSession.SaveResult result = session.save();
-                if (result.success()) {
-                    updatedFiles++;
-                } else {
-                    status = result.message();
-                    return;
-                }
-            }
-
-            clearAppliedUpdates();
+            mutatedSessions.addAll(sessions.values());
+            markAppliedUpdates();
             updateReactorCounts();
             buildDisplayRows();
-            status = "Applied " + totalUpdates + " update(s) to " + updatedFiles + " POM file(s)";
+            status = "Applied " + totalUpdates + " update(s) — save on exit";
         } catch (Exception e) {
             status = "Failed to apply: " + e.getMessage();
         }
@@ -1238,7 +1279,7 @@ public class UpdatesTui extends ToolPanel {
 
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
-        String check = group.selected ? "[✓]" : "[ ]";
+        String check = group.applied ? "[·]" : (group.selected ? "[✓]" : "[ ]");
         String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
@@ -1250,7 +1291,7 @@ public class UpdatesTui extends ToolPanel {
         String age = formatAge(group.libYears, group.hasUpdate());
         String info = singleModule ? "" : group.totalModuleCount() + " mod";
 
-        Style style = updateTypeStyle(group.updateType);
+        Style style = group.applied ? Style.create().dim() : updateTypeStyle(group.updateType);
         if (highlight) style = style.bg(theme.searchHighlightBg());
         return Row.from(check, name, current, arrow, available, type, age, info).style(style);
     }
@@ -1266,21 +1307,21 @@ public class UpdatesTui extends ToolPanel {
     private Row createGroupedDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
         String check = "   ";
         String ga = "  ↳ " + dep.artifactId;
-        Style style = Style.create();
+        Style style = dep.applied ? Style.create().dim() : Style.create();
         if (highlight) style = style.bg(theme.searchHighlightBg());
         String info = buildModuleInfo(dep);
         return Row.from(check, ga, "", "", "", "", "", info).style(style);
     }
 
     private Row createStandaloneDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
-        String check = dep.selected ? "[✓]" : "[ ]";
+        String check = dep.applied ? "[·]" : (dep.selected ? "[✓]" : "[ ]");
         String ga = dep.artifactId;
         String current = dep.primaryVersion != null ? dep.primaryVersion : "";
         String arrow = dep.hasUpdate() ? "→" : "";
         String available = dep.hasUpdate() ? dep.newestVersion : "";
         String type = updateTypeLabel(dep.updateType);
         String age = formatAge(dep.libYears, dep.hasUpdate());
-        Style style = updateTypeStyle(dep.updateType);
+        Style style = dep.applied ? Style.create().dim() : updateTypeStyle(dep.updateType);
         if (highlight) style = style.bg(theme.searchHighlightBg());
         String info = buildModuleInfo(dep);
         return Row.from(check, ga, current, arrow, available, type, age, info).style(style);
@@ -1521,9 +1562,14 @@ public class UpdatesTui extends ToolPanel {
         long selectedCount = reactorResult.allDependencies.stream()
                 .filter(d -> d.selected && d.hasUpdate())
                 .count();
+        long appliedCount =
+                reactorResult.allDependencies.stream().filter(d -> d.applied).count();
         if (selectedCount > 0) {
             statusSpans.add(
                     Span.raw("  " + selectedCount + " update(s) selected").fg(theme.selectedCountColor()));
+        }
+        if (appliedCount > 0) {
+            statusSpans.add(Span.raw("  " + appliedCount + " applied").dim());
         }
         frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
 

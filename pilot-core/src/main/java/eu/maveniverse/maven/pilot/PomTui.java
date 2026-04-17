@@ -51,6 +51,11 @@ import java.util.Map;
  */
 public class PomTui extends ToolPanel {
 
+    @Override
+    boolean onSessionChanged() {
+        return false;
+    }
+
     private enum View {
         RAW,
         EFFECTIVE

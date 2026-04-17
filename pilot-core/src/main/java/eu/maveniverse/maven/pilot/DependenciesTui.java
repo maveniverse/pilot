@@ -301,6 +301,33 @@ public class DependenciesTui extends ToolPanel {
         }
     }
 
+    @Override
+    boolean onSessionChanged() {
+        if (editSession == null) return true;
+        Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(java.util.stream.Collectors.toSet());
+        for (PomEditSession.Change change : editSession.changes()) {
+            if (change.type() == PomEditSession.ChangeType.ADD
+                    && "managed".equals(change.target())
+                    && !existingGAs.contains(change.ga())) {
+                String[] parts = change.ga().split(":");
+                if (parts.length == 2) {
+                    String version = "";
+                    String desc = change.description();
+                    int idx = desc.indexOf("pinned to ");
+                    if (idx >= 0) version = desc.substring(idx + 10);
+                    idx = desc.indexOf("added ");
+                    if (idx >= 0) {
+                        int toIdx = desc.indexOf(" to ");
+                        if (toIdx > idx) version = desc.substring(idx + 6, toIdx);
+                    }
+                    managed.add(new ManagedEntry(parts[0], parts[1], version, "compile", "jar", "own"));
+                    existingGAs.add(change.ga());
+                }
+            }
+        }
+        return true;
+    }
+
     private void updateStatus() {
         if (bytecodeAnalyzed) {
             long unused = declared.stream()
@@ -1083,7 +1110,8 @@ public class DependenciesTui extends ToolPanel {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < managed.size(); i++) {
             ManagedEntry e = managed.get(i);
-            String icon = e.isBom ? "B" : " ";
+            boolean changed = editSession != null && editSession.isChanged(e.ga());
+            String icon = changed ? "✓" : (e.isBom ? "B" : " ");
             String typeLabel = e.isBom ? "bom" : e.scope;
             Style rowStyle = "inherited".equals(e.source) ? Style.create().dim() : Style.create();
             if (isSearchMatch(i)) {

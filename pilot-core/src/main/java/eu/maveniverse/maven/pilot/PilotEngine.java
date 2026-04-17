@@ -44,6 +44,7 @@ public class PilotEngine {
     private final List<PilotProject> allProjects;
     private final String scope;
     private final Map<String, DependencyTreeModel> treeCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, AuditTui.AuditEntry> auditEntryCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public PilotEngine(PilotResolver resolver, List<PilotProject> allProjects, String scope) {
         this.resolver = resolver;
@@ -86,7 +87,7 @@ public class PilotEngine {
             case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
             case "align" -> createAlignPanel(proj, projects);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
-            case "pom" -> createPomPanel(proj);
+            case "pom" -> createPomPanel(proj, session);
             case "search" -> createSearchPanel();
             default -> null;
         };
@@ -240,8 +241,8 @@ public class PilotEngine {
         }
     }
 
-    private ToolPanel createPomPanel(PilotProject proj) throws Exception {
-        String rawPom = Files.readString(proj.pomPath);
+    private ToolPanel createPomPanel(PilotProject proj, PomEditSession session) throws Exception {
+        String rawPom = (session != null && session.isDirty()) ? session.currentXml() : Files.readString(proj.pomPath);
         String effectivePom = resolver.effectivePom(proj);
         XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
 
@@ -334,7 +335,7 @@ public class PilotEngine {
         return projects.get(0);
     }
 
-    private static void collectAuditNode(
+    private void collectAuditNode(
             DependencyTreeModel.TreeNode node,
             Map<String, AuditTui.AuditEntry> entryMap,
             String moduleName,
@@ -342,7 +343,9 @@ public class PilotEngine {
         if (!isRoot) {
             String gav = node.ga() + ":" + node.version;
             AuditTui.AuditEntry entry = entryMap.computeIfAbsent(
-                    gav, k -> new AuditTui.AuditEntry(node.groupId, node.artifactId, node.version, node.scope));
+                    gav,
+                    k -> auditEntryCache.computeIfAbsent(
+                            k, kk -> new AuditTui.AuditEntry(node.groupId, node.artifactId, node.version, node.scope)));
             if (moduleName != null && !entry.modules.contains(moduleName)) {
                 entry.modules.add(moduleName);
             }

@@ -599,9 +599,18 @@ public class PilotShell {
         if (cached == null) {
             return false;
         }
+        // Check if the session has been mutated since this panel was cached
+        PomEditSession session = currentSession();
+        if (session != null && session.mutationCount() != cached.lastSeenMutationCount) {
+            cached.lastSeenMutationCount = session.mutationCount();
+            if (!cached.onSessionChanged()) {
+                panelCache.remove(cacheKey);
+                return false;
+            }
+        }
         activePanel = cached;
-        // Restore sub-view to keep navigation homogeneous across modules
-        if (currentSubView < activePanel.subViewCount()) {
+        activePanel.setFocused(focus == Focus.CONTENT);
+        if (currentSubView < activePanel.subViewCount() && currentSubView != activePanel.activeSubView()) {
             activePanel.setActiveSubView(currentSubView);
         }
         loadingCacheKey = null;
@@ -640,6 +649,10 @@ public class PilotShell {
 
     private void onPanelLoaded(String cacheKey, ToolPanel panel, int subView) {
         panel.setRunner(runner);
+        PomEditSession session = currentSession();
+        if (session != null) {
+            panel.lastSeenMutationCount = session.mutationCount();
+        }
         panelCache.put(cacheKey, panel);
         runningTasks.remove(cacheKey);
         // Only set active if still waiting for this panel

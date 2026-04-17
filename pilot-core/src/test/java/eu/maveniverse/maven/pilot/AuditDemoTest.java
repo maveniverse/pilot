@@ -74,16 +74,7 @@ class AuditDemoTest {
             // Initial view: Licenses tab active
             String rendered = renderToText(tui::renderStandalone);
             assertThat(rendered).contains("\u25B8 Licenses");
-            assertThat(rendered).doesNotContain("\u25B8 By License");
             assertThat(rendered).doesNotContain("\u25B8 Vulnerabilities");
-
-            // Switch to By License view
-            pilot.press(KeyCode.TAB);
-            pilot.pause();
-
-            rendered = renderToText(tui::renderStandalone);
-            assertThat(rendered).contains("\u25B8 By License");
-            assertThat(rendered).doesNotContain("\u25B8 Licenses");
 
             // Switch to Vulnerabilities view
             pilot.press(KeyCode.TAB);
@@ -91,7 +82,7 @@ class AuditDemoTest {
 
             rendered = renderToText(tui::renderStandalone);
             assertThat(rendered).contains("\u25B8 Vulnerabilities");
-            assertThat(rendered).doesNotContain("\u25B8 By License");
+            assertThat(rendered).doesNotContain("\u25B8 Licenses");
 
             // Switch back to Licenses view
             pilot.press(KeyCode.TAB);
@@ -119,14 +110,14 @@ class AuditDemoTest {
             // Verify tab bar renders even with empty data
             String rendered = renderToText(tui::renderStandalone);
             assertThat(rendered).contains("\u25B8 Licenses");
-            assertThat(rendered).doesNotContain("\u25B8 By License");
+            assertThat(rendered).doesNotContain("\u25B8 Vulnerabilities");
 
             // Switch views on empty data
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
             rendered = renderToText(tui::renderStandalone);
-            assertThat(rendered).contains("\u25B8 By License");
+            assertThat(rendered).contains("\u25B8 Vulnerabilities");
             assertThat(rendered).doesNotContain("\u25B8 Licenses");
 
             pilot.press('q');
