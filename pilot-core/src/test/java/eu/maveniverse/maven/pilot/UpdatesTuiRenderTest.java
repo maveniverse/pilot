@@ -137,7 +137,7 @@ class UpdatesTuiRenderTest {
                     d.newestVersion = "6.0.0";
                     d.updateType = VersionComparator.UpdateType.MAJOR;
                 }
-                default -> {}
+                default -> {} // other deps don't need updates for these tests
             }
         }
 
@@ -172,27 +172,16 @@ class UpdatesTuiRenderTest {
     }
 
     @Test
-    void renderShowsProjectGavInHeader() throws Exception {
+    void renderShowsHeaderStatusAndNoFilterByDefault() throws Exception {
         var tui = createTuiWithUpdates();
         String output = render(tui::renderStandalone);
 
-        assertThat(output).contains("com.example:demo:1.0.0");
-    }
-
-    @Test
-    void renderShowsUpdateCountInStatus() throws Exception {
-        var tui = createTuiWithUpdates();
-        String output = render(tui::renderStandalone);
-
-        assertThat(output).contains("3 update(s) available");
-    }
-
-    @Test
-    void renderShowsNoFilterLabelByDefault() throws Exception {
-        var tui = createTuiWithUpdates();
-        String output = render(tui::renderStandalone);
-
-        assertThat(output).doesNotContain("[PATCH]").doesNotContain("[MINOR]").doesNotContain("[MAJOR]");
+        assertThat(output)
+                .contains("com.example:demo:1.0.0")
+                .contains("3 update(s) available")
+                .doesNotContain("[PATCH]")
+                .doesNotContain("[MINOR]")
+                .doesNotContain("[MAJOR]");
     }
 
     @Test
