@@ -260,8 +260,7 @@ public class PilotShell {
         if (helpOverlay.isAnimating()) return true;
         // Panel loading in progress
         if (panelLoadingStatus != null) return true;
-        if (loadingStatusSupplier != null && loadingStatusSupplier.get() != null) return true;
-        return false;
+        return loadingStatusSupplier != null && loadingStatusSupplier.get() != null;
     }
 
     private boolean handleKeyEvent(KeyEvent key) {
