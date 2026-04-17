@@ -330,6 +330,10 @@ public class AuditTui extends ToolPanel {
             VulnGroup group = groupMap.get(groupId);
             if (group == null) {
                 group = createVulnGroup(vr, groupId, expandedIds, aliasToId, groupMap);
+            } else if (vr.vuln().aliases != null) {
+                for (String alias : vr.vuln().aliases) {
+                    aliasToId.putIfAbsent(alias, groupId);
+                }
             }
             boolean alreadyPresent = group.rows.stream()
                     .anyMatch(r -> r.entry().gav().equals(vr.entry().gav()));
@@ -1058,8 +1062,8 @@ public class AuditTui extends ToolPanel {
                         }
                     }
                 } else {
-                    for (int i = 0; i < entries.size(); i++) {
-                        if (auditEntryMatchesSearch(entries.get(i), query)) {
+                    for (int i = 0; i < filteredEntries.size(); i++) {
+                        if (auditEntryMatchesSearch(filteredEntries.get(i), query)) {
                             searchMatches.add(i);
                         }
                     }
@@ -1071,14 +1075,15 @@ public class AuditTui extends ToolPanel {
                     if (dr.isGroupHeader()) {
                         var g = dr.group();
                         if (g.id.toLowerCase().contains(query)
-                                || g.summary.toLowerCase().contains(query)) {
+                                || (g.summary != null && g.summary.toLowerCase().contains(query))) {
                             searchMatches.add(i);
                         }
                     } else {
                         var vr = dr.row();
                         if (auditEntryMatchesSearch(vr.entry(), query)
                                 || vr.vuln().id.toLowerCase().contains(query)
-                                || vr.vuln().summary.toLowerCase().contains(query)) {
+                                || (vr.vuln().summary != null
+                                        && vr.vuln().summary.toLowerCase().contains(query))) {
                             searchMatches.add(i);
                         }
                     }

@@ -641,7 +641,7 @@ public class UpdatesTui extends ToolPanel {
                 runner.quit();
             } else if (key.isKey(KeyCode.ESCAPE)) {
                 pendingQuit = false;
-                status = "";
+                updateStatusIfDone();
             }
             return true;
         }
