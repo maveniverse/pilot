@@ -532,7 +532,6 @@ class AuditTuiTest {
 
             // Navigate to Vulnerabilities tab
             pilot.press(KeyCode.TAB);
-            pilot.press(KeyCode.TAB);
             pilot.pause();
 
             // Exercise detail pane rendering with the published date
@@ -560,7 +559,6 @@ class AuditTuiTest {
 
             // Navigate to Vulnerabilities tab — should not crash with null date
             pilot.press(KeyCode.TAB);
-            pilot.press(KeyCode.TAB);
             pilot.pause();
 
             // Exercise detail pane rendering — should not crash with null date
@@ -587,7 +585,6 @@ class AuditTuiTest {
             var pilot = testRunner.pilot();
 
             // Navigate to Vulnerabilities tab and select the entry to render detail pane
-            pilot.press(KeyCode.TAB);
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
@@ -652,8 +649,7 @@ class AuditTuiTest {
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(120, 30))) {
             var pilot = testRunner.pilot();
 
-            // Navigate to Vulnerabilities tab (Tab -> By License, Tab -> Vulnerabilities)
-            pilot.press(KeyCode.TAB);
+            // Navigate to Vulnerabilities tab
             pilot.press(KeyCode.TAB);
             pilot.pause();
 
@@ -699,7 +695,6 @@ class AuditTuiTest {
             pilot.pause();
 
             // Also test filtering on the vulnerabilities tab
-            pilot.press(KeyCode.TAB);
             pilot.press(KeyCode.TAB);
             pilot.press('s'); // compile — only CVE-2024-0002 visible
             pilot.pause();

@@ -714,13 +714,19 @@ public class ConflictsTui extends ToolPanel {
 
         List<Row> rows = new ArrayList<>();
         for (var group : displayed) {
-            String icon = group.hasConflict() ? "⚠" : "✓";
+            boolean pinned = editSession != null && editSession.isChanged(group.ga);
+            String icon;
+            if (pinned || !group.hasConflict()) {
+                icon = "✓";
+            } else {
+                icon = "⚠";
+            }
             String versions = group.entries.stream()
                     .map(e -> e.requestedVersion)
                     .distinct()
                     .collect(Collectors.joining(", "));
 
-            Style style = group.hasConflict() ? Style.create() : Style.create().dim();
+            Style style = (pinned || !group.hasConflict()) ? Style.create().dim() : Style.create();
 
             rows.add(Row.from(icon, group.ga, group.resolvedVersion(), versions).style(style));
         }

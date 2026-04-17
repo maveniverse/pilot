@@ -383,23 +383,23 @@ class UpdatesTuiRenderTest {
     }
 
     @Test
-    void applyUpdatesRemovesAppliedDep() throws Exception {
+    void applyUpdatesShowsAppliedMarker() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofChar(' '), null); // select first dep
         tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).doesNotContain("guava").contains("slf4j-api");
+        assertThat(output).contains("guava").contains("[·]").contains("slf4j-api");
     }
 
     @Test
-    void applyAllUpdatesShowsEmptyMessage() throws Exception {
+    void applyAllUpdatesShowsAllApplied() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofChar('a'), null); // select all
         tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("No updates available");
+        assertThat(output).contains("[·]").contains("applied");
     }
 
     // ── Diff overlay ───────────────────────────────────────────────────────

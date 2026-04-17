@@ -57,6 +57,7 @@ public class PomEditSession {
     private PomEditor editor;
     private final List<Change> changes = new ArrayList<>();
     private final Deque<String> undoStack = new ArrayDeque<>();
+    private int mutationCount;
 
     PomEditSession(Path pomPath) {
         this.pomPath = pomPath;
@@ -107,6 +108,11 @@ public class PomEditSession {
      */
     void recordChange(ChangeType type, String target, String ga, String description, String tool) {
         changes.add(new Change(type, target, ga, description, tool));
+        mutationCount++;
+    }
+
+    int mutationCount() {
+        return mutationCount;
     }
 
     List<Change> changes() {
@@ -208,6 +214,7 @@ public class PomEditSession {
         if (!changes.isEmpty()) {
             changes.remove(changes.size() - 1);
         }
+        mutationCount++;
         return true;
     }
 
@@ -218,5 +225,6 @@ public class PomEditSession {
         editor = new PomEditor(Document.of(originalContent));
         changes.clear();
         undoStack.clear();
+        mutationCount++;
     }
 }
