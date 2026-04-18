@@ -168,91 +168,88 @@ public class PilotEngine {
         int modulesSkipped = 0;
 
         for (PilotProject p : projects) {
-            Path classesDir = p.outputDirectory;
-            Path testClassesDir = p.testOutputDirectory;
-            if (classesDir == null || !Files.isDirectory(classesDir)) {
+            if (p.outputDirectory == null || !Files.isDirectory(p.outputDirectory)) {
                 modulesSkipped++;
                 continue;
             }
             modulesScanned++;
             progress.accept("Analyzing dependencies… " + modulesScanned + "/" + projects.size() + "\n" + p.artifactId);
-
-            Set<String> declaredGAs = new HashSet<>();
-            List<DependenciesTui.DepEntry> declared = new ArrayList<>();
-            for (PilotProject.Dep dep : p.dependencies) {
-                DependenciesTui.addDeclaredEntry(
-                        declaredGAs,
-                        declared,
-                        dep.groupId(),
-                        dep.artifactId(),
-                        dep.classifier(),
-                        dep.version(),
-                        dep.scope());
-            }
-
-            PilotResolver.ResolvedDependencies resolved = resolver.resolveDependencies(p);
-            Set<String> transitiveGAs = new HashSet<>();
-            List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
-            DependenciesTui.collectTransitive(resolved.tree().root, declaredGAs, transitiveGAs, transitive);
-
-            Map<String, java.io.File> gaToJar = resolved.gaToJar();
-
-            ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(classesDir);
-            ClassFileScanner.ScanResult testScan = testClassesDir != null && Files.isDirectory(testClassesDir)
-                    ? ClassFileScanner.scanDirectory(testClassesDir)
-                    : new ClassFileScanner.ScanResult(Set.of(), Map.of());
-            Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                    mainScan.referencedClasses(),
-                    testScan.referencedClasses(),
-                    classIndex,
-                    gaToJar,
-                    declared,
-                    transitive);
-
-            for (var dep : declared) {
-                DependencyUsageAnalyzer.UsageStatus us =
-                        usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
-                if (us == DependencyUsageAnalyzer.UsageStatus.UNUSED) {
-                    DependenciesTui.DepEntry existing = unusedMap.get(dep.ga());
-                    if (existing == null) {
-                        dep.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
-                        dep.modules.add(p.artifactId);
-                        unusedMap.put(dep.ga(), dep);
-                    } else {
-                        if (!existing.modules.contains(p.artifactId)) {
-                            existing.modules.add(p.artifactId);
-                        }
-                    }
-                }
-            }
-
-            for (var dep : transitive) {
-                DependencyUsageAnalyzer.UsageStatus us = usage.transitiveUsage()
-                        .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
-                if (us == DependencyUsageAnalyzer.UsageStatus.USED) {
-                    DependenciesTui.DepEntry existing = usedTransMap.get(dep.ga());
-                    if (existing == null) {
-                        dep.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
-                        dep.modules.add(p.artifactId);
-                        usedTransMap.put(dep.ga(), dep);
-                    } else {
-                        if (!existing.modules.contains(p.artifactId)) {
-                            existing.modules.add(p.artifactId);
-                        }
-                    }
-                }
-            }
+            analyzeModuleUsage(p, unusedMap, usedTransMap);
         }
 
-        PilotProject root = projects.get(0);
-        String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
         return new DependenciesTui(
                 new ArrayList<>(unusedMap.values()),
                 new ArrayList<>(usedTransMap.values()),
-                gav,
+                reactorGav(projects),
                 modulesScanned,
                 modulesSkipped);
+    }
+
+    private void analyzeModuleUsage(
+            PilotProject p,
+            Map<String, DependenciesTui.DepEntry> unusedMap,
+            Map<String, DependenciesTui.DepEntry> usedTransMap)
+            throws Exception {
+        Set<String> declaredGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> declared = new ArrayList<>();
+        for (PilotProject.Dep dep : p.dependencies) {
+            DependenciesTui.addDeclaredEntry(
+                    declaredGAs,
+                    declared,
+                    dep.groupId(),
+                    dep.artifactId(),
+                    dep.classifier(),
+                    dep.version(),
+                    dep.scope());
+        }
+
+        PilotResolver.ResolvedDependencies resolved = resolver.resolveDependencies(p);
+        Set<String> transitiveGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
+        DependenciesTui.collectTransitive(resolved.tree().root, declaredGAs, transitiveGAs, transitive);
+
+        Map<String, java.io.File> gaToJar = resolved.gaToJar();
+        ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(p.outputDirectory);
+        ClassFileScanner.ScanResult testScan = p.testOutputDirectory != null && Files.isDirectory(p.testOutputDirectory)
+                ? ClassFileScanner.scanDirectory(p.testOutputDirectory)
+                : new ClassFileScanner.ScanResult(Set.of(), Map.of());
+        Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
+                mainScan.referencedClasses(), testScan.referencedClasses(), classIndex, gaToJar, declared, transitive);
+
+        accumulateEntries(
+                declared, usage.declaredUsage(), DependencyUsageAnalyzer.UsageStatus.UNUSED, unusedMap, p.artifactId);
+        accumulateEntries(
+                transitive,
+                usage.transitiveUsage(),
+                DependencyUsageAnalyzer.UsageStatus.USED,
+                usedTransMap,
+                p.artifactId);
+    }
+
+    private static void accumulateEntries(
+            List<DependenciesTui.DepEntry> deps,
+            Map<String, DependencyUsageAnalyzer.UsageStatus> usageMap,
+            DependencyUsageAnalyzer.UsageStatus targetStatus,
+            Map<String, DependenciesTui.DepEntry> accumulator,
+            String moduleName) {
+        for (var dep : deps) {
+            var us = usageMap.getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+            if (us == targetStatus) {
+                var existing = accumulator.get(dep.ga());
+                if (existing == null) {
+                    dep.usageStatus = targetStatus;
+                    dep.modules.add(moduleName);
+                    accumulator.put(dep.ga(), dep);
+                } else if (!existing.modules.contains(moduleName)) {
+                    existing.modules.add(moduleName);
+                }
+            }
+        }
+    }
+
+    private static String reactorGav(List<PilotProject> projects) {
+        return projects.get(0).gav() + " (reactor: " + projects.size() + " modules)";
     }
 
     @SuppressWarnings("unused")
@@ -274,9 +271,7 @@ public class PilotEngine {
             PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
         resolveAllDependencies(targetProjects, progress);
-        String gav = projects.size() > 1
-                ? projects.get(0).gav() + " (reactor: " + projects.size() + " modules)"
-                : proj.gav();
+        String gav = projects.size() > 1 ? reactorGav(projects) : proj.gav();
         PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
         return new ConflictsTui(targetProjects, s, gav, this::cachedCollectDependencies);
     }
@@ -322,7 +317,7 @@ public class PilotEngine {
                     + entryMap.size() + " unique dependencies, "
                     + emptyTrees + " modules with empty trees");
             List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-            String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
+            String gav = reactorGav(projects);
             if (session != null) {
                 return new AuditTui(entries, gav, treeModel, session);
             }

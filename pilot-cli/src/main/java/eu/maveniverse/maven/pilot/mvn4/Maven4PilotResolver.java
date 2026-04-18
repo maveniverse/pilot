@@ -258,6 +258,7 @@ class Maven4PilotResolver implements PilotResolver {
         try {
             treeNode.repository = node.getRepository().map(r -> r.getId()).orElse(null);
         } catch (UnsupportedOperationException ignored) {
+            // Maven API does not guarantee getRepository() support on all node types
         }
 
         String nodeKey = treeNode.ga() + ":" + version;

@@ -521,7 +521,6 @@ public class PilotShell {
 
     private void loadInitialPanel() {
         activeToolIndex = 0;
-        if (!isToolAvailable(0)) return;
         refreshActivePanel();
     }
 
@@ -531,16 +530,11 @@ public class PilotShell {
 
     private void switchTool(int toolIndex, boolean focusContent) {
         if (toolIndex < 0 || toolIndex >= TOOLS.size()) return;
-        if (!isToolAvailable(toolIndex)) return;
         activeToolIndex = toolIndex;
         refreshActivePanel();
         if (focusContent) {
             setFocus(Focus.CONTENT);
         }
-    }
-
-    private boolean isToolAvailable(int toolIndex) {
-        return true;
     }
 
     private void refreshActivePanel() {
@@ -549,11 +543,6 @@ public class PilotShell {
 
     private void refreshActivePanel(boolean clearPanel) {
         ToolDef tool = TOOLS.get(activeToolIndex);
-        if (!isToolAvailable(activeToolIndex)) {
-            activePanel = null;
-            loadingCacheKey = null;
-            return;
-        }
         // Remember current sub-view to carry over to new panel
         int currentSubView = activePanel != null ? activePanel.activeSubView() : 0;
 
@@ -766,12 +755,9 @@ public class PilotShell {
             if (i == activeToolIndex) {
                 label = "[▸" + tool.name + "]";
                 spans.addAll(theme.activeToolTab(tool.name, tool.mnemonic));
-            } else if (isToolAvailable(i)) {
-                label = tool.name;
-                spans.addAll(theme.inactiveToolTab(label, tool.mnemonic));
             } else {
                 label = tool.name;
-                spans.addAll(theme.unavailableToolTab(label, tool.mnemonic));
+                spans.addAll(theme.inactiveToolTab(label, tool.mnemonic));
             }
             xPos += label.length();
             toolTabEnds[i] = xPos;
@@ -853,9 +839,6 @@ public class PilotShell {
         } else if (panelError != null) {
             title = " " + tool.name + " ";
             message = "Error: " + panelError;
-        } else if (!isToolAvailable(activeToolIndex)) {
-            title = " " + tool.name + " ";
-            message = tool.name + " is not available for parent modules";
         } else {
             title = " No Tool Selected ";
             message = "Select a tool with Alt+letter";
