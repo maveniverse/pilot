@@ -349,7 +349,8 @@ public class ConflictsTui extends ToolPanel {
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (diffOverlay.isActive()) {
-            return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
         }
         if (handleMouseSortHeader(
                 mouse,

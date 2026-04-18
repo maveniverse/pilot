@@ -1704,7 +1704,8 @@ public class UpdatesTui extends ToolPanel {
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (diffOverlay.isActive()) {
-            return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
         }
         if (handleMouseTabBar(mouse)) return true;
         List<Constraint> widths;

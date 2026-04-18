@@ -600,7 +600,8 @@ public class DependenciesTui extends ToolPanel {
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (diffOverlay.isActive()) {
-            return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
         }
         if (handleMouseTabBar(mouse)) return true;
         if (view == View.TREE && treeTui != null) {
@@ -892,7 +893,9 @@ public class DependenciesTui extends ToolPanel {
         var dep = declared.get(sel);
 
         try {
-            Coordinates coords = Coordinates.of(dep.groupId, dep.artifactId, dep.version);
+            Coordinates coords = dep.hasClassifier()
+                    ? Coordinates.of(dep.groupId, dep.artifactId, dep.version, dep.classifier, "jar")
+                    : Coordinates.of(dep.groupId, dep.artifactId, dep.version);
             if (reactorMode && sessionProvider != null) {
                 for (Path pomPath : dep.modulePomPaths) {
                     PomEditSession session = sessionProvider.apply(pomPath);
