@@ -42,6 +42,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -214,10 +215,11 @@ public abstract class ToolPanel {
         this.allSessionsSupplier = supplier;
     }
 
-    private static volatile Path rootDir = Path.of("").toAbsolutePath();
+    private static final AtomicReference<Path> rootDir =
+            new AtomicReference<>(Path.of("").toAbsolutePath());
 
     static void setRootDir(Path dir) {
-        rootDir = dir;
+        rootDir.set(dir);
     }
 
     /**
@@ -225,7 +227,7 @@ public abstract class ToolPanel {
      */
     static String displayPath(Path path) {
         try {
-            return rootDir.relativize(path).toString();
+            return rootDir.get().relativize(path).toString();
         } catch (IllegalArgumentException e) {
             return path.toString();
         }
