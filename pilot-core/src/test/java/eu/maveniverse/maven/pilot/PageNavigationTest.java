@@ -219,7 +219,7 @@ class PageNavigationTest {
         try (var testRunner = TuiTestRunner.runTest(tui::handleEvent, tui::renderStandalone, new Size(100, 24))) {
             Pilot pilot = testRunner.pilot();
             pilot.pause();
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
             pilot.press(KeyCode.DOWN);
             pilot.pause();

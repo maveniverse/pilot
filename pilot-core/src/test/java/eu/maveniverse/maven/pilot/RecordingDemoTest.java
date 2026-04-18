@@ -569,19 +569,19 @@ class RecordingDemoTest {
             recorder.scene(
                     "Dependencies marked as unused are highlighted, helping you identify candidates for removal to keep your POM clean.");
 
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
             recorder.scene(
-                    "Press Tab to switch to the transitive dependencies view. These are dependencies pulled in by your declared dependencies.");
+                    "Press 2 to switch to the transitive dependencies view. These are dependencies pulled in by your declared dependencies.");
 
             pilot.press(KeyCode.DOWN);
             pilot.pause();
             recorder.scene(
                     "Transitive dependencies also show their usage status. If your code uses a transitive dependency directly, consider declaring it explicitly.");
 
-            pilot.press(KeyCode.TAB);
+            pilot.press('1');
             pilot.pause();
-            recorder.scene("Press Tab again to return to the declared dependencies view.");
+            recorder.scene("Press 1 to return to the declared dependencies view.");
 
             pilot.press('q');
         }

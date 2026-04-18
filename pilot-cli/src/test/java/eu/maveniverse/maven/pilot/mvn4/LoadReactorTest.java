@@ -48,8 +48,8 @@ class LoadReactorTest {
         for (PilotProject p : reactor.projectsByPomPath().values()) {
             System.out.println("  " + p.gav());
 
-            var panel = reactor.engine().createPanel("tree", p, List.of(p));
-            assertNotNull(panel, "Tree panel should not be null for " + p.ga());
+            var panel = reactor.engine().createPanel("dependencies", p, List.of(p));
+            assertNotNull(panel, "Dependencies panel should not be null for " + p.ga());
         }
     }
 }

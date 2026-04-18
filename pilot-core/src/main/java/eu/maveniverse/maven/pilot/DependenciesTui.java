@@ -514,15 +514,18 @@ public class DependenciesTui extends ToolPanel {
             return true; // consume all keys during overlay
         }
 
-        // Tab always cycles views (before delegation to treeTui)
-        if (key.isKey(KeyCode.TAB)) {
-            view = TabBar.next(view, views);
-            if (view != View.TREE) {
-                tableState.select(0);
-                clearSearch();
-                sortState = new SortState(sortColumnCount());
+        // Number keys switch sub-views
+        if (key.code() == KeyCode.CHAR && key.character() >= '1' && key.character() <= '9') {
+            int idx = key.character() - '1';
+            if (idx < views.length && views[idx] != view) {
+                view = views[idx];
+                if (view != View.TREE) {
+                    tableState.select(0);
+                    clearSearch();
+                    sortState = new SortState(sortColumnCount());
+                }
+                return true;
             }
-            return true;
         }
 
         // Tree view: delegate to TreeTui
@@ -736,7 +739,7 @@ public class DependenciesTui extends ToolPanel {
 
                 ## Dependencies Actions
                 ↑ / ↓           Move selection up / down
-                Tab             Switch Declared / Transitive / Managed view
+                1-4             Switch Declared / Transitive / Managed view
                 x / Enter       Remove selected (Declared view)
                 a / Enter       Add to POM (Transitive view)
                 x               Remove managed entry (Managed view)
@@ -1108,7 +1111,7 @@ public class DependenciesTui extends ToolPanel {
         sections.addAll(HelpOverlay.parse("""
                 ## General
                 """ + NAV_KEYS + """
-                Tab             Switch between Declared, Transitive, and Managed views
+                1-4             Switch between Declared, Transitive, and Managed views
                 d               Preview POM changes as a unified diff
                 h               Toggle this help screen
                 q / Esc         Quit (prompts to save if modified)
@@ -1212,8 +1215,10 @@ public class DependenciesTui extends ToolPanel {
         String managedLabel = "Managed: " + managed.size();
         spans.addAll(TabBar.render(view, views, v -> switch (v) {
             case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
-            case DECLARED, UNUSED_DECLARED -> declaredLabel;
-            case TRANSITIVE, USED_TRANSITIVE -> transitiveLabel;
+            case DECLARED -> declaredLabel;
+            case TRANSITIVE -> transitiveLabel;
+            case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
+            case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
             case MANAGED -> managedLabel;
         }));
 
@@ -1353,7 +1358,7 @@ public class DependenciesTui extends ToolPanel {
         if (reactorMode) {
             String icon = usageIcon(dep);
             String modules = String.join(", ", dep.modules);
-            return Row.from(icon, dep.ga(), dep.version, modules).style(usageRowStyle(dep));
+            return Row.from(icon, dep.ga(), dep.version, modules);
         }
         String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
         if (bytecodeAnalyzed) {
@@ -1372,8 +1377,7 @@ public class DependenciesTui extends ToolPanel {
         if (reactorMode) {
             String icon = usageIcon(dep);
             String modules = String.join(", ", dep.modules);
-            return Row.from(icon, dep.ga(), dep.version, modules)
-                    .style(usageRowStyle(dep).bg(theme.searchHighlightBg()));
+            return Row.from(icon, dep.ga(), dep.version, modules).style(theme.searchHighlight());
         }
         String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
         if (bytecodeAnalyzed) {
@@ -1585,7 +1589,7 @@ public class DependenciesTui extends ToolPanel {
         } else {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("Tab").bold());
+            spans.add(Span.raw("1-" + views.length).bold());
             spans.add(Span.raw(":Switch view  "));
             if (view == View.DECLARED) {
                 spans.add(Span.raw("x/Enter").bold());
