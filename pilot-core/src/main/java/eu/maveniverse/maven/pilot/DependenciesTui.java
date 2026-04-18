@@ -32,7 +32,6 @@ import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
-import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Title;
@@ -83,6 +82,7 @@ public class DependenciesTui extends ToolPanel {
         public int totalClasses; // total classes provided by this dep
         public List<String> spiServices; // SPI service interfaces provided by this dep
         public final List<String> modules = new ArrayList<>(); // reactor mode: which modules have this dep
+        public final List<Path> modulePomPaths = new ArrayList<>(); // reactor mode: POM paths for each module
 
         /**
          * Creates a DepEntry representing a dependency row in the TUI.
@@ -228,6 +228,8 @@ public class DependenciesTui extends ToolPanel {
     private final String projectGav;
     private final boolean bytecodeAnalyzed;
     private final boolean reactorMode;
+    private final PomEditSession managementSession;
+    private final java.util.function.Function<Path, PomEditSession> sessionProvider;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
@@ -295,19 +297,22 @@ public class DependenciesTui extends ToolPanel {
             PomEditSession session,
             String projectGav,
             boolean bytecodeAnalyzed) {
-        this(declared, transitive, managed, session, projectGav, bytecodeAnalyzed, null);
+        this(declared, transitive, managed, session, null, projectGav, bytecodeAnalyzed, null);
     }
 
-    /** Panel-mode constructor with embedded tree view. */
+    /** Panel-mode constructor with embedded tree view and management session. */
     public DependenciesTui(
             List<DepEntry> declared,
             List<DepEntry> transitive,
             List<ManagedEntry> managed,
             PomEditSession session,
+            PomEditSession managementSession,
             String projectGav,
             boolean bytecodeAnalyzed,
             TreeTui treeTui) {
         this.editSession = session;
+        this.managementSession = managementSession;
+        this.sessionProvider = null;
         this.declared = declared;
         this.transitive = transitive;
         this.managed = managed;
@@ -332,8 +337,12 @@ public class DependenciesTui extends ToolPanel {
             List<DepEntry> usedTransitive,
             String projectGav,
             int modulesScanned,
-            int modulesSkipped) {
+            int modulesSkipped,
+            java.util.function.Function<Path, PomEditSession> sessionProvider,
+            PomEditSession managementSession) {
         this.editSession = null;
+        this.managementSession = managementSession;
+        this.sessionProvider = sessionProvider;
         this.declared = unusedDeclared;
         this.transitive = usedTransitive;
         this.managed = List.of();
@@ -426,12 +435,12 @@ public class DependenciesTui extends ToolPanel {
 
         // Diff overlay mode (standalone — panel mode handles in handleKeyEvent)
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+            if (key.isCtrlC()) {
                 requestQuit();
                 return true;
             }
@@ -506,7 +515,7 @@ public class DependenciesTui extends ToolPanel {
     public boolean handleKeyEvent(KeyEvent key) {
         // Diff overlay (panel mode — standalone handles before delegation)
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
@@ -565,17 +574,17 @@ public class DependenciesTui extends ToolPanel {
             return true;
         }
 
-        if (key.isCharIgnoreCase('x')) {
+        if (key.isCharIgnoreCase('x') && (view == View.DECLARED || view == View.UNUSED_DECLARED)) {
             removeDeclared();
             return true;
         }
 
-        if (key.isCharIgnoreCase('a')) {
+        if (key.isCharIgnoreCase('a') && (view == View.TRANSITIVE || view == View.USED_TRANSITIVE)) {
             addTransitive();
             return true;
         }
 
-        if (key.isCharIgnoreCase('c')) {
+        if (key.isCharIgnoreCase('c') && !reactorMode) {
             changeScope();
             return true;
         }
@@ -590,30 +599,15 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (diffOverlay.isActive()) {
+            return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+        }
         if (handleMouseTabBar(mouse)) return true;
         if (view == View.TREE && treeTui != null) {
             return treeTui.handleMouseEvent(mouse, area);
         }
         if (view != View.MANAGED && handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
-        if (mouse.isClick()) {
-            int row = mouseToTableRow(mouse, currentListSize(), tableState);
-            if (row >= 0) {
-                tableState.select(row);
-                return true;
-            }
-        }
-        if (mouse.isScroll()) {
-            int size = currentListSize();
-            if (size == 0) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(size - 1, sel + 1));
-            }
-            return true;
-        }
-        return false;
+        return handleMouseTableInteraction(mouse, currentListSize(), tableState);
     }
 
     @Override
@@ -686,19 +680,19 @@ public class DependenciesTui extends ToolPanel {
         } else {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Nav  "));
-            if (view == View.DECLARED) {
+            if (view == View.DECLARED || view == View.UNUSED_DECLARED) {
                 spans.add(Span.raw("x/Enter").bold());
-                spans.add(Span.raw(":Delete  "));
-                spans.add(Span.raw("c").bold());
-                spans.add(Span.raw(":Scope  "));
-            } else if (view == View.TRANSITIVE) {
+                spans.add(Span.raw(":Remove  "));
+            } else if (view == View.TRANSITIVE || view == View.USED_TRANSITIVE) {
                 spans.add(Span.raw("a/Enter").bold());
                 spans.add(Span.raw(":Add  "));
-                spans.add(Span.raw("c").bold());
-                spans.add(Span.raw(":Scope  "));
             } else {
                 spans.add(Span.raw("x").bold());
                 spans.add(Span.raw(":Remove  "));
+            }
+            if (!reactorMode) {
+                spans.add(Span.raw("c").bold());
+                spans.add(Span.raw(":Scope  "));
             }
             spans.addAll(sortKeyHints());
             spans.add(Span.raw("/").bold());
@@ -877,7 +871,7 @@ public class DependenciesTui extends ToolPanel {
      * if the view is TRANSITIVE, adds the selected transitive dependency to the POM.
      */
     private void fixSelected() {
-        if (view == View.DECLARED) {
+        if (view == View.DECLARED || view == View.UNUSED_DECLARED) {
             removeDeclared();
         } else {
             addTransitive();
@@ -898,13 +892,25 @@ public class DependenciesTui extends ToolPanel {
         var dep = declared.get(sel);
 
         try {
-            editSession.beforeMutation();
-            editSession
-                    .editor()
-                    .dependencies()
-                    .deleteDependency(Coordinates.of(dep.groupId, dep.artifactId, dep.version));
-            editSession.recordChange(
-                    PomEditSession.ChangeType.REMOVE, TARGET_DEPENDENCY, dep.ga(), "removed", SECTION_DEPENDENCIES);
+            Coordinates coords = Coordinates.of(dep.groupId, dep.artifactId, dep.version);
+            if (reactorMode && sessionProvider != null) {
+                for (Path pomPath : dep.modulePomPaths) {
+                    PomEditSession session = sessionProvider.apply(pomPath);
+                    session.beforeMutation();
+                    session.editor().dependencies().deleteDependency(coords);
+                    session.recordChange(
+                            PomEditSession.ChangeType.REMOVE,
+                            TARGET_DEPENDENCY,
+                            dep.ga(),
+                            "removed",
+                            SECTION_DEPENDENCIES);
+                }
+            } else if (editSession != null) {
+                editSession.beforeMutation();
+                editSession.editor().dependencies().deleteDependency(coords);
+                editSession.recordChange(
+                        PomEditSession.ChangeType.REMOVE, TARGET_DEPENDENCY, dep.ga(), "removed", SECTION_DEPENDENCIES);
+            }
             declared.remove(sel);
             updateStatus();
             if (sel >= declared.size() && !declared.isEmpty()) {
@@ -928,43 +934,88 @@ public class DependenciesTui extends ToolPanel {
         var dep = transitive.get(sel);
 
         try {
-            editSession.beforeMutation();
             Coordinates coords = (dep.hasClassifier())
                     ? Coordinates.of(dep.groupId, dep.artifactId, dep.version, dep.classifier, "jar")
                     : Coordinates.of(dep.groupId, dep.artifactId, dep.version);
-            PomEditor editor = editSession.editor();
-            if (!COMPILE_SCOPE.equals(dep.scope)) {
-                AlignOptions detected = editor.dependencies().detectConventions();
-                AlignOptions options = AlignOptions.builder()
-                        .versionStyle(detected.versionStyle())
-                        .versionSource(detected.versionSource())
-                        .namingConvention(detected.namingConvention())
-                        .scope(dep.scope)
-                        .build();
-                editor.dependencies().addAligned(coords, options);
-            } else {
-                editor.dependencies().addAligned(coords);
+            if (reactorMode && sessionProvider != null) {
+                for (Path pomPath : dep.modulePomPaths) {
+                    PomEditSession session = sessionProvider.apply(pomPath);
+                    addDependencyToSession(session, coords, dep.scope);
+                    session.recordChange(
+                            PomEditSession.ChangeType.ADD,
+                            TARGET_DEPENDENCY,
+                            dep.ga(),
+                            "added from transitive",
+                            SECTION_DEPENDENCIES);
+                }
+            } else if (editSession != null) {
+                addDependencyToSession(editSession, coords, dep.scope);
+                editSession.recordChange(
+                        PomEditSession.ChangeType.ADD,
+                        TARGET_DEPENDENCY,
+                        dep.ga(),
+                        "added from transitive",
+                        SECTION_DEPENDENCIES);
             }
-            editSession.recordChange(
-                    PomEditSession.ChangeType.ADD,
-                    TARGET_DEPENDENCY,
-                    dep.ga(),
-                    "added from transitive",
-                    SECTION_DEPENDENCIES);
 
             // Move from transitive to declared
             transitive.remove(sel);
-            var promoted = new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true);
-            promoted.usageStatus = dep.usageStatus;
-            promoted.usedMembers = dep.usedMembers;
-            promoted.totalClasses = dep.totalClasses;
-            declared.add(promoted);
+            if (!reactorMode) {
+                var promoted = new DepEntry(dep.groupId, dep.artifactId, dep.classifier, dep.version, dep.scope, true);
+                promoted.usageStatus = dep.usageStatus;
+                promoted.usedMembers = dep.usedMembers;
+                promoted.totalClasses = dep.totalClasses;
+                declared.add(promoted);
+            }
             updateStatus();
             if (sel >= transitive.size() && !transitive.isEmpty()) {
                 tableState.select(transitive.size() - 1);
             }
         } catch (Exception e) {
             status = "Failed to add: " + e.getMessage();
+        }
+    }
+
+    private void addDependencyToSession(PomEditSession session, Coordinates coords, String scope) {
+        session.beforeMutation();
+        PomEditor editor = session.editor();
+        AlignOptions detected = editor.dependencies().detectConventions();
+        // TODO: replace with editor.dependencies().findManagedVersion(coords) != null
+        //  when DomTrip exposes it (https://github.com/maveniverse/domtrip/issues/215)
+        boolean hadManagedEntry = editor.document()
+                .root()
+                .childElement("dependencyManagement")
+                .flatMap(dm -> dm.childElement("dependencies"))
+                .flatMap(deps -> deps.childElements("dependency")
+                        .filter(coords.predicateGATC())
+                        .findFirst())
+                .isPresent();
+        AlignOptions.Builder builder = AlignOptions.builder()
+                .versionStyle(detected.versionStyle())
+                .versionSource(detected.versionSource())
+                .namingConvention(detected.namingConvention());
+        if (!COMPILE_SCOPE.equals(scope)) {
+            builder.scope(scope);
+        }
+        editor.dependencies().addAligned(coords, builder.build());
+        // If MANAGED style: the managed entry and version property belong in the
+        // management POM (parent), not the local module POM.
+        if (detected.versionStyle() == AlignOptions.VersionStyle.MANAGED && !hadManagedEntry) {
+            // Remove the local managed entry that addAligned just created
+            editor.dependencies().deleteManagedDependency(coords);
+            // Clean up empty <dependencyManagement> wrapper left behind
+            editor.document().root().childElement("dependencyManagement").ifPresent(dm -> {
+                boolean empty = dm.childElement("dependencies")
+                        .map(deps ->
+                                deps.childElements("dependency").findFirst().isEmpty())
+                        .orElse(true);
+                if (empty) {
+                    editor.document().root().removeChild(dm);
+                }
+            });
+            // Add the managed entry (and version property) to the management POM
+            PomEditSession mgmt = managementSession != null ? managementSession : session;
+            session.addManagedDependencyAligned(coords, mgmt);
         }
     }
 
@@ -1120,8 +1171,13 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private void toggleDiffView() {
-        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
+        var diffs = collectAllDiffs();
+        if (diffs.isEmpty()) {
+            status = "No changes to show";
+            return;
+        }
+        long changes = diffOverlay.openMulti(diffs);
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
     /**
@@ -1154,18 +1210,15 @@ public class DependenciesTui extends ToolPanel {
         Coordinates coords = (classifier != null && !classifier.isEmpty())
                 ? Coordinates.of(groupId, artifactId, version, classifier, "jar")
                 : Coordinates.of(groupId, artifactId, version);
+        AlignOptions detected = editor.dependencies().detectConventions();
+        AlignOptions.Builder builder = AlignOptions.builder()
+                .versionStyle(detected.versionStyle())
+                .versionSource(detected.versionSource())
+                .namingConvention(detected.namingConvention());
         if (scope != null && !scope.isEmpty() && !COMPILE_SCOPE.equals(scope)) {
-            AlignOptions detected = editor.dependencies().detectConventions();
-            AlignOptions options = AlignOptions.builder()
-                    .versionStyle(detected.versionStyle())
-                    .versionSource(detected.versionSource())
-                    .namingConvention(detected.namingConvention())
-                    .scope(scope)
-                    .build();
-            editor.dependencies().addAligned(coords, options);
-        } else {
-            editor.dependencies().addAligned(coords);
+            builder.scope(scope);
         }
+        editor.dependencies().addAligned(coords, builder.build());
         return editor.toXml();
     }
 
@@ -1458,21 +1511,18 @@ public class DependenciesTui extends ToolPanel {
         if (bytecodeAnalyzed && dep.usageStatus != null) {
             spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
             spans.add(Span.raw("Usage: ").bold());
-            int used = dep.usedMembers != null ? dep.usedMembers.size() : 0;
             String usageText;
             if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
                 usageText = "Could not determine (no classes found in JAR)";
-            } else if (used > 0) {
-                usageText = used + " of " + dep.totalClasses + " classes referenced";
-                if (!dep.declared) {
-                    usageText += " (should be declared)";
-                }
-            } else if (hasSpi && dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED) {
-                usageText = "Used via SPI/ServiceLoader";
-            } else {
+            } else if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED) {
+                int usedCount = dep.usedMembers != null ? dep.usedMembers.size() : 0;
+                String classInfo = dep.totalClasses > 0 ? " (" + usedCount + "/" + dep.totalClasses + " classes)" : "";
                 usageText = dep.declared
-                        ? "0 of " + dep.totalClasses + " classes referenced (may be safe to remove)"
-                        : "Not directly referenced";
+                        ? "Directly referenced" + classInfo
+                        : "Directly referenced" + classInfo + " — should be declared";
+            } else {
+                usageText =
+                        dep.declared ? "Not directly referenced (may be safe to remove)" : "Not directly referenced";
             }
             Color usageColor =
                     switch (dep.usageStatus) {

@@ -22,6 +22,8 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +85,7 @@ class DiffOverlay {
                 if (!allLines.isEmpty()) {
                     allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, ""));
                 }
-                allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "── " + entry.getKey() + " ──"));
+                allLines.add(new UnifiedDiff.DiffLine(UnifiedDiff.Type.HEADER, "── " + entry.getKey() + " ──"));
                 allLines.addAll(UnifiedDiff.filterContext(fullDiff, 3));
                 totalChanges += changes;
             }
@@ -100,6 +102,35 @@ class DiffOverlay {
     void close() {
         lines = null;
         scroll = 0;
+    }
+
+    void scrollUp() {
+        if (scroll > 0) scroll--;
+    }
+
+    void scrollDown(int contentHeight) {
+        scroll = Math.min(scroll + 1, maxScroll(contentHeight));
+    }
+
+    private int maxScroll(int contentHeight) {
+        return UnifiedDiff.maxScroll(lines, contentHeight);
+    }
+
+    /**
+     * Handle mouse scroll events when the overlay is active.
+     *
+     * @return {@code true} if the event was handled
+     */
+    boolean handleMouseScroll(MouseEvent mouse, int contentHeight) {
+        if (!isActive() || !mouse.isScroll()) {
+            return false;
+        }
+        if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+            scrollUp();
+        } else {
+            scrollDown(contentHeight);
+        }
+        return true;
     }
 
     /**

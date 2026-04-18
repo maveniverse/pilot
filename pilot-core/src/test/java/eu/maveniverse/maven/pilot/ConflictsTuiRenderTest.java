@@ -24,7 +24,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.tamboui.terminal.TestBackend;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
-import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -109,13 +108,13 @@ class ConflictsTuiRenderTest {
     }
 
     @Test
-    void panelModeNoDividerWhenDetailsHidden() {
+    void panelModeAlwaysShowsDetails() {
         var tui = createTuiWithConflicts();
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
         String output = render(f -> tui.render(f, f.area()));
 
+        // Details pane is always visible — divider should be present
         long dividerLines = output.lines().filter(l -> l.matches("^─+$")).count();
-        assertThat(dividerLines).isZero();
+        assertThat(dividerLines).isGreaterThan(0);
     }
 
     @Test
@@ -234,7 +233,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui =
+                new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
         String output = render(tui::renderStandalone);
 
         assertThat(output).contains("Collecting Conflicts");
@@ -244,7 +244,7 @@ class ConflictsTuiRenderTest {
     void asyncConstructorEmptyProjectsNotLoading() {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
 
-        var tui = new ConflictsTui(List.of(), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui = new ConflictsTui(List.of(), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
         String output = render(tui::renderStandalone);
 
         assertThat(output).contains("Conflict Resolution");
@@ -255,7 +255,7 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("my-module");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+        var tui = new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> {
             return createEmptyTree();
         });
         String output = render(tui::renderStandalone);
@@ -268,7 +268,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("my-module");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui =
+                new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
         String output = render(f -> tui.render(f, f.area()));
 
         assertThat(output).contains("Collecting conflicts");
@@ -280,7 +281,7 @@ class ConflictsTuiRenderTest {
         PilotProject p1 = createDummyProject("mod-a");
         PilotProject p2 = createDummyProject("mod-b");
 
-        var tui = new ConflictsTui(List.of(p1, p2), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui = new ConflictsTui(List.of(p1, p2), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
         String output = render(tui::renderStandalone);
 
         assertThat(output).contains("Collecting Conflicts").contains("0/2");
@@ -291,7 +292,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui =
+                new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
 
         assertThat(tui.status()).contains("Collecting conflicts");
     }
@@ -303,7 +305,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
+        var tui = new ConflictsTui(
+                List.of(project), session, session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
 
         Map<String, List<ConflictsTui.ConflictEntry>> result = tui.resolveModule(project, false);
 
@@ -316,7 +319,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
+        var tui = new ConflictsTui(
+                List.of(project), session, session, "com.example:demo:1.0.0", p -> createTreeWithConflict());
 
         Map<String, List<ConflictsTui.ConflictEntry>> result = tui.resolveModule(project, true);
 
@@ -329,7 +333,7 @@ class ConflictsTuiRenderTest {
         PilotProject p1 = createDummyProject("mod-a");
         PilotProject p2 = createDummyProject("mod-b");
 
-        var tui = new ConflictsTui(List.of(p1, p2), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui = new ConflictsTui(List.of(p1, p2), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
 
         Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
         Map<String, List<ConflictsTui.ConflictEntry>> local = new HashMap<>();
@@ -348,7 +352,8 @@ class ConflictsTuiRenderTest {
         PomEditSession session = new PomEditSession(Path.of(pomPath));
         PilotProject project = createDummyProject("mod-a");
 
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> createEmptyTree());
+        var tui =
+                new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> createEmptyTree());
 
         Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
         mergedMap.put(
@@ -371,7 +376,7 @@ class ConflictsTuiRenderTest {
         PilotProject project = createDummyProject("mod-a");
 
         CountDownLatch resolved = new CountDownLatch(1);
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+        var tui = new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> {
             resolved.countDown();
             return createTreeWithConflict();
         });
@@ -391,7 +396,7 @@ class ConflictsTuiRenderTest {
         PilotProject project = createDummyProject("mod-a");
 
         CountDownLatch failed = new CountDownLatch(1);
-        var tui = new ConflictsTui(List.of(project), session, "com.example:demo:1.0.0", p -> {
+        var tui = new ConflictsTui(List.of(project), session, session, "com.example:demo:1.0.0", p -> {
             failed.countDown();
             throw new RuntimeException("resolver failed");
         });

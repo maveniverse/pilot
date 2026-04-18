@@ -60,8 +60,8 @@ class UnifiedDiffTest {
         var result = UnifiedDiff.compute("hello", "world");
 
         assertThat(result).hasSize(2);
-        assertThat(result.get(0)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "hello"));
-        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "world"));
+        assertThat(result.get(0)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "hello", 0));
+        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "world", 1));
     }
 
     @Test
@@ -72,11 +72,11 @@ class UnifiedDiffTest {
         var result = UnifiedDiff.compute(original, modified);
 
         assertThat(result).hasSize(5);
-        assertThat(result.get(0)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "a"));
-        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "b"));
-        assertThat(result.get(2)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "B"));
-        assertThat(result.get(3)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "c"));
-        assertThat(result.get(4)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "d"));
+        assertThat(result.get(0)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "a", 1));
+        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "b", 0));
+        assertThat(result.get(2)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "B", 2));
+        assertThat(result.get(3)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "c", 3));
+        assertThat(result.get(4)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.CONTEXT, "d", 4));
     }
 
     @Test
@@ -88,7 +88,7 @@ class UnifiedDiffTest {
 
         assertThat(result).hasSize(3);
         assertThat(result.get(0).type()).isEqualTo(UnifiedDiff.Type.CONTEXT);
-        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "b"));
+        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.ADDED, "b", 2));
         assertThat(result.get(2).type()).isEqualTo(UnifiedDiff.Type.CONTEXT);
     }
 
@@ -101,7 +101,7 @@ class UnifiedDiffTest {
 
         assertThat(result).hasSize(3);
         assertThat(result.get(0).type()).isEqualTo(UnifiedDiff.Type.CONTEXT);
-        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "b"));
+        assertThat(result.get(1)).isEqualTo(new UnifiedDiff.DiffLine(UnifiedDiff.Type.REMOVED, "b", 0));
         assertThat(result.get(2).type()).isEqualTo(UnifiedDiff.Type.CONTEXT);
     }
 

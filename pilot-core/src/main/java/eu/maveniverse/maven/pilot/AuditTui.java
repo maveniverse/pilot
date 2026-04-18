@@ -32,7 +32,6 @@ import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
-import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -156,6 +155,7 @@ public class AuditTui extends ToolPanel {
     private int lastContentHeight;
     private int lastTableHeight;
     private String scopeFilter; // null = show all
+    private PomEditSession managementSession;
     private List<AuditEntry> filteredEntries;
     List<VulnRow> vulnRows = new ArrayList<>();
     private List<VulnGroup> vulnGroups = new ArrayList<>();
@@ -191,13 +191,18 @@ public class AuditTui extends ToolPanel {
 
     /** Standalone constructor — creates its own PomEditSession from the POM file path. */
     public AuditTui(List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, String pomPath) {
-        this(entries, projectGav, treeModel, new PomEditSession(Path.of(pomPath)));
+        this(entries, projectGav, treeModel, new PomEditSession(Path.of(pomPath)), null);
     }
 
     /** Panel-mode constructor — uses a shared PomEditSession from the shell. */
     public AuditTui(
-            List<AuditEntry> entries, String projectGav, DependencyTreeModel treeModel, PomEditSession session) {
+            List<AuditEntry> entries,
+            String projectGav,
+            DependencyTreeModel treeModel,
+            PomEditSession session,
+            PomEditSession managementSession) {
         this.editSession = session;
+        this.managementSession = managementSession != null ? managementSession : session;
         this.entries = entries;
         this.filteredEntries = entries;
         this.projectGav = projectGav;
@@ -483,7 +488,7 @@ public class AuditTui extends ToolPanel {
     public boolean handleKeyEvent(KeyEvent key) {
         // Diff overlay mode — consume all keys
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
@@ -655,14 +660,14 @@ public class AuditTui extends ToolPanel {
             return false;
         }
 
-        // Diff overlay in standalone — allow q to quit
+        // Diff overlay in standalone
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+            if (key.isCtrlC()) {
                 requestQuit();
                 return true;
             }
@@ -762,7 +767,7 @@ public class AuditTui extends ToolPanel {
         try {
             editSession.beforeMutation();
             var coords = Coordinates.of(entry.groupId, entry.artifactId, entry.version);
-            editSession.editor().dependencies().updateManagedDependency(true, coords);
+            editSession.addManagedDependencyAligned(coords, managementSession);
             editSession.recordChange(
                     PomEditSession.ChangeType.ADD,
                     "managed",
@@ -810,8 +815,13 @@ public class AuditTui extends ToolPanel {
     }
 
     private void toggleDiffView() {
-        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
+        var diffs = collectAllDiffs();
+        if (diffs.isEmpty()) {
+            status = "No changes to show";
+            return;
+        }
+        long changes = diffOverlay.openMulti(diffs);
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
     @Override
@@ -1866,24 +1876,12 @@ public class AuditTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (diffOverlay.isActive()) {
+            return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+        }
         if (handleMouseTabBar(mouse)) return true;
         if (handleMouseSortHeader(mouse, currentTableWidths())) return true;
-        if (mouse.isClick()) {
-            int row = mouseToTableRow(mouse, activeRowCount(), activeTableState());
-            if (row >= 0) {
-                activeTableState().select(row);
-                return true;
-            }
-        }
-        if (mouse.isScroll()) {
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                activeTableState().selectPrevious();
-            } else {
-                activeTableState().selectNext(activeRowCount());
-            }
-            return true;
-        }
-        return false;
+        return handleMouseTableInteraction(mouse, activeRowCount(), activeTableState());
     }
 
     private List<Constraint> currentTableWidths() {

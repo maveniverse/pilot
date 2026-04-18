@@ -19,6 +19,8 @@
 package eu.maveniverse.maven.pilot;
 
 import eu.maveniverse.domtrip.Document;
+import eu.maveniverse.domtrip.maven.AlignOptions;
+import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -156,6 +158,54 @@ public class PomEditSession {
             }
         }
         return null;
+    }
+
+    // -- Convention-aware managed dependency --
+
+    /**
+     * Add or update a managed dependency following the project's detected conventions,
+     * placing the managed dependency (and any version property) in this session's POM.
+     *
+     * @param coords the artifact coordinates (groupId, artifactId, version required)
+     */
+    void addManagedDependencyAligned(Coordinates coords) {
+        addManagedDependencyAligned(coords, this);
+    }
+
+    /**
+     * Add or update a managed dependency following conventions, placing the managed
+     * dependency and version property in the specified management session's POM.
+     *
+     * <p>Conventions are detected from the management POM. If the management session is
+     * different from this session, changes are recorded on the management session and
+     * its {@link #beforeMutation()} is called automatically.</p>
+     *
+     * @param coords            the artifact coordinates (groupId, artifactId, version required)
+     * @param managementSession the session whose POM should receive the managed dependency
+     */
+    void addManagedDependencyAligned(Coordinates coords, PomEditSession managementSession) {
+        PomEditor targetEditor = managementSession.editor();
+        AlignOptions conventions = targetEditor.dependencies().detectConventions();
+        AlignOptions.VersionSource versionSource = conventions.versionSource();
+        String version = coords.version();
+        if (managementSession != this) {
+            managementSession.beforeMutation();
+        }
+        if (versionSource == AlignOptions.VersionSource.PROPERTY) {
+            AlignOptions.PropertyNamingConvention naming = conventions.namingConvention();
+            String propName = AlignOptions.generatePropertyName(coords, naming);
+            targetEditor.properties().updateProperty(true, propName, version);
+            coords = Coordinates.of(coords.groupId(), coords.artifactId(), "${" + propName + "}");
+        }
+        targetEditor.dependencies().updateManagedDependency(true, coords);
+        if (managementSession != this) {
+            managementSession.recordChange(
+                    ChangeType.ADD,
+                    "managed",
+                    coords.groupId() + ":" + coords.artifactId(),
+                    "added " + version + " to dependencyManagement",
+                    "cross-module");
+        }
     }
 
     // -- Diff --
