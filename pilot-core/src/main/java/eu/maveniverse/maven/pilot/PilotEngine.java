@@ -107,6 +107,7 @@ public class PilotEngine {
         return createSingleDependenciesPanel(proj, session, projects, sessionProvider);
     }
 
+    @SuppressWarnings("squid:S112") // private method; callers throw mixed checked exceptions
     private ToolPanel createSingleDependenciesPanel(
             PilotProject proj,
             PomEditSession session,
@@ -297,41 +298,58 @@ public class PilotEngine {
         Set<String> mainRefs = mainScan.referencedClasses();
         Set<String> allRefs = new HashSet<>(mainRefs);
         allRefs.addAll(testScan.referencedClasses());
-        Map<String, Set<String>> mainMembers = mainScan.memberReferences();
-        Map<String, Set<String>> testMembers = testScan.memberReferences();
 
         for (var deps : List.of(declared, transitive)) {
             for (var dep : deps) {
                 Set<String> depClasses = gaToClasses.get(dep.ga());
                 dep.totalClasses = depClasses != null ? depClasses.size() : 0;
-
                 if (depClasses != null) {
                     boolean isTest = TEST_SCOPES.contains(dep.scope);
-                    Set<String> refs = isTest ? allRefs : mainRefs;
-                    Map<String, List<String>> used = new LinkedHashMap<>();
-                    for (String cls : depClasses) {
-                        if (!refs.contains(cls)) continue;
-                        Set<String> memberSet = new HashSet<>();
-                        Set<String> m = mainMembers.get(cls);
-                        if (m != null) memberSet.addAll(m);
-                        if (isTest) {
-                            Set<String> t = testMembers.get(cls);
-                            if (t != null) memberSet.addAll(t);
-                        }
-                        used.put(cls, new ArrayList<>(memberSet));
-                    }
-                    dep.usedMembers = used.isEmpty() ? null : used;
+                    dep.usedMembers = findUsedMembers(
+                            depClasses,
+                            isTest,
+                            mainRefs,
+                            allRefs,
+                            mainScan.memberReferences(),
+                            testScan.memberReferences());
                 }
-
-                File jarFile = gaToJar.get(dep.ga());
-                if (jarFile != null) {
-                    Set<String> spi = DependencyUsageAnalyzer.getRuntimeDiscoveryClasses(jarFile);
-                    if (!spi.isEmpty()) {
-                        dep.spiServices = new ArrayList<>(spi);
-                    }
-                }
+                dep.spiServices = findSpiServices(gaToJar, dep.ga());
             }
         }
+    }
+
+    private static Map<String, List<String>> findUsedMembers(
+            Set<String> depClasses,
+            boolean isTest,
+            Set<String> mainRefs,
+            Set<String> allRefs,
+            Map<String, Set<String>> mainMembers,
+            Map<String, Set<String>> testMembers) {
+        Set<String> refs = isTest ? allRefs : mainRefs;
+        Map<String, List<String>> used = new LinkedHashMap<>();
+        for (String cls : depClasses) {
+            if (!refs.contains(cls)) continue;
+            Set<String> memberSet = new HashSet<>();
+            Set<String> m = mainMembers.get(cls);
+            if (m != null) memberSet.addAll(m);
+            if (isTest) {
+                Set<String> t = testMembers.get(cls);
+                if (t != null) memberSet.addAll(t);
+            }
+            used.put(cls, new ArrayList<>(memberSet));
+        }
+        return used.isEmpty() ? null : used;
+    }
+
+    private static List<String> findSpiServices(Map<String, File> gaToJar, String ga) {
+        File jarFile = gaToJar.get(ga);
+        if (jarFile != null) {
+            Set<String> spi = DependencyUsageAnalyzer.getRuntimeDiscoveryClasses(jarFile);
+            if (!spi.isEmpty()) {
+                return new ArrayList<>(spi);
+            }
+        }
+        return null;
     }
 
     private static String reactorGav(List<PilotProject> projects) {

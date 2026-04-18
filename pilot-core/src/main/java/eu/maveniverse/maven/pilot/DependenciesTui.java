@@ -301,6 +301,7 @@ public class DependenciesTui extends ToolPanel {
     }
 
     /** Panel-mode constructor with embedded tree view and management session. */
+    @SuppressWarnings("squid:S107") // delegation target for simpler constructors
     public DependenciesTui(
             List<DepEntry> declared,
             List<DepEntry> transitive,
@@ -584,7 +585,7 @@ public class DependenciesTui extends ToolPanel {
             return true;
         }
 
-        if (key.isCharIgnoreCase('c') && !reactorMode) {
+        if (key.isCharIgnoreCase('c')) {
             changeScope();
             return true;
         }
@@ -988,8 +989,8 @@ public class DependenciesTui extends ToolPanel {
         boolean hadManagedEntry = editor.document()
                 .root()
                 .childElement("dependencyManagement")
-                .flatMap(dm -> dm.childElement("dependencies"))
-                .flatMap(deps -> deps.childElements("dependency")
+                .flatMap(dm -> dm.childElement(SECTION_DEPENDENCIES))
+                .flatMap(deps -> deps.childElements(TARGET_DEPENDENCY)
                         .filter(coords.predicateGATC())
                         .findFirst())
                 .isPresent();

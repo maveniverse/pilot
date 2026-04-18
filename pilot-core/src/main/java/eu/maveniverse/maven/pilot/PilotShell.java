@@ -662,7 +662,9 @@ public class PilotShell {
                 if (panel != null && runner != null) {
                     runner.runOnRenderThread(() -> onPanelLoaded(cacheKey, panel, subView));
                 }
-            } catch (Throwable e) {
+            } catch (Exception e) {
+                handlePanelLoadError(cacheKey, e);
+            } catch (Error e) {
                 handlePanelLoadError(cacheKey, e);
             }
         });
@@ -691,6 +693,7 @@ public class PilotShell {
         }
     }
 
+    @SuppressWarnings("squid:S106") // no logger framework available; stderr is intentional for diagnostics
     private void handlePanelLoadError(String cacheKey, Throwable e) {
         System.err.println("[Pilot] Panel load error for " + cacheKey + ": " + e);
         e.printStackTrace(System.err);
