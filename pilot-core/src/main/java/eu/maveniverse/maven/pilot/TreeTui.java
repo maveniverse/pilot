@@ -574,95 +574,93 @@ public class TreeTui extends ToolPanel {
                 .build();
 
         List<Line> lines = new ArrayList<>();
-
-        // Line 1: scope, classifier, optional, depth
-        List<Span> mainSpans = new ArrayList<>();
-        mainSpans.add(Span.raw(" Scope: ").bold());
-        mainSpans.add(Span.styled(node.scope, scopeStyle(node.scope)));
-
-        if (node.classifier != null && !node.classifier.isEmpty()) {
-            mainSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-            mainSpans.add(Span.raw("Classifier: ").bold());
-            mainSpans.add(Span.raw(node.classifier));
-        }
-
-        if (node.optional) {
-            mainSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-            mainSpans.add(Span.raw("Optional").bold().fg(theme.statusWarningColor()));
-        }
-
-        mainSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-        mainSpans.add(Span.raw("Depth: ").bold());
-        mainSpans.add(Span.raw(String.valueOf(node.depth)));
-
-        if (node.hasChildren()) {
-            mainSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-            mainSpans.add(Span.raw("Children: ").bold());
-            mainSpans.add(Span.raw(String.valueOf(node.children.size())));
-        }
-
-        if (node.repository != null && !node.repository.isEmpty()) {
-            mainSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-            mainSpans.add(Span.raw("Repo: ").bold());
-            mainSpans.add(Span.raw(node.repository).dim());
-        }
-
-        lines.add(Line.from(mainSpans));
-
-        // Line 2: conflict info
-        if (node.isConflict()) {
-            List<Span> conflictSpans = new ArrayList<>();
-            conflictSpans.add(Span.raw(" ⚠ Conflict: ").bold().fg(theme.statusWarningColor()));
-            conflictSpans.add(Span.raw("requested ").dim());
-            conflictSpans.add(Span.raw(node.requestedVersion).fg(theme.statusWarningColor()));
-            conflictSpans.add(Span.raw(" → resolved ").dim());
-            conflictSpans.add(Span.raw(node.version).bold());
-            if (node.managedFrom != null) {
-                conflictSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-                conflictSpans.add(Span.raw("Managed by: ").bold());
-                conflictSpans.add(Span.raw(node.managedFrom).dim());
-            }
-            lines.add(Line.from(conflictSpans));
-        } else if (node.managedFrom != null) {
-            List<Span> managedSpans = new ArrayList<>();
-            managedSpans.add(Span.raw(" Managed by: ").bold());
-            managedSpans.add(Span.raw(node.managedFrom).dim());
-            lines.add(Line.from(managedSpans));
-        }
-
-        // Line 3+: POM metadata from Central
-        String pomKey = node.gav();
-        SearchTui.PomInfo info = pomInfoCache.get(pomKey);
-        if (info != null && info.name != null) {
-            List<Span> pomSpans = new ArrayList<>();
-            pomSpans.add(Span.raw(" ").bold());
-            pomSpans.add(Span.raw(info.name).bold().cyan());
-            if (info.license != null) {
-                pomSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-                pomSpans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
-            }
-            if (info.organization != null) {
-                pomSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-                pomSpans.add(Span.raw(info.organization).dim());
-            }
-            if (info.date != null) {
-                pomSpans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
-                pomSpans.add(Span.raw(info.date).dim());
-            }
-            lines.add(Line.from(pomSpans));
-
-            if (info.description != null) {
-                int maxWidth = Math.max(10, area.width() - 4);
-                String desc = info.description.length() > maxWidth
-                        ? info.description.substring(0, maxWidth - 3) + "..."
-                        : info.description;
-                lines.add(Line.from(Span.raw(" " + desc).dim()));
-            }
-        }
+        lines.add(buildNodeSummaryLine(node));
+        buildConflictLine(node, lines);
+        buildPomInfoLines(node, lines, area.width());
 
         Paragraph details =
                 Paragraph.builder().text(Text.from(lines)).block(block).build();
         frame.renderWidget(details, area);
+    }
+
+    private Line buildNodeSummaryLine(DependencyTreeModel.TreeNode node) {
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" Scope: ").bold());
+        spans.add(Span.styled(node.scope, scopeStyle(node.scope)));
+
+        if (node.classifier != null && !node.classifier.isEmpty()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Classifier: ").bold());
+            spans.add(Span.raw(node.classifier));
+        }
+        if (node.optional) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Optional").bold().fg(theme.statusWarningColor()));
+        }
+        spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+        spans.add(Span.raw("Depth: ").bold());
+        spans.add(Span.raw(String.valueOf(node.depth)));
+        if (node.hasChildren()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Children: ").bold());
+            spans.add(Span.raw(String.valueOf(node.children.size())));
+        }
+        if (node.repository != null && !node.repository.isEmpty()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Repo: ").bold());
+            spans.add(Span.raw(node.repository).dim());
+        }
+        return Line.from(spans);
+    }
+
+    private void buildConflictLine(DependencyTreeModel.TreeNode node, List<Line> lines) {
+        if (node.isConflict()) {
+            List<Span> spans = new ArrayList<>();
+            spans.add(Span.raw(" ⚠ Conflict: ").bold().fg(theme.statusWarningColor()));
+            spans.add(Span.raw("requested ").dim());
+            spans.add(Span.raw(node.requestedVersion).fg(theme.statusWarningColor()));
+            spans.add(Span.raw(" → resolved ").dim());
+            spans.add(Span.raw(node.version).bold());
+            if (node.managedFrom != null) {
+                spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+                spans.add(Span.raw("Managed by: ").bold());
+                spans.add(Span.raw(node.managedFrom).dim());
+            }
+            lines.add(Line.from(spans));
+        } else if (node.managedFrom != null) {
+            lines.add(Line.from(
+                    Span.raw(" Managed by: ").bold(), Span.raw(node.managedFrom).dim()));
+        }
+    }
+
+    private void buildPomInfoLines(DependencyTreeModel.TreeNode node, List<Line> lines, int areaWidth) {
+        SearchTui.PomInfo info = pomInfoCache.get(node.gav());
+        if (info == null || info.name == null) return;
+
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" ").bold());
+        spans.add(Span.raw(info.name).bold().cyan());
+        if (info.license != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
+        }
+        if (info.organization != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.organization).dim());
+        }
+        if (info.date != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.date).dim());
+        }
+        lines.add(Line.from(spans));
+
+        if (info.description != null) {
+            int maxWidth = Math.max(10, areaWidth - 4);
+            String desc = info.description.length() > maxWidth
+                    ? info.description.substring(0, maxWidth - 3) + "..."
+                    : info.description;
+            lines.add(Line.from(Span.raw(" " + desc).dim()));
+        }
     }
 
     private Style scopeStyle(String scope) {

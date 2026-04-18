@@ -30,6 +30,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Logger;
 import org.apache.maven.api.Artifact;
 import org.apache.maven.api.DependencyCoordinates;
 import org.apache.maven.api.DownloadedArtifact;
@@ -56,6 +57,8 @@ import org.apache.maven.api.services.xml.ModelXmlFactory;
  * is not available in the standalone API.
  */
 class Maven4PilotResolver implements PilotResolver {
+
+    private static final Logger LOGGER = Logger.getLogger(Maven4PilotResolver.class.getName());
 
     private final Session session;
     private final Map<String, Model> effectiveModels;
@@ -108,8 +111,8 @@ class Maven4PilotResolver implements PilotResolver {
             DependencyResolverResult result = resolver.resolve(request);
             return convertTree(result.getRoot());
         } catch (Exception e) {
-            System.err.println("[Pilot] collectDependencies failed for " + model.getGroupId() + ":"
-                    + model.getArtifactId() + ": " + e);
+            LOGGER.warning(
+                    "collectDependencies failed for " + model.getGroupId() + ":" + model.getArtifactId() + ": " + e);
             DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
                     model.getGroupId(),
                     model.getArtifactId(),
@@ -225,35 +228,7 @@ class Maven4PilotResolver implements PilotResolver {
     private static DependencyTreeModel.TreeNode convertNode(
             Node node, int depth, int[] counter, Set<String> visited, List<DependencyTreeModel.TreeNode> conflicts) {
         counter[0]++;
-
-        String groupId, artifactId, classifier, version, scope;
-        boolean optional = false;
-
-        if (node.getDependency() != null) {
-            var dep = node.getDependency();
-            groupId = dep.getGroupId();
-            artifactId = dep.getArtifactId();
-            classifier = dep.getClassifier() != null ? dep.getClassifier() : "";
-            version = dep.getVersion() != null ? dep.getVersion().toString() : "?";
-            scope = dep.getScope() != null ? dep.getScope().id() : "";
-            optional = dep.isOptional();
-        } else if (node.getArtifact() != null) {
-            Artifact a = node.getArtifact();
-            groupId = a.getGroupId();
-            artifactId = a.getArtifactId();
-            classifier = a.getClassifier() != null ? a.getClassifier() : "";
-            version = a.getVersion() != null ? a.getVersion().toString() : "?";
-            scope = "";
-        } else {
-            groupId = "?";
-            artifactId = "?";
-            classifier = "";
-            version = "?";
-            scope = "";
-        }
-
-        DependencyTreeModel.TreeNode treeNode =
-                new DependencyTreeModel.TreeNode(groupId, artifactId, classifier, version, scope, optional, depth);
+        DependencyTreeModel.TreeNode treeNode = createTreeNode(node, depth);
 
         try {
             treeNode.repository = node.getRepository().map(r -> r.getId()).orElse(null);
@@ -261,7 +236,7 @@ class Maven4PilotResolver implements PilotResolver {
             // Maven API does not guarantee getRepository() support on all node types
         }
 
-        String nodeKey = treeNode.ga() + ":" + version;
+        String nodeKey = treeNode.gav();
         if (!visited.add(nodeKey)) {
             return treeNode;
         }
@@ -272,5 +247,31 @@ class Maven4PilotResolver implements PilotResolver {
 
         visited.remove(nodeKey);
         return treeNode;
+    }
+
+    private static DependencyTreeModel.TreeNode createTreeNode(Node node, int depth) {
+        if (node.getDependency() != null) {
+            var dep = node.getDependency();
+            return new DependencyTreeModel.TreeNode(
+                    dep.getGroupId(),
+                    dep.getArtifactId(),
+                    dep.getClassifier() != null ? dep.getClassifier() : "",
+                    dep.getVersion() != null ? dep.getVersion().toString() : "?",
+                    dep.getScope() != null ? dep.getScope().id() : "",
+                    dep.isOptional(),
+                    depth);
+        }
+        if (node.getArtifact() != null) {
+            Artifact a = node.getArtifact();
+            return new DependencyTreeModel.TreeNode(
+                    a.getGroupId(),
+                    a.getArtifactId(),
+                    a.getClassifier() != null ? a.getClassifier() : "",
+                    a.getVersion() != null ? a.getVersion().toString() : "?",
+                    "",
+                    false,
+                    depth);
+        }
+        return new DependencyTreeModel.TreeNode("?", "?", "", "?", "", false, depth);
     }
 }
