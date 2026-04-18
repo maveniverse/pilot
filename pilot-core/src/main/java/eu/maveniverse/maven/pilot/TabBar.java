@@ -58,6 +58,11 @@ class TabBar {
      * Cycle to the next enum value, wrapping around from last to first.
      */
     static <V extends Enum<V>> V next(V current, V[] values) {
-        return values[(current.ordinal() + 1) % values.length];
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == current) {
+                return values[(i + 1) % values.length];
+            }
+        }
+        return values[0];
     }
 }

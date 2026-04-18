@@ -211,11 +211,14 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private enum View {
+        TREE,
         DECLARED,
         TRANSITIVE,
         MANAGED
     }
 
+    private final TreeTui treeTui;
+    private final View[] views;
     private final List<DepEntry> declared;
     private final List<DepEntry> transitive;
     private final List<ManagedEntry> managed;
@@ -288,13 +291,28 @@ public class DependenciesTui extends ToolPanel {
             PomEditSession session,
             String projectGav,
             boolean bytecodeAnalyzed) {
+        this(declared, transitive, managed, session, projectGav, bytecodeAnalyzed, null);
+    }
+
+    /** Panel-mode constructor with embedded tree view. */
+    public DependenciesTui(
+            List<DepEntry> declared,
+            List<DepEntry> transitive,
+            List<ManagedEntry> managed,
+            PomEditSession session,
+            String projectGav,
+            boolean bytecodeAnalyzed,
+            TreeTui treeTui) {
         this.editSession = session;
         this.declared = declared;
         this.transitive = transitive;
         this.managed = managed;
         this.projectGav = projectGav;
         this.bytecodeAnalyzed = bytecodeAnalyzed;
-        this.sortState = new SortState(sortColumnCount());
+        this.treeTui = treeTui;
+        this.views = treeTui != null ? View.values() : new View[] {View.DECLARED, View.TRANSITIVE, View.MANAGED};
+        this.view = views[0];
+        this.sortState = view != View.TREE ? new SortState(sortColumnCount()) : null;
         updateStatus();
         if (!declared.isEmpty()) {
             tableState.select(0);
@@ -433,6 +451,10 @@ public class DependenciesTui extends ToolPanel {
             return;
         }
         Rect contentArea = renderTabBar(frame, area);
+        if (view == View.TREE && treeTui != null) {
+            treeTui.render(frame, contentArea);
+            return;
+        }
         if (view == View.MANAGED) {
             lastContentHeight = contentArea.height();
             renderManagedTable(frame, contentArea);
@@ -459,6 +481,22 @@ public class DependenciesTui extends ToolPanel {
             return true; // consume all keys during overlay
         }
 
+        // Tab always cycles views (before delegation to treeTui)
+        if (key.isKey(KeyCode.TAB)) {
+            view = TabBar.next(view, views);
+            if (view != View.TREE) {
+                tableState.select(0);
+                clearSearch();
+                sortState = new SortState(sortColumnCount());
+            }
+            return true;
+        }
+
+        // Tree view: delegate to TreeTui
+        if (view == View.TREE && treeTui != null) {
+            return treeTui.handleKeyEvent(key);
+        }
+
         if (handleSearchInput(key)) return true;
         if (handleSortInput(key)) return true;
 
@@ -471,12 +509,6 @@ public class DependenciesTui extends ToolPanel {
             return true;
         }
         if (TableNavigation.handlePageKeys(key, tableState, currentListSize(), lastContentHeight)) {
-            return true;
-        }
-
-        if (key.isKey(KeyCode.TAB)) {
-            view = TabBar.next(view, View.values());
-            tableState.select(0);
             return true;
         }
 
@@ -519,6 +551,9 @@ public class DependenciesTui extends ToolPanel {
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (handleMouseTabBar(mouse)) return true;
+        if (view == View.TREE && treeTui != null) {
+            return treeTui.handleMouseEvent(mouse, area);
+        }
         if (view != View.MANAGED && handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
         if (mouse.isClick()) {
             int row = mouseToTableRow(mouse, currentListSize(), tableState);
@@ -543,30 +578,47 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     int subViewCount() {
-        return 3;
+        return views.length;
     }
 
     @Override
     int activeSubView() {
-        return view.ordinal();
+        for (int i = 0; i < views.length; i++) {
+            if (views[i] == view) return i;
+        }
+        return 0;
     }
 
     @Override
     void setActiveSubView(int index) {
-        view = View.values()[index];
-        tableState.select(0);
-        clearSearch();
-        sortState = new SortState(sortColumnCount());
+        view = views[index];
+        if (view != View.TREE) {
+            tableState.select(0);
+            clearSearch();
+            sortState = new SortState(sortColumnCount());
+        }
     }
 
     @Override
     List<String> subViewNames() {
-        return List.of(
-                "Declared: " + declared.size(), "Transitive: " + transitive.size(), "Managed: " + managed.size());
+        List<String> names = new ArrayList<>();
+        for (View v : views) {
+            names.add(
+                    switch (v) {
+                        case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
+                        case DECLARED -> "Declared: " + declared.size();
+                        case TRANSITIVE -> "Transitive: " + transitive.size();
+                        case MANAGED -> "Managed: " + managed.size();
+                    });
+        }
+        return names;
     }
 
     @Override
     public String status() {
+        if (view == View.TREE && treeTui != null) {
+            return treeTui.status();
+        }
         String search = searchStatus();
         if (search != null) {
             return searchMode ? search : status + " — " + search;
@@ -576,6 +628,9 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     public List<Span> keyHints() {
+        if (view == View.TREE && treeTui != null) {
+            return treeTui.keyHints();
+        }
         List<Span> searchHints = searchKeyHints();
         if (!searchHints.isEmpty()) {
             return searchHints;
@@ -614,7 +669,11 @@ public class DependenciesTui extends ToolPanel {
 
     @Override
     public List<HelpOverlay.Section> helpSections() {
-        return HelpOverlay.parse("""
+        List<HelpOverlay.Section> sections = new ArrayList<>();
+        if (treeTui != null) {
+            sections.addAll(treeTui.helpSections());
+        }
+        sections.addAll(HelpOverlay.parse("""
                 ## Dependency Analysis
                 Uses bytecode analysis to compare what is declared
                 in the POM against what is actually used in code.
@@ -645,7 +704,31 @@ public class DependenciesTui extends ToolPanel {
                 c               Cycle scope (compile → test → runtime → ...)
                 s / S           Sort by column / reverse direction
                 d               Preview POM changes as unified diff
-                """);
+                """));
+        return sections;
+    }
+
+    @Override
+    void close() {
+        if (treeTui != null) {
+            treeTui.close();
+        }
+    }
+
+    @Override
+    void setRunner(TuiRunner runner) {
+        super.setRunner(runner);
+        if (treeTui != null) {
+            treeTui.setRunner(runner);
+        }
+    }
+
+    @Override
+    void setFocused(boolean focused) {
+        super.setFocused(focused);
+        if (treeTui != null) {
+            treeTui.setFocused(focused);
+        }
     }
 
     private List<DepEntry> currentList() {
@@ -654,6 +737,7 @@ public class DependenciesTui extends ToolPanel {
 
     private int currentListSize() {
         return switch (view) {
+            case TREE -> 0;
             case DECLARED -> declared.size();
             case TRANSITIVE -> transitive.size();
             case MANAGED -> managed.size();
@@ -1078,7 +1162,8 @@ public class DependenciesTui extends ToolPanel {
         String declaredLabel = "Declared: " + declared.size() + (unused > 0 ? " (" + unused + " unused)" : "");
         String transitiveLabel = "Transitive: " + transitive.size() + (used > 0 ? " (" + used + " used)" : "");
         String managedLabel = "Managed: " + managed.size();
-        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
+        spans.addAll(TabBar.render(view, views, v -> switch (v) {
+            case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
             case DECLARED -> declaredLabel;
             case TRANSITIVE -> transitiveLabel;
             case MANAGED -> managedLabel;

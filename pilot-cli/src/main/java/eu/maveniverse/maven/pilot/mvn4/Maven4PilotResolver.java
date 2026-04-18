@@ -108,7 +108,8 @@ class Maven4PilotResolver implements PilotResolver {
             DependencyResolverResult result = resolver.resolve(request);
             return convertTree(result.getRoot());
         } catch (Exception e) {
-            // Return a minimal tree when collection fails (e.g., un-interpolated properties)
+            System.err.println("[Pilot] collectDependencies failed for " + model.getGroupId() + ":"
+                    + model.getArtifactId() + ": " + e);
             DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
                     model.getGroupId(),
                     model.getArtifactId(),
@@ -253,6 +254,11 @@ class Maven4PilotResolver implements PilotResolver {
 
         DependencyTreeModel.TreeNode treeNode =
                 new DependencyTreeModel.TreeNode(groupId, artifactId, classifier, version, scope, optional, depth);
+
+        try {
+            treeNode.repository = node.getRepository().map(r -> r.getId()).orElse(null);
+        } catch (UnsupportedOperationException ignored) {
+        }
 
         String nodeKey = treeNode.ga() + ":" + version;
         if (!visited.add(nodeKey)) {

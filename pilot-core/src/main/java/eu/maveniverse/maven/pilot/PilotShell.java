@@ -91,13 +91,12 @@ public class PilotShell {
     }
 
     static final List<ToolDef> TOOLS = List.of(
-            new ToolDef("Tree", "tree", 't', false),
             new ToolDef("Deps", "dependencies", 'd', false),
-            new ToolDef("Pom", "pom", 'p', false),
-            new ToolDef("Align", "align", 'a', true),
             new ToolDef("Updates", "updates", 'u', true),
             new ToolDef("Conflicts", "conflicts", 'c', true),
-            new ToolDef("audIt", "audit", 'i', true),
+            new ToolDef("Audit", "audit", 'a', true),
+            new ToolDef("Pom", "pom", 'p', false),
+            new ToolDef("Align", "align", 'l', true),
             new ToolDef("Search", "search", 's', false));
 
     private final Theme theme = Theme.DEFAULT;
@@ -541,10 +540,6 @@ public class PilotShell {
     }
 
     private boolean isToolAvailable(int toolIndex) {
-        ToolDef tool = TOOLS.get(toolIndex);
-        if ("dependencies".equals(tool.id) && treePane != null && treePane.isSelectedParent()) {
-            return false;
-        }
         return true;
     }
 
@@ -770,13 +765,13 @@ public class PilotShell {
             String label;
             if (i == activeToolIndex) {
                 label = "[▸" + tool.name + "]";
-                spans.add(theme.activeToolTab(tool.name));
+                spans.addAll(theme.activeToolTab(tool.name, tool.mnemonic));
             } else if (isToolAvailable(i)) {
                 label = tool.name;
-                spans.add(theme.inactiveToolTab(label));
+                spans.addAll(theme.inactiveToolTab(label, tool.mnemonic));
             } else {
                 label = tool.name;
-                spans.add(theme.unavailableToolTab(label));
+                spans.addAll(theme.unavailableToolTab(label, tool.mnemonic));
             }
             xPos += label.length();
             toolTabEnds[i] = xPos;
@@ -997,7 +992,7 @@ public class PilotShell {
                         new HelpOverlay.Entry("1-9", "Focus sub-view tab by number"),
                         new HelpOverlay.Entry("Enter", "Switch focus to content pane (from tree)"),
                         new HelpOverlay.Entry("\\", "Cycle left panel: full → narrow → hidden"),
-                        new HelpOverlay.Entry("Alt+t/d/p/a/u/c/i/s", "Switch tool"),
+                        new HelpOverlay.Entry("Alt+d/u/c/a/p/l/s", "Switch tool"),
                         new HelpOverlay.Entry("? / h", "Toggle this help screen"),
                         new HelpOverlay.Entry("q / Ctrl+C", "Quit"))));
 

@@ -81,21 +81,15 @@ public class PilotEngine {
             Consumer<String> progress)
             throws Exception {
         return switch (toolId) {
-            case "tree" -> createTreePanel(proj);
             case "dependencies" -> createDependenciesPanel(proj, session);
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
             case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
-            case "align" -> createAlignPanel(proj, projects);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
             case "pom" -> createPomPanel(proj, session);
+            case "align" -> createAlignPanel(proj, projects);
             case "search" -> createSearchPanel();
             default -> null;
         };
-    }
-
-    private ToolPanel createTreePanel(PilotProject proj) {
-        DependencyTreeModel treeModel = cachedCollectDependencies(proj);
-        return new TreeTui(treeModel, scope, proj.gav());
     }
 
     private ToolPanel createDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
@@ -150,11 +144,11 @@ public class PilotEngine {
 
         List<DependenciesTui.ManagedEntry> managed = buildManagedEntries(proj);
 
-        if (session != null) {
-            return new DependenciesTui(declared, transitive, managed, session, proj.gav(), bytecodeAnalyzed);
-        }
-        return new DependenciesTui(
-                declared, transitive, managed, new PomEditSession(proj.pomPath), proj.gav(), bytecodeAnalyzed);
+        DependencyTreeModel treeModel = cachedCollectDependencies(proj);
+        TreeTui treeTui = new TreeTui(treeModel, scope, proj.gav());
+
+        PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
+        return new DependenciesTui(declared, transitive, managed, s, proj.gav(), bytecodeAnalyzed, treeTui);
     }
 
     @SuppressWarnings("unused")

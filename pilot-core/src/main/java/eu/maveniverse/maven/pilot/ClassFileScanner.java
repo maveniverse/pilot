@@ -77,8 +77,8 @@ public final class ClassFileScanner {
                                 .computeIfAbsent(entry.getKey(), k -> new HashSet<>())
                                 .addAll(entry.getValue());
                     }
-                } catch (IOException ignored) {
-                    // skip corrupt or unreadable class files
+                } catch (IOException | IllegalArgumentException ignored) {
+                    // skip corrupt, unreadable, or unsupported class file versions
                 }
             });
         }

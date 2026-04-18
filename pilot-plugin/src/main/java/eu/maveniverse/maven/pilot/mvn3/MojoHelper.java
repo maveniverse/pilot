@@ -270,6 +270,11 @@ public final class MojoHelper {
             conflicts.add(treeNode);
         }
 
+        var repos = node.getRepositories();
+        if (repos != null && !repos.isEmpty()) {
+            treeNode.repository = repos.get(0).getId();
+        }
+
         String nodeKey = treeNode.ga() + ":" + version;
         if (!visited.add(nodeKey)) {
             return treeNode;
