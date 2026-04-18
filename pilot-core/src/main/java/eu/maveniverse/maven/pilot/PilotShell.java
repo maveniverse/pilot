@@ -91,7 +91,7 @@ public class PilotShell {
     }
 
     static final List<ToolDef> TOOLS = List.of(
-            new ToolDef("Deps", "dependencies", 'd', false),
+            new ToolDef("Deps", "dependencies", 'd', true),
             new ToolDef("Updates", "updates", 'u', true),
             new ToolDef("Conflicts", "conflicts", 'c', true),
             new ToolDef("Audit", "audit", 'a', true),
@@ -684,7 +684,7 @@ public class PilotShell {
 
         ToolDef activeTool = TOOLS.get(activeToolIndex);
         if (!activeTool.isModuleIndependent()) {
-            refreshActivePanel(false);
+            refreshActivePanel(true);
         }
     }
 

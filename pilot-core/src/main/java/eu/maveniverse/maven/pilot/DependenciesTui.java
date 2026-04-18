@@ -82,6 +82,7 @@ public class DependenciesTui extends ToolPanel {
         public Map<String, List<String>> usedMembers; // class -> list of member references (methods/fields)
         public int totalClasses; // total classes provided by this dep
         public List<String> spiServices; // SPI service interfaces provided by this dep
+        public final List<String> modules = new ArrayList<>(); // reactor mode: which modules have this dep
 
         /**
          * Creates a DepEntry representing a dependency row in the TUI.
@@ -214,7 +215,9 @@ public class DependenciesTui extends ToolPanel {
         TREE,
         DECLARED,
         TRANSITIVE,
-        MANAGED
+        MANAGED,
+        UNUSED_DECLARED,
+        USED_TRANSITIVE
     }
 
     private final TreeTui treeTui;
@@ -224,6 +227,7 @@ public class DependenciesTui extends ToolPanel {
     private final List<ManagedEntry> managed;
     private final String projectGav;
     private final boolean bytecodeAnalyzed;
+    private final boolean reactorMode;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
@@ -309,12 +313,41 @@ public class DependenciesTui extends ToolPanel {
         this.managed = managed;
         this.projectGav = projectGav;
         this.bytecodeAnalyzed = bytecodeAnalyzed;
+        this.reactorMode = false;
         this.treeTui = treeTui;
-        this.views = treeTui != null ? View.values() : new View[] {View.DECLARED, View.TRANSITIVE, View.MANAGED};
+        this.views = treeTui != null
+                ? new View[] {View.TREE, View.DECLARED, View.TRANSITIVE, View.MANAGED}
+                : new View[] {View.DECLARED, View.TRANSITIVE, View.MANAGED};
         this.view = views[0];
         this.sortState = view != View.TREE ? new SortState(sortColumnCount()) : null;
         updateStatus();
         if (!declared.isEmpty()) {
+            tableState.select(0);
+        }
+    }
+
+    /** Reactor-mode constructor — aggregated dependency hygiene issues across modules. */
+    public DependenciesTui(
+            List<DepEntry> unusedDeclared,
+            List<DepEntry> usedTransitive,
+            String projectGav,
+            int modulesScanned,
+            int modulesSkipped) {
+        this.editSession = null;
+        this.declared = unusedDeclared;
+        this.transitive = usedTransitive;
+        this.managed = List.of();
+        this.projectGav = projectGav;
+        this.bytecodeAnalyzed = true;
+        this.reactorMode = true;
+        this.treeTui = null;
+        this.views = new View[] {View.UNUSED_DECLARED, View.USED_TRANSITIVE};
+        this.view = views[0];
+        this.sortState = new SortState(sortColumnCount());
+        this.status = modulesScanned + " modules scanned"
+                + (modulesSkipped > 0 ? " (" + modulesSkipped + " skipped — not compiled)" : "") + ", "
+                + unusedDeclared.size() + " unused declared, " + usedTransitive.size() + " used transitive";
+        if (!unusedDeclared.isEmpty()) {
             tableState.select(0);
         }
     }
@@ -520,6 +553,10 @@ public class DependenciesTui extends ToolPanel {
             return false;
         }
 
+        if (reactorMode) {
+            return false;
+        }
+
         if (key.isKey(KeyCode.ENTER)) {
             fixSelected();
             return true;
@@ -609,6 +646,8 @@ public class DependenciesTui extends ToolPanel {
                         case DECLARED -> "Declared: " + declared.size();
                         case TRANSITIVE -> "Transitive: " + transitive.size();
                         case MANAGED -> "Managed: " + managed.size();
+                        case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
+                        case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
                     });
         }
         return names;
@@ -732,19 +771,24 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private List<DepEntry> currentList() {
-        return view == View.DECLARED ? declared : transitive;
+        return switch (view) {
+            case DECLARED, UNUSED_DECLARED -> declared;
+            case TRANSITIVE, USED_TRANSITIVE -> transitive;
+            default -> declared;
+        };
     }
 
     private int currentListSize() {
         return switch (view) {
             case TREE -> 0;
-            case DECLARED -> declared.size();
-            case TRANSITIVE -> transitive.size();
+            case DECLARED, UNUSED_DECLARED -> declared.size();
+            case TRANSITIVE, USED_TRANSITIVE -> transitive.size();
             case MANAGED -> managed.size();
         };
     }
 
     private int sortColumnCount() {
+        if (reactorMode) return 4; // icon, ga, version, modules
         int count = 3; // ga, version, scope
         if (bytecodeAnalyzed) count++; // icon column
         if (view == View.TRANSITIVE) count++; // pulled by column
@@ -758,9 +802,13 @@ public class DependenciesTui extends ToolPanel {
         }
         extractors.add(DepEntry::ga);
         extractors.add(dep -> dep.version);
-        extractors.add(dep -> dep.scope);
-        if (view == View.TRANSITIVE) {
-            extractors.add(dep -> dep.pulledBy != null ? dep.pulledBy : "");
+        if (reactorMode) {
+            extractors.add(dep -> String.join(", ", dep.modules));
+        } else {
+            extractors.add(dep -> dep.scope);
+            if (view == View.TRANSITIVE) {
+                extractors.add(dep -> dep.pulledBy != null ? dep.pulledBy : "");
+            }
         }
         return extractors;
     }
@@ -1164,8 +1212,8 @@ public class DependenciesTui extends ToolPanel {
         String managedLabel = "Managed: " + managed.size();
         spans.addAll(TabBar.render(view, views, v -> switch (v) {
             case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
-            case DECLARED -> declaredLabel;
-            case TRANSITIVE -> transitiveLabel;
+            case DECLARED, UNUSED_DECLARED -> declaredLabel;
+            case TRANSITIVE, USED_TRANSITIVE -> transitiveLabel;
             case MANAGED -> managedLabel;
         }));
 
@@ -1292,12 +1340,21 @@ public class DependenciesTui extends ToolPanel {
         if (bytecodeAnalyzed) headers.add("");
         headers.add(COL_GA);
         headers.add(COL_VERSION);
-        headers.add(COL_SCOPE);
-        if (view == View.TRANSITIVE) headers.add("pulled by");
+        if (reactorMode) {
+            headers.add("modules");
+        } else {
+            headers.add(COL_SCOPE);
+            if (view == View.TRANSITIVE) headers.add("pulled by");
+        }
         return sortState.decorateHeader(headers, theme.tableHeader());
     }
 
     private Row buildRow(DepEntry dep) {
+        if (reactorMode) {
+            String icon = usageIcon(dep);
+            String modules = String.join(", ", dep.modules);
+            return Row.from(icon, dep.ga(), dep.version, modules).style(usageRowStyle(dep));
+        }
         String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
         if (bytecodeAnalyzed) {
             String icon = usageIcon(dep);
@@ -1312,6 +1369,12 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private Row buildSearchRow(DepEntry dep) {
+        if (reactorMode) {
+            String icon = usageIcon(dep);
+            String modules = String.join(", ", dep.modules);
+            return Row.from(icon, dep.ga(), dep.version, modules)
+                    .style(usageRowStyle(dep).bg(theme.searchHighlightBg()));
+        }
         String via = dep.pulledBy != null ? "(via " + dep.pulledBy + ")" : "";
         if (bytecodeAnalyzed) {
             String icon = usageIcon(dep);
@@ -1327,6 +1390,11 @@ public class DependenciesTui extends ToolPanel {
     }
 
     private Constraint[] getTableWidths() {
+        if (reactorMode) {
+            return new Constraint[] {
+                Constraint.length(4), Constraint.percentage(35), Constraint.percentage(15), Constraint.percentage(46)
+            };
+        }
         if (bytecodeAnalyzed) {
             return (view == View.DECLARED)
                     ? new Constraint[] {
@@ -1413,6 +1481,16 @@ public class DependenciesTui extends ToolPanel {
 
         List<Line> lines = new ArrayList<>();
         lines.add(Line.from(spans));
+
+        if (!dep.modules.isEmpty()) {
+            List<Span> moduleSpans = new ArrayList<>();
+            moduleSpans.add(Span.raw(" Modules (" + dep.modules.size() + "): ").bold());
+            for (int i = 0; i < dep.modules.size(); i++) {
+                if (i > 0) moduleSpans.add(Span.raw(", ").fg(theme.detailSeparatorColor()));
+                moduleSpans.add(Span.raw(dep.modules.get(i)).cyan());
+            }
+            lines.add(Line.from(moduleSpans));
+        }
 
         int maxLines = Math.max(1, area.height() - 4);
         int lineCount = 0;

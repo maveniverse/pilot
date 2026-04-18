@@ -81,7 +81,7 @@ public class PilotEngine {
             Consumer<String> progress)
             throws Exception {
         return switch (toolId) {
-            case "dependencies" -> createDependenciesPanel(proj, session);
+            case "dependencies" -> createDependenciesPanel(proj, projects, session, progress);
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
             case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
@@ -92,7 +92,16 @@ public class PilotEngine {
         };
     }
 
-    private ToolPanel createDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
+    private ToolPanel createDependenciesPanel(
+            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress)
+            throws Exception {
+        if (projects.size() > 1) {
+            return createReactorDependenciesPanel(projects, progress);
+        }
+        return createSingleDependenciesPanel(proj, session);
+    }
+
+    private ToolPanel createSingleDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (PilotProject.Dep dep : proj.dependencies) {
@@ -149,6 +158,103 @@ public class PilotEngine {
 
         PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
         return new DependenciesTui(declared, transitive, managed, s, proj.gav(), bytecodeAnalyzed, treeTui);
+    }
+
+    private ToolPanel createReactorDependenciesPanel(List<PilotProject> projects, Consumer<String> progress)
+            throws Exception {
+        resolveAllDependencies(projects, progress);
+
+        Map<String, DependenciesTui.DepEntry> unusedMap = new LinkedHashMap<>();
+        Map<String, DependenciesTui.DepEntry> usedTransMap = new LinkedHashMap<>();
+        int modulesScanned = 0;
+        int modulesSkipped = 0;
+
+        for (PilotProject p : projects) {
+            Path classesDir = p.outputDirectory;
+            Path testClassesDir = p.testOutputDirectory;
+            if (classesDir == null || !Files.isDirectory(classesDir)) {
+                modulesSkipped++;
+                continue;
+            }
+            modulesScanned++;
+            progress.accept("Analyzing bytecode… " + modulesScanned + "/" + projects.size() + "\n" + p.artifactId);
+
+            Set<String> declaredGAs = new HashSet<>();
+            List<DependenciesTui.DepEntry> declared = new ArrayList<>();
+            for (PilotProject.Dep dep : p.dependencies) {
+                DependenciesTui.addDeclaredEntry(
+                        declaredGAs,
+                        declared,
+                        dep.groupId(),
+                        dep.artifactId(),
+                        dep.classifier(),
+                        dep.version(),
+                        dep.scope());
+            }
+
+            PilotResolver.ResolvedDependencies resolved = resolver.resolveDependencies(p);
+            Set<String> transitiveGAs = new HashSet<>();
+            List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
+            DependenciesTui.collectTransitive(resolved.tree().root, declaredGAs, transitiveGAs, transitive);
+
+            Map<String, java.io.File> gaToJar = resolved.gaToJar();
+
+            ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(classesDir);
+            ClassFileScanner.ScanResult testScan = testClassesDir != null && Files.isDirectory(testClassesDir)
+                    ? ClassFileScanner.scanDirectory(testClassesDir)
+                    : new ClassFileScanner.ScanResult(Set.of(), Map.of());
+            Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
+                    mainScan.referencedClasses(),
+                    testScan.referencedClasses(),
+                    classIndex,
+                    gaToJar,
+                    declared,
+                    transitive);
+
+            for (var dep : declared) {
+                DependencyUsageAnalyzer.UsageStatus us =
+                        usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                if (us == DependencyUsageAnalyzer.UsageStatus.UNUSED) {
+                    DependenciesTui.DepEntry existing = unusedMap.get(dep.ga());
+                    if (existing == null) {
+                        dep.usageStatus = DependencyUsageAnalyzer.UsageStatus.UNUSED;
+                        dep.modules.add(p.artifactId);
+                        unusedMap.put(dep.ga(), dep);
+                    } else {
+                        if (!existing.modules.contains(p.artifactId)) {
+                            existing.modules.add(p.artifactId);
+                        }
+                    }
+                }
+            }
+
+            for (var dep : transitive) {
+                DependencyUsageAnalyzer.UsageStatus us = usage.transitiveUsage()
+                        .getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                if (us == DependencyUsageAnalyzer.UsageStatus.USED) {
+                    DependenciesTui.DepEntry existing = usedTransMap.get(dep.ga());
+                    if (existing == null) {
+                        dep.usageStatus = DependencyUsageAnalyzer.UsageStatus.USED;
+                        dep.modules.add(p.artifactId);
+                        usedTransMap.put(dep.ga(), dep);
+                    } else {
+                        if (!existing.modules.contains(p.artifactId)) {
+                            existing.modules.add(p.artifactId);
+                        }
+                    }
+                }
+            }
+        }
+
+        PilotProject root = projects.get(0);
+        String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
+        return new DependenciesTui(
+                new ArrayList<>(unusedMap.values()),
+                new ArrayList<>(usedTransMap.values()),
+                gav,
+                modulesScanned,
+                modulesSkipped);
     }
 
     @SuppressWarnings("unused")
