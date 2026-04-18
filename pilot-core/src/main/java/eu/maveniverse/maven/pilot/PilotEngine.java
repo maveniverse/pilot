@@ -81,24 +81,27 @@ public class PilotEngine {
             Consumer<String> progress)
             throws Exception {
         return switch (toolId) {
-            case "tree" -> createTreePanel(proj);
-            case "dependencies" -> createDependenciesPanel(proj, session);
+            case "dependencies" -> createDependenciesPanel(proj, projects, session, progress);
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
             case "conflicts" -> createConflictsPanel(proj, projects, session, progress);
-            case "align" -> createAlignPanel(proj, projects);
             case "audit" -> createAuditPanel(proj, projects, session, progress);
             case "pom" -> createPomPanel(proj, session);
+            case "align" -> createAlignPanel(proj, projects);
             case "search" -> createSearchPanel();
             default -> null;
         };
     }
 
-    private ToolPanel createTreePanel(PilotProject proj) {
-        DependencyTreeModel treeModel = cachedCollectDependencies(proj);
-        return new TreeTui(treeModel, scope, proj.gav());
+    private ToolPanel createDependenciesPanel(
+            PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress)
+            throws Exception {
+        if (projects.size() > 1) {
+            return createReactorDependenciesPanel(projects, progress);
+        }
+        return createSingleDependenciesPanel(proj, session);
     }
 
-    private ToolPanel createDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
+    private ToolPanel createSingleDependenciesPanel(PilotProject proj, PomEditSession session) throws Exception {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (PilotProject.Dep dep : proj.dependencies) {
@@ -150,11 +153,103 @@ public class PilotEngine {
 
         List<DependenciesTui.ManagedEntry> managed = buildManagedEntries(proj);
 
-        if (session != null) {
-            return new DependenciesTui(declared, transitive, managed, session, proj.gav(), bytecodeAnalyzed);
+        DependencyTreeModel treeModel = cachedCollectDependencies(proj);
+        TreeTui treeTui = new TreeTui(treeModel, scope, proj.gav());
+
+        PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
+        return new DependenciesTui(declared, transitive, managed, s, proj.gav(), bytecodeAnalyzed, treeTui);
+    }
+
+    private ToolPanel createReactorDependenciesPanel(List<PilotProject> projects, Consumer<String> progress)
+            throws Exception {
+        Map<String, DependenciesTui.DepEntry> unusedMap = new LinkedHashMap<>();
+        Map<String, DependenciesTui.DepEntry> usedTransMap = new LinkedHashMap<>();
+        int modulesScanned = 0;
+        int modulesSkipped = 0;
+
+        for (PilotProject p : projects) {
+            if (p.outputDirectory == null || !Files.isDirectory(p.outputDirectory)) {
+                modulesSkipped++;
+                continue;
+            }
+            modulesScanned++;
+            progress.accept("Analyzing dependencies… " + modulesScanned + "/" + projects.size() + "\n" + p.artifactId);
+            analyzeModuleUsage(p, unusedMap, usedTransMap);
         }
+
         return new DependenciesTui(
-                declared, transitive, managed, new PomEditSession(proj.pomPath), proj.gav(), bytecodeAnalyzed);
+                new ArrayList<>(unusedMap.values()),
+                new ArrayList<>(usedTransMap.values()),
+                reactorGav(projects),
+                modulesScanned,
+                modulesSkipped);
+    }
+
+    private void analyzeModuleUsage(
+            PilotProject p,
+            Map<String, DependenciesTui.DepEntry> unusedMap,
+            Map<String, DependenciesTui.DepEntry> usedTransMap)
+            throws Exception {
+        Set<String> declaredGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> declared = new ArrayList<>();
+        for (PilotProject.Dep dep : p.dependencies) {
+            DependenciesTui.addDeclaredEntry(
+                    declaredGAs,
+                    declared,
+                    dep.groupId(),
+                    dep.artifactId(),
+                    dep.classifier(),
+                    dep.version(),
+                    dep.scope());
+        }
+
+        PilotResolver.ResolvedDependencies resolved = resolver.resolveDependencies(p);
+        Set<String> transitiveGAs = new HashSet<>();
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
+        DependenciesTui.collectTransitive(resolved.tree().root, declaredGAs, transitiveGAs, transitive);
+
+        Map<String, java.io.File> gaToJar = resolved.gaToJar();
+        ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(p.outputDirectory);
+        ClassFileScanner.ScanResult testScan = p.testOutputDirectory != null && Files.isDirectory(p.testOutputDirectory)
+                ? ClassFileScanner.scanDirectory(p.testOutputDirectory)
+                : new ClassFileScanner.ScanResult(Set.of(), Map.of());
+        Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
+                mainScan.referencedClasses(), testScan.referencedClasses(), classIndex, gaToJar, declared, transitive);
+
+        accumulateEntries(
+                declared, usage.declaredUsage(), DependencyUsageAnalyzer.UsageStatus.UNUSED, unusedMap, p.artifactId);
+        accumulateEntries(
+                transitive,
+                usage.transitiveUsage(),
+                DependencyUsageAnalyzer.UsageStatus.USED,
+                usedTransMap,
+                p.artifactId);
+    }
+
+    private static void accumulateEntries(
+            List<DependenciesTui.DepEntry> deps,
+            Map<String, DependencyUsageAnalyzer.UsageStatus> usageMap,
+            DependencyUsageAnalyzer.UsageStatus targetStatus,
+            Map<String, DependenciesTui.DepEntry> accumulator,
+            String moduleName) {
+        for (var dep : deps) {
+            var us = usageMap.getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+            if (us == targetStatus) {
+                var existing = accumulator.get(dep.ga());
+                if (existing == null) {
+                    dep.usageStatus = targetStatus;
+                    dep.modules.add(moduleName);
+                    accumulator.put(dep.ga(), dep);
+                } else if (!existing.modules.contains(moduleName)) {
+                    existing.modules.add(moduleName);
+                }
+            }
+        }
+    }
+
+    private static String reactorGav(List<PilotProject> projects) {
+        return projects.get(0).gav() + " (reactor: " + projects.size() + " modules)";
     }
 
     @SuppressWarnings("unused")
@@ -176,9 +271,7 @@ public class PilotEngine {
             PilotProject proj, List<PilotProject> projects, PomEditSession session, Consumer<String> progress) {
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
         resolveAllDependencies(targetProjects, progress);
-        String gav = projects.size() > 1
-                ? projects.get(0).gav() + " (reactor: " + projects.size() + " modules)"
-                : proj.gav();
+        String gav = projects.size() > 1 ? reactorGav(projects) : proj.gav();
         PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
         return new ConflictsTui(targetProjects, s, gav, this::cachedCollectDependencies);
     }
@@ -224,7 +317,7 @@ public class PilotEngine {
                     + entryMap.size() + " unique dependencies, "
                     + emptyTrees + " modules with empty trees");
             List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-            String gav = root.gav() + " (reactor: " + projects.size() + " modules)";
+            String gav = reactorGav(projects);
             if (session != null) {
                 return new AuditTui(entries, gav, treeModel, session);
             }

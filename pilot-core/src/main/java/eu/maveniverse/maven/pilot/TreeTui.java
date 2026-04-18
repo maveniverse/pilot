@@ -25,6 +25,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
@@ -71,14 +72,20 @@ public class TreeTui extends ToolPanel {
 
     private int lastContentHeight;
 
+    private static final int COL_GA = 0;
+    private static final int COL_VERSION = 1;
+    private static final int COL_SCOPE = 2;
+
     public TreeTui(DependencyTreeModel fullModel, String scope, String projectGav) {
         this.fullModel = fullModel;
         this.scope = scope;
         this.projectGav = projectGav;
         this.model = fullModel.filterByScope(scope);
         this.displayNodes = model.visibleNodes();
+        this.sortState = new SortState(3);
         if (!displayNodes.isEmpty()) {
             tableState.select(0);
+            fetchPomInfoIfNeeded();
         }
     }
 
@@ -139,6 +146,10 @@ public class TreeTui extends ToolPanel {
         return "Tree";
     }
 
+    int nodeCount() {
+        return model.totalNodes;
+    }
+
     @Override
     public void render(Frame frame, Rect area) {
         if (showReversePath) {
@@ -154,13 +165,15 @@ public class TreeTui extends ToolPanel {
             return handleReversePathKeys(key);
         }
         if (handleSearchInput(key)) return true;
+        if (handleSortInput(key)) return true;
         return handleTreeKeys(key);
     }
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (handleMouseSortHeader(mouse, List.of(TREE_WIDTHS))) return true;
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header + scroll
+            int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
             if (row >= 0 && row < displayNodes.size()) {
                 tableState.select(row);
                 fetchPomInfoIfNeeded();
@@ -225,6 +238,7 @@ public class TreeTui extends ToolPanel {
             }
             spans.add(Span.raw("r").bold());
             spans.add(Span.raw(":Reverse  "));
+            spans.addAll(sortKeyHints());
             spans.add(Span.raw("f").bold());
             spans.add(Span.raw(":Scope(" + scope + ")  "));
             spans.add(Span.raw("E/W").bold());
@@ -477,25 +491,23 @@ public class TreeTui extends ToolPanel {
 
     // ── Rendering ───────────────────────────────────────────────────────────
 
+    private static final Constraint[] TREE_WIDTHS = {
+        Constraint.percentage(55), Constraint.percentage(25), Constraint.percentage(20)
+    };
+
     private void renderTree(Frame frame, Rect area) {
-        String conflictInfo = model.conflicts.isEmpty() ? "" : ", " + model.conflicts.size() + " conflicts";
-        String title = " Tree [" + scope + "] (" + model.totalNodes + " nodes" + conflictInfo + ") ";
-
-        Block block = Block.builder()
-                .title(title)
-                .borderType(BorderType.ROUNDED)
-                .borderStyle(borderStyle())
-                .build();
-
         if (displayNodes.isEmpty()) {
-            Paragraph empty = Paragraph.builder()
-                    .text("No dependencies")
-                    .block(block)
-                    .centered()
-                    .build();
+            Paragraph empty =
+                    Paragraph.builder().text("No dependencies").centered().build();
             frame.renderWidget(empty, area);
             return;
         }
+
+        var zones = Layout.vertical()
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.percentage(25))
+                .split(area);
+
+        Row header = sortState.decorateHeader(List.of("groupId:artifactId", "version", "scope"), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < displayNodes.size(); i++) {
@@ -507,46 +519,148 @@ public class TreeTui extends ToolPanel {
         }
 
         Table table = Table.builder()
+                .header(header)
                 .rows(rows)
-                .widths(Constraint.fill())
-                .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
-                .block(block)
+                .widths(TREE_WIDTHS)
+                .highlightStyle(theme.highlightStyle())
+                .highlightSymbol(theme.highlightSymbol())
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        lastContentHeight = zones.get(0).height();
+        setTableArea(zones.get(0), null);
+        frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderDivider(frame, zones.get(1));
+        renderDetails(frame, zones.get(2));
     }
 
     private Row createTreeRow(DependencyTreeModel.TreeNode node) {
-        List<Span> spans = new ArrayList<>();
-
+        // Column 1: indented groupId:artifactId with expand/collapse arrow
+        List<Span> gaSpans = new ArrayList<>();
         String indent = "  ".repeat(node.depth);
-        spans.add(Span.raw(indent));
-
+        gaSpans.add(Span.raw(indent));
         if (node.hasChildren()) {
-            spans.add(Span.raw(node.expanded ? "▾ " : "▸ ").bold());
+            gaSpans.add(Span.raw(node.expanded ? "▾ " : "▸ ").bold());
         } else {
-            spans.add(Span.raw("  "));
+            gaSpans.add(Span.raw("  "));
         }
-
-        Style style = scopeStyle(node.scope);
-        String coords = node.groupId + ":" + node.artifactId + ":" + node.version;
-        spans.add(Span.styled(coords, style));
-
+        String ga = node.groupId + ":" + node.artifactId;
+        gaSpans.add(Span.styled(ga, scopeStyle(node.scope)));
         if (node.optional) {
-            spans.add(Span.raw(" (optional)").dim());
+            gaSpans.add(Span.raw(" (opt)").dim());
         }
 
+        // Column 2: version with conflict info
+        List<Span> versionSpans = new ArrayList<>();
+        versionSpans.add(Span.raw(node.version));
         if (node.isConflict()) {
-            spans.add(Span.raw(" ⚠ conflict").fg(theme.statusWarningColor()));
-            spans.add(Span.raw(" (wanted " + node.requestedVersion + ")").dim());
+            versionSpans.add(Span.raw(" ⚠ " + node.requestedVersion).fg(theme.statusWarningColor()));
         }
 
-        if (!"compile".equals(node.scope) && !node.scope.isEmpty()) {
-            spans.add(Span.raw(" [" + node.scope + "]").dim());
-        }
+        // Column 3: scope
+        String scopeLabel = node.scope;
 
-        return Row.from(Cell.from(Line.from(spans)));
+        return Row.from(Cell.from(Line.from(gaSpans)), Cell.from(Line.from(versionSpans)), Cell.from(scopeLabel));
+    }
+
+    private void renderDetails(Frame frame, Rect area) {
+        int sel = selectedIndex();
+        if (sel < 0 || sel >= displayNodes.size()) return;
+        var node = displayNodes.get(sel);
+
+        Block block = Block.builder()
+                .title(" " + node.gav() + " ")
+                .borderType(BorderType.ROUNDED)
+                .borderStyle(theme.unfocusedBorder())
+                .build();
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(buildNodeSummaryLine(node));
+        buildConflictLine(node, lines);
+        buildPomInfoLines(node, lines, area.width());
+
+        Paragraph details =
+                Paragraph.builder().text(Text.from(lines)).block(block).build();
+        frame.renderWidget(details, area);
+    }
+
+    private Line buildNodeSummaryLine(DependencyTreeModel.TreeNode node) {
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" Scope: ").bold());
+        spans.add(Span.styled(node.scope, scopeStyle(node.scope)));
+
+        if (node.classifier != null && !node.classifier.isEmpty()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Classifier: ").bold());
+            spans.add(Span.raw(node.classifier));
+        }
+        if (node.optional) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Optional").bold().fg(theme.statusWarningColor()));
+        }
+        spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+        spans.add(Span.raw("Depth: ").bold());
+        spans.add(Span.raw(String.valueOf(node.depth)));
+        if (node.hasChildren()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Children: ").bold());
+            spans.add(Span.raw(String.valueOf(node.children.size())));
+        }
+        if (node.repository != null && !node.repository.isEmpty()) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw("Repo: ").bold());
+            spans.add(Span.raw(node.repository).dim());
+        }
+        return Line.from(spans);
+    }
+
+    private void buildConflictLine(DependencyTreeModel.TreeNode node, List<Line> lines) {
+        if (node.isConflict()) {
+            List<Span> spans = new ArrayList<>();
+            spans.add(Span.raw(" ⚠ Conflict: ").bold().fg(theme.statusWarningColor()));
+            spans.add(Span.raw("requested ").dim());
+            spans.add(Span.raw(node.requestedVersion).fg(theme.statusWarningColor()));
+            spans.add(Span.raw(" → resolved ").dim());
+            spans.add(Span.raw(node.version).bold());
+            if (node.managedFrom != null) {
+                spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+                spans.add(Span.raw("Managed by: ").bold());
+                spans.add(Span.raw(node.managedFrom).dim());
+            }
+            lines.add(Line.from(spans));
+        } else if (node.managedFrom != null) {
+            lines.add(Line.from(
+                    Span.raw(" Managed by: ").bold(), Span.raw(node.managedFrom).dim()));
+        }
+    }
+
+    private void buildPomInfoLines(DependencyTreeModel.TreeNode node, List<Line> lines, int areaWidth) {
+        SearchTui.PomInfo info = pomInfoCache.get(node.gav());
+        if (info == null || info.name == null) return;
+
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" ").bold());
+        spans.add(Span.raw(info.name).bold().cyan());
+        if (info.license != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.license).fg(theme.metadataValueColor()));
+        }
+        if (info.organization != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.organization).dim());
+        }
+        if (info.date != null) {
+            spans.add(Span.raw("  │ ").fg(theme.detailSeparatorColor()));
+            spans.add(Span.raw(info.date).dim());
+        }
+        lines.add(Line.from(spans));
+
+        if (info.description != null) {
+            int maxWidth = Math.max(10, areaWidth - 4);
+            String desc = info.description.length() > maxWidth
+                    ? info.description.substring(0, maxWidth - 3) + "..."
+                    : info.description;
+            lines.add(Line.from(Span.raw(" " + desc).dim()));
+        }
     }
 
     private Style scopeStyle(String scope) {
@@ -558,6 +672,37 @@ public class TreeTui extends ToolPanel {
             case "system" -> theme.scopeSystem();
             default -> theme.scopeCompile();
         };
+    }
+
+    @Override
+    protected void onSortChanged() {
+        int col = sortState.sortColumn();
+        if (col < 0) {
+            model = fullModel.filterByScope(scope);
+        } else {
+            java.util.function.Function<DependencyTreeModel.TreeNode, String> extractor =
+                    switch (col) {
+                        case COL_GA -> n -> n.groupId + ":" + n.artifactId;
+                        case COL_VERSION -> n -> n.version;
+                        case COL_SCOPE -> n -> n.scope;
+                        default -> n -> "";
+                    };
+            java.util.Comparator<DependencyTreeModel.TreeNode> cmp =
+                    java.util.Comparator.comparing(extractor, String.CASE_INSENSITIVE_ORDER);
+            if (!sortState.ascending()) {
+                cmp = cmp.reversed();
+            }
+            sortChildrenRecursive(model.root, cmp);
+        }
+        refreshDisplay();
+    }
+
+    private void sortChildrenRecursive(
+            DependencyTreeModel.TreeNode node, java.util.Comparator<DependencyTreeModel.TreeNode> cmp) {
+        node.children.sort(cmp);
+        for (var child : node.children) {
+            sortChildrenRecursive(child, cmp);
+        }
     }
 
     private void renderReversePath(Frame frame, Rect area) {

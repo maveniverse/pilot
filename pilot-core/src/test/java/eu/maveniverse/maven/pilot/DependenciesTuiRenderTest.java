@@ -130,7 +130,7 @@ class DependenciesTuiRenderTest {
     @Test
     void tabSwitchShowsTransitiveDependencies() {
         var tui = createTuiWithDeps();
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null); // switch to Transitive tab
+        tui.handleEvent(KeyEvent.ofChar('2'), null); // switch to Transitive tab
 
         String output = render(tui::renderStandalone);
         assertThat(output).contains("failureaccess").contains("checker-qual");
@@ -139,12 +139,10 @@ class DependenciesTuiRenderTest {
     @Test
     void tabSwitchBackShowsDeclaredAgain() {
         var tui = createTuiWithDeps();
-        int tabCount = tui.subViewCount();
 
-        // Cycle through all tabs to get back to first
-        for (int i = 0; i < tabCount; i++) {
-            tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null);
-        }
+        // Switch to transitive then back to declared
+        tui.handleEvent(KeyEvent.ofChar('2'), null);
+        tui.handleEvent(KeyEvent.ofChar('1'), null);
 
         String output = render(tui::renderStandalone);
         assertThat(output).contains("com.google.guava:guava").contains("org.slf4j:slf4j-api");
@@ -189,7 +187,7 @@ class DependenciesTuiRenderTest {
         declared.add(new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", true));
 
         var tui = new DependenciesTui(declared, List.of(), pomPath, "com.example:app:1.0", true);
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.TAB), null); // switch to Transitive tab
+        tui.handleEvent(KeyEvent.ofChar('2'), null); // switch to Transitive tab
 
         String output = render(tui::renderStandalone);
         // Should render without errors even with no transitive deps

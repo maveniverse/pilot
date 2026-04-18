@@ -42,6 +42,7 @@ public class DependencyTreeModel {
         boolean expanded;
         public String requestedVersion; // non-null if conflict
         String managedFrom; // who pulled this in as transitive
+        public String repository; // repository id where this was resolved from
 
         public TreeNode(String groupId, String artifactId, String version, String scope, boolean optional, int depth) {
             this(groupId, artifactId, "", version, scope, optional, depth);
@@ -220,6 +221,7 @@ public class DependencyTreeModel {
                 depth);
         copy.requestedVersion = source.requestedVersion;
         copy.managedFrom = source.managedFrom;
+        copy.repository = source.repository;
         if (copy.isConflict()) {
             conflicts.add(copy);
         }

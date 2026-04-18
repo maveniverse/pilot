@@ -78,15 +78,15 @@ class DependenciesDemoTest {
             pilot.pause();
 
             // Switch to transitive view
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
 
             // Navigate transitive deps
             pilot.press(KeyCode.DOWN);
             pilot.pause();
 
-            // Switch back
-            pilot.press(KeyCode.TAB);
+            // Switch back to declared
+            pilot.press('1');
             pilot.pause();
 
             // Quit
@@ -118,7 +118,7 @@ class DependenciesDemoTest {
             pilot.pause();
 
             // Switch to transitive view
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
 
             pilot.press('q');
@@ -137,7 +137,7 @@ class DependenciesDemoTest {
             pilot.pause();
 
             // Switch to transitive view (also empty)
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
 
             pilot.press('q');
@@ -294,7 +294,7 @@ class DependenciesDemoTest {
             pilot.pause();
 
             // Switch to transitive view
-            pilot.press(KeyCode.TAB);
+            pilot.press('2');
             pilot.pause();
 
             // Press 'a' to add to POM

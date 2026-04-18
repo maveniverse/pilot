@@ -46,16 +46,16 @@ class PilotShellToolDefTest {
                 .filter(PilotShell.ToolDef::aggregatable)
                 .map(PilotShell.ToolDef::id)
                 .toList();
-        assertThat(aggregatable).containsExactlyInAnyOrder("align", "updates", "conflicts", "audit");
+        assertThat(aggregatable).containsExactlyInAnyOrder("align", "updates", "conflicts", "audit", "dependencies");
     }
 
     @Test
-    void nonAggregatableToolsAreTreeDepsPomSearch() {
+    void nonAggregatableToolsArePomSearch() {
         var nonAggregatable = PilotShell.TOOLS.stream()
                 .filter(t -> !t.aggregatable())
                 .map(PilotShell.ToolDef::id)
                 .toList();
-        assertThat(nonAggregatable).containsExactlyInAnyOrder("tree", "dependencies", "pom", "search");
+        assertThat(nonAggregatable).containsExactlyInAnyOrder("pom", "search");
     }
 
     @Test
