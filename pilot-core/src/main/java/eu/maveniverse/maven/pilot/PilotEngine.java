@@ -162,8 +162,6 @@ public class PilotEngine {
 
     private ToolPanel createReactorDependenciesPanel(List<PilotProject> projects, Consumer<String> progress)
             throws Exception {
-        resolveAllDependencies(projects, progress);
-
         Map<String, DependenciesTui.DepEntry> unusedMap = new LinkedHashMap<>();
         Map<String, DependenciesTui.DepEntry> usedTransMap = new LinkedHashMap<>();
         int modulesScanned = 0;
@@ -177,7 +175,7 @@ public class PilotEngine {
                 continue;
             }
             modulesScanned++;
-            progress.accept("Analyzing bytecode… " + modulesScanned + "/" + projects.size() + "\n" + p.artifactId);
+            progress.accept("Analyzing dependencies… " + modulesScanned + "/" + projects.size() + "\n" + p.artifactId);
 
             Set<String> declaredGAs = new HashSet<>();
             List<DependenciesTui.DepEntry> declared = new ArrayList<>();

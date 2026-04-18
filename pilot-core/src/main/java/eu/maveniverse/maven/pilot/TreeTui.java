@@ -85,6 +85,7 @@ public class TreeTui extends ToolPanel {
         this.sortState = new SortState(3);
         if (!displayNodes.isEmpty()) {
             tableState.select(0);
+            fetchPomInfoIfNeeded();
         }
     }
 

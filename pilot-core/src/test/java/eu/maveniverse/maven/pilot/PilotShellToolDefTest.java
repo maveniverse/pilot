@@ -50,7 +50,7 @@ class PilotShellToolDefTest {
     }
 
     @Test
-    void nonAggregatableToolsAreDepsPomSearch() {
+    void nonAggregatableToolsArePomSearch() {
         var nonAggregatable = PilotShell.TOOLS.stream()
                 .filter(t -> !t.aggregatable())
                 .map(PilotShell.ToolDef::id)
