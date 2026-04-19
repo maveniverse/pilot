@@ -72,6 +72,12 @@ class SortStateTest {
         state.cycleNext(); // col 0 asc
         state.reverseDirection();
         assertThat(state.ascending()).isFalse();
+        assertThat(state.isSorted()).isTrue();
+        assertThat(state.sortColumn()).isZero();
+        state.reverseDirection();
+        assertThat(state.ascending()).isTrue();
+        assertThat(state.isSorted()).isTrue();
+        assertThat(state.sortColumn()).isZero();
     }
 
     @Test
@@ -80,6 +86,7 @@ class SortStateTest {
         state.reverseDirection();
         assertThat(state.ascending()).isTrue();
         assertThat(state.isSorted()).isFalse();
+        assertThat(state.sortColumn()).isEqualTo(-1);
     }
 
     @Test

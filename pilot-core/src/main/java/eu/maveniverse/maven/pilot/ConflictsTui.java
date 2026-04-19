@@ -745,8 +745,6 @@ public class ConflictsTui extends ToolPanel {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw("↑↓").bold());
         spans.add(Span.raw(":Navigate  "));
-        spans.add(Span.raw("Enter").bold());
-        spans.add(Span.raw(":Details  "));
         spans.add(Span.raw("t").bold());
         spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
         spans.add(Span.raw("p").bold());

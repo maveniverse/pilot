@@ -1130,7 +1130,7 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     protected void onPendingQuitCancelled() {
-        updateStatusIfDone();
+        status = buildStatusMessage();
     }
 
     private void applyUpdates() {

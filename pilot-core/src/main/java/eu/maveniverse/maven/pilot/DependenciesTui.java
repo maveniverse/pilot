@@ -1583,14 +1583,17 @@ public class DependenciesTui extends ToolPanel {
         spans.add(Span.raw(":Navigate  "));
         spans.add(Span.raw("1-" + views.length).bold());
         spans.add(Span.raw(":Switch view  "));
-        if (view == View.DECLARED) {
+        if (view == View.DECLARED || view == View.UNUSED_DECLARED) {
             spans.add(Span.raw("x/Enter").bold());
             spans.add(Span.raw(":Delete  "));
-        } else {
+        } else if (view == View.TRANSITIVE || view == View.USED_TRANSITIVE) {
             spans.add(Span.raw("a/Enter").bold());
             spans.add(Span.raw(":Add to POM  "));
+        } else if (view == View.MANAGED) {
+            spans.add(Span.raw("x").bold());
+            spans.add(Span.raw(":Remove  "));
         }
-        spans.add(Span.raw("s").bold());
+        spans.add(Span.raw("c").bold());
         spans.add(Span.raw(":Change scope  "));
         spans.add(Span.raw("d").bold());
         spans.add(Span.raw(":Diff  "));

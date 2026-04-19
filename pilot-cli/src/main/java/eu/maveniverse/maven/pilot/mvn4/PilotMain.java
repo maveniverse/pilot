@@ -27,6 +27,7 @@ import eu.maveniverse.maven.pilot.PomTui;
 import eu.maveniverse.maven.pilot.ReactorModel;
 import eu.maveniverse.maven.pilot.SearchTui;
 import eu.maveniverse.maven.pilot.XmlTreeModel;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -167,11 +168,11 @@ public class PilotMain {
 
     // ── Quick reactor discovery ─────────────────────────────────────────
 
-    private static List<PilotProject> discoverReactorFromXml(Path pomPath) {
+    private static List<PilotProject> discoverReactorFromXml(Path pomPath) throws IOException {
         List<PilotProject> projects = new ArrayList<>();
         Map<PilotProject, String> declaredParentGa = new LinkedHashMap<>();
-        Path rootDir = pomPath.getParent().toAbsolutePath().normalize();
-        discoverModulesRecursive(pomPath, null, null, projects, declaredParentGa, rootDir);
+        Path rootDir = pomPath.getParent().toRealPath();
+        discoverModulesRecursive(pomPath.toRealPath(), null, null, projects, declaredParentGa, rootDir);
         // Wire parent references by matching declared <parent> GA
         Map<String, PilotProject> projectsByGa = new LinkedHashMap<>();
         for (PilotProject p : projects) {
@@ -252,8 +253,12 @@ public class PilotMain {
                             .resolve(POM_XML)
                             .toAbsolutePath()
                             .normalize();
-                    if (Files.isRegularFile(modulePom) && modulePom.startsWith(rootDir)) {
-                        discoverModulesRecursive(modulePom, groupId, version, projects, declaredParentGa, rootDir);
+                    if (Files.isRegularFile(modulePom)) {
+                        Path realModulePom = modulePom.toRealPath();
+                        if (realModulePom.startsWith(rootDir)) {
+                            discoverModulesRecursive(
+                                    realModulePom, groupId, version, projects, declaredParentGa, rootDir);
+                        }
                     }
                 }
             }

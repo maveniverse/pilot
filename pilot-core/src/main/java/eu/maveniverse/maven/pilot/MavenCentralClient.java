@@ -93,14 +93,14 @@ class MavenCentralClient {
     }
 
     static List<String> fetchVersions(String groupId, String artifactId) {
-        List<String> versions = new ArrayList<>();
         try {
             String metaUrl = CENTRAL_BASE + pomBasePath(groupId, artifactId) + "maven-metadata.xml";
             HttpURLConnection conn = openConnection(metaUrl, "GET");
             try {
                 if (conn.getResponseCode() != 200) {
-                    return versions;
+                    return List.of();
                 }
+                List<String> versions = new ArrayList<>();
                 try (InputStream is = conn.getInputStream()) {
                     DocumentBuilder db = createSafeDocumentBuilder();
                     Document doc = db.parse(is);
@@ -113,13 +113,13 @@ class MavenCentralClient {
                     }
                 }
                 Collections.reverse(versions);
+                return versions;
             } finally {
                 conn.disconnect();
             }
         } catch (Exception e) {
-            // return whatever we have
+            return List.of();
         }
-        return versions;
     }
 
     static LocalDate fetchReleaseDate(String groupId, String artifactId, String version) {
