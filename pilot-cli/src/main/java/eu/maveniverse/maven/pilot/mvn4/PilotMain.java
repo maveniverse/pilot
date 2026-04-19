@@ -168,7 +168,8 @@ public class PilotMain {
     private static List<PilotProject> discoverReactorFromXml(Path pomPath) {
         List<PilotProject> projects = new ArrayList<>();
         Map<PilotProject, String> declaredParentGa = new LinkedHashMap<>();
-        discoverModulesRecursive(pomPath, null, null, projects, declaredParentGa);
+        Path rootDir = pomPath.getParent().toAbsolutePath().normalize();
+        discoverModulesRecursive(pomPath, null, null, projects, declaredParentGa, rootDir);
         // Wire parent references by matching declared <parent> GA
         Map<String, PilotProject> projectsByGa = new LinkedHashMap<>();
         for (PilotProject p : projects) {
@@ -188,7 +189,8 @@ public class PilotMain {
             String parentGroupId,
             String parentVersion,
             List<PilotProject> projects,
-            Map<PilotProject, String> declaredParentGa) {
+            Map<PilotProject, String> declaredParentGa,
+            Path rootDir) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -248,13 +250,13 @@ public class PilotMain {
                             .resolve(POM_XML)
                             .toAbsolutePath()
                             .normalize();
-                    if (Files.isRegularFile(modulePom)) {
-                        discoverModulesRecursive(modulePom, groupId, version, projects, declaredParentGa);
+                    if (Files.isRegularFile(modulePom) && modulePom.startsWith(rootDir)) {
+                        discoverModulesRecursive(modulePom, groupId, version, projects, declaredParentGa, rootDir);
                     }
                 }
             }
-        } catch (Exception ignored) {
-            // Skip unparseable modules
+        } catch (Exception e) {
+            System.err.println("Skipping unparseable module: " + pomPath + " (" + e.getMessage() + ")");
         }
     }
 
@@ -429,7 +431,7 @@ public class PilotMain {
             // Recursively extend the parent's parent chain
             resolveExternalParentChain(session, mbs, parentProject, projectsByGa, extensionProperties);
         } catch (Exception e) {
-            // External parent resolution is best-effort
+            System.err.println("Could not resolve external parent for " + project.ga() + ": " + e.getMessage());
         }
     }
 

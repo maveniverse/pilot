@@ -234,8 +234,6 @@ public class DependenciesTui extends ToolPanel {
 
     private View view = View.DECLARED;
     private String status;
-    private boolean pendingQuit;
-    private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
 
     /** Returns the current in-memory POM content (package-private for testing). */
@@ -417,22 +415,7 @@ public class DependenciesTui extends ToolPanel {
         }
 
         // Save prompt mode (standalone only)
-        if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                saveAndQuit();
-                return true;
-            }
-            if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-                return true;
-            }
-            if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                status = "Quit cancelled";
-                return true;
-            }
-            return false;
-        }
+        if (handlePendingQuit(key)) return true;
 
         // Diff overlay mode (standalone — panel mode handles in handleKeyEvent)
         if (diffOverlay.isActive()) {
@@ -1142,23 +1125,14 @@ public class DependenciesTui extends ToolPanel {
         }
     }
 
-    private void requestQuit() {
-        if (isDirty()) {
-            pendingQuit = true;
-            status = "Save changes to POM?";
-        } else {
-            runner.quit();
-        }
+    @Override
+    protected void onStatusChange(String message) {
+        this.status = message;
     }
 
-    private void saveAndQuit() {
-        PomEditSession.SaveResult result = editSession.save();
-        if (result.success()) {
-            runner.quit();
-        } else {
-            pendingQuit = false;
-            status = result.message();
-        }
+    @Override
+    protected void onPendingQuitCancelled() {
+        status = "Quit cancelled";
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
@@ -1172,16 +1146,6 @@ public class DependenciesTui extends ToolPanel {
                 q / Esc         Quit (prompts to save if modified)
                 """));
         return sections;
-    }
-
-    private void toggleDiffView() {
-        var diffs = collectAllDiffs();
-        if (diffs.isEmpty()) {
-            status = "No changes to show";
-            return;
-        }
-        long changes = diffOverlay.openMulti(diffs);
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
     /**
@@ -1251,7 +1215,7 @@ public class DependenciesTui extends ToolPanel {
                 renderDetails(frame, zones.get(2));
             }
         }
-        renderInfoBar(frame, zones.get(3));
+        renderStandaloneInfoBar(frame, zones.get(3));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -1612,56 +1576,28 @@ public class DependenciesTui extends ToolPanel {
         frame.renderWidget(details, area);
     }
 
-    private void renderInfoBar(Frame frame, Rect area) {
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
-                .split(area);
-
-        // Status
-        List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(
-                Span.raw(" " + status).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
-        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
-
-        // Key bindings
+    @Override
+    protected List<Span> standaloneKeyHints() {
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-        if (pendingQuit) {
-            spans.add(Span.raw("y").bold());
-            spans.add(Span.raw(":Save and quit  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":Discard and quit  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Scroll  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Close  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(":Navigate  "));
+        spans.add(Span.raw("1-" + views.length).bold());
+        spans.add(Span.raw(":Switch view  "));
+        if (view == View.DECLARED) {
+            spans.add(Span.raw("x/Enter").bold());
+            spans.add(Span.raw(":Delete  "));
         } else {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("1-" + views.length).bold());
-            spans.add(Span.raw(":Switch view  "));
-            if (view == View.DECLARED) {
-                spans.add(Span.raw("x/Enter").bold());
-                spans.add(Span.raw(":Delete  "));
-            } else {
-                spans.add(Span.raw("a/Enter").bold());
-                spans.add(Span.raw(":Add to POM  "));
-            }
-            spans.add(Span.raw("s").bold());
-            spans.add(Span.raw(":Change scope  "));
-            spans.add(Span.raw("d").bold());
-            spans.add(Span.raw(":Diff  "));
-            spans.add(Span.raw("h").bold());
-            spans.add(Span.raw(":Help  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
+            spans.add(Span.raw("a/Enter").bold());
+            spans.add(Span.raw(":Add to POM  "));
         }
-
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+        spans.add(Span.raw("s").bold());
+        spans.add(Span.raw(":Change scope  "));
+        spans.add(Span.raw("d").bold());
+        spans.add(Span.raw(":Diff  "));
+        spans.add(Span.raw("h").bold());
+        spans.add(Span.raw(":Help  "));
+        spans.add(Span.raw("q").bold());
+        spans.add(Span.raw(":Quit"));
+        return spans;
     }
 }

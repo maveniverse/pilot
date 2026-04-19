@@ -86,6 +86,12 @@ public abstract class ToolPanel {
         return true;
     }
 
+    /** Whether the user has been prompted to save before quitting. */
+    protected boolean pendingQuit;
+
+    /** Diff overlay for previewing POM changes. */
+    protected final DiffOverlay diffOverlay = new DiffOverlay();
+
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 
@@ -253,6 +259,103 @@ public abstract class ToolPanel {
             }
         }
         return diffs;
+    }
+
+    // -- Quit / save / diff shared logic --
+
+    protected void requestQuit() {
+        if (isDirty()) {
+            pendingQuit = true;
+            onStatusChange("Save changes to POM? (y/n/Esc)");
+        } else {
+            runner.quit();
+        }
+    }
+
+    protected void saveAndQuit() {
+        PomEditSession.SaveResult result = editSession.save();
+        if (result.success()) {
+            runner.quit();
+        } else {
+            pendingQuit = false;
+            onStatusChange(result.message());
+        }
+    }
+
+    protected void toggleDiffView() {
+        var diffs = collectAllDiffs();
+        if (diffs.isEmpty()) {
+            onStatusChange("No changes to show");
+            return;
+        }
+        long changes = diffOverlay.openMulti(diffs);
+        onStatusChange(
+                changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)");
+    }
+
+    protected boolean handlePendingQuit(KeyEvent key) {
+        if (!pendingQuit) return false;
+        if (key.isCharIgnoreCase('y')) {
+            saveAndQuit();
+        } else if (key.isCharIgnoreCase('n')) {
+            runner.quit();
+        } else if (key.isKey(KeyCode.ESCAPE)) {
+            pendingQuit = false;
+            onPendingQuitCancelled();
+        }
+        return true;
+    }
+
+    protected void onStatusChange(String message) {}
+
+    protected void onPendingQuitCancelled() {}
+
+    // -- Standalone info bar shared rendering --
+
+    protected void renderStandaloneInfoBar(Frame frame, Rect area) {
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
+                .split(area);
+
+        List<Span> statusSpans = new ArrayList<>();
+        statusSpans.add(
+                Span.raw(" " + status()).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
+        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
+
+        List<Span> spans = new ArrayList<>();
+        spans.add(Span.raw(" "));
+        if (pendingQuit) {
+            spans.addAll(pendingQuitKeyHints());
+        } else if (diffOverlay.isActive()) {
+            spans.addAll(diffOverlayKeyHints());
+        } else {
+            spans.addAll(standaloneKeyHints());
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+    }
+
+    protected List<Span> standaloneKeyHints() {
+        return keyHints();
+    }
+
+    private static List<Span> pendingQuitKeyHints() {
+        return List.of(
+                Span.raw("y").bold(),
+                Span.raw(":Save and quit  "),
+                Span.raw("n").bold(),
+                Span.raw(":Discard and quit  "),
+                Span.raw("Esc").bold(),
+                Span.raw(":Cancel"));
+    }
+
+    private static List<Span> diffOverlayKeyHints() {
+        return List.of(
+                Span.raw("↑↓").bold(),
+                Span.raw(":Scroll  "),
+                Span.raw("Esc").bold(),
+                Span.raw(":Close  "),
+                Span.raw("q").bold(),
+                Span.raw(":Quit"));
     }
 
     /**

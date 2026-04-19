@@ -69,6 +69,7 @@ public class AuditTui extends ToolPanel {
         List<OsvClient.Vulnerability> vulnerabilities;
         boolean licenseLoaded;
         boolean vulnsLoaded;
+        boolean vulnFetchFailed;
 
         public AuditEntry(String groupId, String artifactId, String version, String scope) {
             this.groupId = groupId;
@@ -141,7 +142,6 @@ public class AuditTui extends ToolPanel {
     private static final String COL_SCOPE = "scope";
     private static final String LABEL_SCOPE = "  scope: ";
     private static final List<String> SCOPE_FILTERS = List.of("compile", "runtime", "test", "provided");
-    private final DiffOverlay diffOverlay = new DiffOverlay();
     private final TableState vulnTableState = new TableState();
     private final TableState byLicenseTableState = new TableState();
 
@@ -151,7 +151,6 @@ public class AuditTui extends ToolPanel {
     private int vulnsLoaded = 0;
     private int vulnCount = 0;
     private String status;
-    private boolean pendingQuit;
     private int lastContentHeight;
     private int lastTableHeight;
     private String scopeFilter; // null = show all
@@ -273,6 +272,7 @@ public class AuditTui extends ToolPanel {
                             try {
                                 return osvClient.query(entry.groupId, entry.artifactId, entry.version);
                             } catch (Exception e) {
+                                entry.vulnFetchFailed = true;
                                 return List.<OsvClient.Vulnerability>of();
                             }
                         },
@@ -477,7 +477,11 @@ public class AuditTui extends ToolPanel {
     private void updateStatus() {
         if (licensesLoaded >= entries.size() && vulnsLoaded >= entries.size()) {
             long withLicense = entries.stream().filter(e -> e.license != null).count();
+            long failedVulns = entries.stream().filter(e -> e.vulnFetchFailed).count();
             status = withLicense + "/" + entries.size() + " with license info, " + vulnCount + " vulnerabilities found";
+            if (failedVulns > 0) {
+                status += " (" + failedVulns + " failed to check)";
+            }
         } else {
             status = "Loading… licenses: " + licensesLoaded + "/" + entries.size() + ", vulnerabilities: " + vulnsLoaded
                     + "/" + entries.size();
@@ -643,22 +647,7 @@ public class AuditTui extends ToolPanel {
         }
 
         // Save prompt mode
-        if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                saveAndQuit();
-                return true;
-            }
-            if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-                return true;
-            }
-            if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                updateStatus();
-                return true;
-            }
-            return false;
-        }
+        if (handlePendingQuit(key)) return true;
 
         // Diff overlay in standalone
         if (diffOverlay.isActive()) {
@@ -795,33 +784,14 @@ public class AuditTui extends ToolPanel {
         }
     }
 
-    private void requestQuit() {
-        if (isDirty()) {
-            pendingQuit = true;
-            status = "Save changes to POM? (y/n/Esc)";
-        } else {
-            runner.quit();
-        }
+    @Override
+    protected void onStatusChange(String message) {
+        this.status = message;
     }
 
-    private void saveAndQuit() {
-        PomEditSession.SaveResult result = editSession.save();
-        if (result.success()) {
-            runner.quit();
-        } else {
-            pendingQuit = false;
-            status = result.message();
-        }
-    }
-
-    private void toggleDiffView() {
-        var diffs = collectAllDiffs();
-        if (diffs.isEmpty()) {
-            status = "No changes to show";
-            return;
-        }
-        long changes = diffOverlay.openMulti(diffs);
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
+    @Override
+    protected void onPendingQuitCancelled() {
+        updateStatus();
     }
 
     @Override
@@ -878,7 +848,7 @@ public class AuditTui extends ToolPanel {
             }
         }
 
-        renderInfoBar(frame, zones.get(2));
+        renderStandaloneInfoBar(frame, zones.get(2));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -1818,53 +1788,28 @@ public class AuditTui extends ToolPanel {
         return sections;
     }
 
-    private void renderInfoBar(Frame frame, Rect area) {
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
-                .split(area);
-
-        List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
-        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
-
+    @Override
+    protected List<Span> standaloneKeyHints() {
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-        if (pendingQuit) {
-            spans.add(Span.raw("y").bold());
-            spans.add(Span.raw(":Save and quit  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":Discard and quit  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Scroll  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Close  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
-        } else {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("Tab").bold());
-            spans.add(Span.raw(":Licenses/Vulns  "));
-            spans.add(Span.raw("s").bold());
-            spans.add(Span.raw(":Scope" + (scopeFilter != null ? "=" + scopeFilter : "") + "  "));
-            if (view == View.LICENSES) {
-                spans.add(Span.raw("g").bold());
-                spans.add(Span.raw(":Group  "));
-            }
-            spans.add(Span.raw("m").bold());
-            spans.add(Span.raw(":Manage dep  "));
-            spans.add(Span.raw("d").bold());
-            spans.add(Span.raw(":Diff  "));
-            spans.add(Span.raw("h").bold());
-            spans.add(Span.raw(":Help  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(":Navigate  "));
+        spans.add(Span.raw("Tab").bold());
+        spans.add(Span.raw(":Licenses/Vulns  "));
+        spans.add(Span.raw("s").bold());
+        spans.add(Span.raw(":Scope" + (scopeFilter != null ? "=" + scopeFilter : "") + "  "));
+        if (view == View.LICENSES) {
+            spans.add(Span.raw("g").bold());
+            spans.add(Span.raw(":Group  "));
         }
-
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+        spans.add(Span.raw("m").bold());
+        spans.add(Span.raw(":Manage dep  "));
+        spans.add(Span.raw("d").bold());
+        spans.add(Span.raw(":Diff  "));
+        spans.add(Span.raw("h").bold());
+        spans.add(Span.raw(":Help  "));
+        spans.add(Span.raw("q").bold());
+        spans.add(Span.raw(":Quit"));
+        return spans;
     }
 
     // ── ToolPanel interface ─────────────────────────────────────────────────

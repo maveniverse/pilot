@@ -63,10 +63,8 @@ public class PilotEngine {
         int total = projects.size();
         projects.parallelStream().forEach(p -> {
             cachedCollectDependencies(p);
-            synchronized (loaded) {
-                int count = loaded.incrementAndGet();
-                progress.accept("Resolving dependencies… " + count + "/" + total + "\n" + p.artifactId);
-            }
+            int count = loaded.incrementAndGet();
+            progress.accept("Resolving dependencies… " + count + "/" + total + "\n" + p.artifactId);
         });
     }
 
@@ -353,6 +351,9 @@ public class PilotEngine {
     }
 
     private static String reactorGav(List<PilotProject> projects) {
+        if (projects.isEmpty()) {
+            throw new IllegalArgumentException("projects must not be empty");
+        }
         return projects.get(0).gav() + " (reactor: " + projects.size() + " modules)";
     }
 
@@ -466,7 +467,8 @@ public class PilotEngine {
             if (pomFile != null && Files.exists(pomFile)) {
                 try {
                     parentPomContents.put(modelId, Files.readString(pomFile).split("\n"));
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    System.err.println("Could not read parent POM " + modelId + ": " + e.getMessage());
                 }
             }
             current = current.parent;
@@ -536,6 +538,9 @@ public class PilotEngine {
     }
 
     static PilotProject findManagementPom(List<PilotProject> projects) {
+        if (projects.isEmpty()) {
+            throw new IllegalArgumentException("projects must not be empty");
+        }
         PilotProject child = projects.size() > 1 ? projects.get(1) : projects.get(0);
         PilotProject current = child.parent;
 

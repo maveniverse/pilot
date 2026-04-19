@@ -52,19 +52,32 @@ class ModuleTreePane {
     private final Consumer<PilotProject> onSelectionChanged;
     private boolean focused;
 
-    // Search state (mirrors ToolPanel pattern)
-    private boolean searchMode;
-    private final StringBuilder searchBuffer = new StringBuilder();
-    private String activeSearch;
-    private List<Integer> searchMatches = List.of();
-    private int searchMatchIndex = -1;
+    private final SearchController searchController;
 
     ModuleTreePane(ReactorModel reactorModel, Consumer<PilotProject> onSelectionChanged) {
         this.reactorModel = reactorModel;
         this.onSelectionChanged = onSelectionChanged;
+        this.searchController = new SearchController(this::findSearchMatches, rowIndex -> {
+            tableState.select(rowIndex);
+            notifySelection();
+        });
         if (!reactorModel.allModules.isEmpty()) {
             tableState.select(0);
         }
+    }
+
+    private List<Integer> findSearchMatches(String query) {
+        List<ReactorModel.ModuleNode> visible = visibleNodes();
+        List<Integer> matches = new ArrayList<>();
+        for (int i = 0; i < visible.size(); i++) {
+            var node = visible.get(i);
+            String searchable = node.project.ga();
+            if (searchable.toLowerCase().contains(query)
+                    || node.name.toLowerCase().contains(query)) {
+                matches.add(i);
+            }
+        }
+        return matches;
     }
 
     void setFocused(boolean focused) {
@@ -108,7 +121,7 @@ class ModuleTreePane {
     // -- Event handling --
 
     boolean handleKeyEvent(KeyEvent key) {
-        if (handleSearchInput(key)) return true;
+        if (searchController.handleSearchInput(key)) return true;
 
         List<ReactorModel.ModuleNode> visible = visibleNodes();
 
@@ -243,125 +256,12 @@ class ModuleTreePane {
         }
     }
 
-    // -- Search infrastructure --
-
-    private boolean handleSearchInput(KeyEvent key) {
-        if (searchMode) {
-            if (key.isKey(KeyCode.ESCAPE)) {
-                searchMode = false;
-                activeSearch = null;
-                searchMatches = List.of();
-                searchMatchIndex = -1;
-                return true;
-            }
-            if (key.isKey(KeyCode.ENTER)) {
-                searchMode = false;
-                if (!searchBuffer.isEmpty()) {
-                    activeSearch = searchBuffer.toString().toLowerCase();
-                }
-                return true;
-            }
-            if (key.isKey(KeyCode.BACKSPACE) && !searchBuffer.isEmpty()) {
-                searchBuffer.deleteCharAt(searchBuffer.length() - 1);
-                updateSearchMatches();
-                return true;
-            }
-            if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-                searchBuffer.append(key.character());
-                updateSearchMatches();
-                return true;
-            }
-            return true;
-        }
-
-        if (key.isCharIgnoreCase('/')) {
-            searchMode = true;
-            searchBuffer.setLength(0);
-            activeSearch = null;
-            searchMatches = List.of();
-            searchMatchIndex = -1;
-            return true;
-        }
-        if (key.isKey(KeyCode.ESCAPE) && activeSearch != null) {
-            activeSearch = null;
-            searchMatches = List.of();
-            searchMatchIndex = -1;
-            return true;
-        }
-        if (key.isChar('n') && activeSearch != null && !searchMatches.isEmpty()) {
-            searchMatchIndex = (searchMatchIndex + 1) % searchMatches.size();
-            selectSearchMatch(searchMatchIndex);
-            return true;
-        }
-        if (key.isChar('N') && activeSearch != null && !searchMatches.isEmpty()) {
-            searchMatchIndex = (searchMatchIndex - 1 + searchMatches.size()) % searchMatches.size();
-            selectSearchMatch(searchMatchIndex);
-            return true;
-        }
-        return false;
-    }
-
-    private void updateSearchMatches() {
-        String query = searchBuffer.toString().toLowerCase();
-        if (query.isEmpty()) {
-            searchMatches = List.of();
-            searchMatchIndex = -1;
-            return;
-        }
-        List<ReactorModel.ModuleNode> visible = visibleNodes();
-        searchMatches = new ArrayList<>();
-        for (int i = 0; i < visible.size(); i++) {
-            var node = visible.get(i);
-            String searchable = node.project.ga();
-            if (searchable.toLowerCase().contains(query)
-                    || node.name.toLowerCase().contains(query)) {
-                searchMatches.add(i);
-            }
-        }
-        if (!searchMatches.isEmpty()) {
-            searchMatchIndex = 0;
-            selectSearchMatch(0);
-        } else {
-            searchMatchIndex = -1;
-        }
-    }
-
-    private void selectSearchMatch(int matchIndex) {
-        if (matchIndex >= 0 && matchIndex < searchMatches.size()) {
-            tableState.select(searchMatches.get(matchIndex));
-            notifySelection();
-        }
-    }
-
     String searchStatus() {
-        if (searchMode) {
-            return "Search: " + searchBuffer + "█";
-        }
-        if (activeSearch != null && !searchMatches.isEmpty()) {
-            return (searchMatchIndex + 1) + "/" + searchMatches.size() + " matches";
-        }
-        if (activeSearch != null) {
-            return "No matches for: " + activeSearch;
-        }
-        return null;
+        return searchController.searchStatus();
     }
 
     List<Span> searchKeyHints() {
-        List<Span> spans = new ArrayList<>();
-        if (searchMode) {
-            spans.add(Span.raw("Type").bold());
-            spans.add(Span.raw(":Search  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Confirm  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (activeSearch != null) {
-            spans.add(Span.raw("n/N").bold());
-            spans.add(Span.raw(":Next/Prev  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Clear"));
-        }
-        return spans;
+        return searchController.searchKeyHints();
     }
 
     private void expandAll(ReactorModel.ModuleNode node) {
@@ -440,7 +340,7 @@ class ModuleTreePane {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < visible.size(); i++) {
             Row row = buildRow(visible.get(i), showGa, gaColWidth);
-            if (searchMatches.contains(i)) {
+            if (searchController.isSearchMatch(i)) {
                 row = row.style(row.style().bg(theme.searchHighlightBg()));
             }
             rows.add(row);

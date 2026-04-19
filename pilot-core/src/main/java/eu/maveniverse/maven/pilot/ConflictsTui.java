@@ -121,8 +121,6 @@ public class ConflictsTui extends ToolPanel {
     private TreeResolver treeResolver;
     private List<PilotProject> pendingProjects;
 
-    private boolean pendingQuit;
-    private final DiffOverlay diffOverlay = new DiffOverlay();
     private int lastContentHeight;
 
     /**
@@ -197,22 +195,7 @@ public class ConflictsTui extends ToolPanel {
         }
 
         // Save prompt mode
-        if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                saveAndQuit();
-                return true;
-            }
-            if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-                return true;
-            }
-            if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                status = "Quit cancelled";
-                return true;
-            }
-            return false;
-        }
+        if (handlePendingQuit(key)) return true;
 
         // Diff overlay mode — standalone
         if (diffOverlay.isActive()) {
@@ -557,33 +540,14 @@ public class ConflictsTui extends ToolPanel {
         }
     }
 
-    private void requestQuit() {
-        if (isDirty()) {
-            pendingQuit = true;
-            status = "Save changes to POM?";
-        } else {
-            runner.quit();
-        }
+    @Override
+    protected void onStatusChange(String message) {
+        this.status = message;
     }
 
-    private void saveAndQuit() {
-        PomEditSession.SaveResult result = editSession.save();
-        if (result.success()) {
-            runner.quit();
-        } else {
-            pendingQuit = false;
-            status = result.message();
-        }
-    }
-
-    private void toggleDiffView() {
-        var diffs = collectAllDiffs();
-        if (diffs.isEmpty()) {
-            status = "No changes to show";
-            return;
-        }
-        long changes = diffOverlay.openMulti(diffs);
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
+    @Override
+    protected void onPendingQuitCancelled() {
+        status = "Quit cancelled";
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
@@ -631,7 +595,7 @@ public class ConflictsTui extends ToolPanel {
             }
         }
 
-        renderInfoBar(frame, zones.get(4));
+        renderStandaloneInfoBar(frame, zones.get(4));
     }
 
     private void renderHeader(Frame frame, Rect area) {
@@ -776,49 +740,23 @@ public class ConflictsTui extends ToolPanel {
         frame.renderStatefulWidget(table, area, detailState);
     }
 
-    private void renderInfoBar(Frame frame, Rect area) {
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
-                .split(area);
-
-        List<Span> statusSpans = new ArrayList<>();
-        statusSpans.add(
-                Span.raw(" " + status).fg(pendingQuit ? theme.statusWarningColor() : theme.standaloneStatusColor()));
-        frame.renderWidget(Paragraph.from(Line.from(statusSpans)), rows.get(1));
-
+    @Override
+    protected List<Span> standaloneKeyHints() {
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw(" "));
-        if (pendingQuit) {
-            spans.add(Span.raw("y").bold());
-            spans.add(Span.raw(":Save and quit  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":Discard and quit  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Cancel"));
-        } else if (diffOverlay.isActive()) {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Scroll  "));
-            spans.add(Span.raw("Esc").bold());
-            spans.add(Span.raw(":Close  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
-        } else {
-            spans.add(Span.raw("↑↓").bold());
-            spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Details  "));
-            spans.add(Span.raw("t").bold());
-            spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
-            spans.add(Span.raw("p").bold());
-            spans.add(Span.raw(":Pin version  "));
-            spans.add(Span.raw("d").bold());
-            spans.add(Span.raw(":Diff  "));
-            spans.add(Span.raw("h").bold());
-            spans.add(Span.raw(":Help  "));
-            spans.add(Span.raw("q").bold());
-            spans.add(Span.raw(":Quit"));
-        }
-
-        frame.renderWidget(Paragraph.from(Line.from(spans)), rows.get(2));
+        spans.add(Span.raw("↑↓").bold());
+        spans.add(Span.raw(":Navigate  "));
+        spans.add(Span.raw("Enter").bold());
+        spans.add(Span.raw(":Details  "));
+        spans.add(Span.raw("t").bold());
+        spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
+        spans.add(Span.raw("p").bold());
+        spans.add(Span.raw(":Pin version  "));
+        spans.add(Span.raw("d").bold());
+        spans.add(Span.raw(":Diff  "));
+        spans.add(Span.raw("h").bold());
+        spans.add(Span.raw(":Help  "));
+        spans.add(Span.raw("q").bold());
+        spans.add(Span.raw(":Quit"));
+        return spans;
     }
 }
