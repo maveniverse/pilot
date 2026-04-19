@@ -626,7 +626,7 @@ class UpdatesTuiTest {
     }
 
     @Test
-    void renderWithSelectedUngroupedDependency() throws IOException {
+    void renderWithAppliedUngroupedDependency() throws IOException {
         Path dir = subdir("render6");
 
         PilotProject.Dep d = dep("com.example", "lib", "1.0");

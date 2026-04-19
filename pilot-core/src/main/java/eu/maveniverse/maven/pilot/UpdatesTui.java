@@ -120,6 +120,7 @@ public class UpdatesTui extends ToolPanel {
     private static final String ARROW = " \u2192 ";
     private static final String KEY_NAV = ":Nav  ";
     private static final String KEY_SPACE = "Space";
+    private static final String ORIGIN_UPDATES = "updates";
 
     private final ReactorCollector.CollectionResult reactorResult;
     private final ReactorModel reactorModel;
@@ -870,6 +871,10 @@ public class UpdatesTui extends ToolPanel {
 
         var row = displayRows.get(sel);
         if (row.isGroupHeader()) {
+            if (row.propertyGroup.applied || !row.propertyGroup.hasUpdate()) {
+                status = row.propertyGroup.applied ? "Already applied" : "No update available";
+                return;
+            }
             applyGroupUpdate(row.propertyGroup);
         } else if (row.dependency != null && row.dependency.hasUpdate() && !row.dependency.applied) {
             if (row.dependency.isPropertyManaged()) {
@@ -882,6 +887,8 @@ public class UpdatesTui extends ToolPanel {
             } else {
                 applySingleUpdate(row.dependency);
             }
+        } else {
+            status = (row.dependency != null && row.dependency.applied) ? "Already applied" : "No update available";
         }
     }
 
@@ -896,14 +903,14 @@ public class UpdatesTui extends ToolPanel {
                 "property",
                 group.propertyName,
                 group.resolvedVersion + ARROW + group.newestVersion,
-                "updates");
+                ORIGIN_UPDATES);
         mutatedSessions.add(session);
         group.applied = true;
         for (var dep : group.dependencies) {
             dep.applied = true;
         }
         updateReactorCounts();
-        buildDisplayRows();
+        rebuildDisplayRowsKeepSelection();
         status = "Updated ${" + group.propertyName + "}: " + group.resolvedVersion + ARROW + group.newestVersion;
     }
 
@@ -924,11 +931,11 @@ public class UpdatesTui extends ToolPanel {
                 loc.managed ? "managed" : "dependency",
                 dep.ga(),
                 dep.primaryVersion + ARROW + dep.newestVersion,
-                "updates");
+                ORIGIN_UPDATES);
         mutatedSessions.add(session);
         dep.applied = true;
         updateReactorCounts();
-        buildDisplayRows();
+        rebuildDisplayRowsKeepSelection();
         status = "Updated " + dep.ga() + ": " + dep.primaryVersion + ARROW + dep.newestVersion;
     }
 
