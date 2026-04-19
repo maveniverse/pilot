@@ -27,6 +27,7 @@ import eu.maveniverse.maven.pilot.PomTui;
 import eu.maveniverse.maven.pilot.ReactorModel;
 import eu.maveniverse.maven.pilot.SearchTui;
 import eu.maveniverse.maven.pilot.XmlTreeModel;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Logger;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.maven.api.DownloadedArtifact;
 import org.apache.maven.api.Session;
@@ -65,6 +67,7 @@ import org.w3c.dom.NodeList;
  */
 public class PilotMain {
 
+    private static final Logger LOGGER = Logger.getLogger(PilotMain.class.getName());
     private static final String POM_XML = "pom.xml";
 
     record LoadedReactor(Map<Path, PilotProject> projectsByPomPath, PilotEngine engine) {}
@@ -165,10 +168,11 @@ public class PilotMain {
 
     // ── Quick reactor discovery ─────────────────────────────────────────
 
-    private static List<PilotProject> discoverReactorFromXml(Path pomPath) {
+    private static List<PilotProject> discoverReactorFromXml(Path pomPath) throws IOException {
         List<PilotProject> projects = new ArrayList<>();
         Map<PilotProject, String> declaredParentGa = new LinkedHashMap<>();
-        discoverModulesRecursive(pomPath, null, null, projects, declaredParentGa);
+        Path rootDir = pomPath.getParent().toRealPath();
+        discoverModulesRecursive(pomPath.toRealPath(), null, null, projects, declaredParentGa, rootDir);
         // Wire parent references by matching declared <parent> GA
         Map<String, PilotProject> projectsByGa = new LinkedHashMap<>();
         for (PilotProject p : projects) {
@@ -188,7 +192,8 @@ public class PilotMain {
             String parentGroupId,
             String parentVersion,
             List<PilotProject> projects,
-            Map<PilotProject, String> declaredParentGa) {
+            Map<PilotProject, String> declaredParentGa,
+            Path rootDir) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -238,23 +243,36 @@ public class PilotMain {
                 declaredParentGa.put(project, declaredParentGroupId + ":" + declaredParentArtifactId);
             }
 
-            // Recurse into modules
-            Element modulesEl = getDirectChildElement(root, "modules");
-            if (modulesEl != null) {
-                NodeList moduleNodes = modulesEl.getElementsByTagName("module");
-                for (int i = 0; i < moduleNodes.getLength(); i++) {
-                    String moduleName = moduleNodes.item(i).getTextContent().trim();
-                    Path modulePom = basedir.resolve(moduleName)
-                            .resolve(POM_XML)
-                            .toAbsolutePath()
-                            .normalize();
-                    if (Files.isRegularFile(modulePom)) {
-                        discoverModulesRecursive(modulePom, groupId, version, projects, declaredParentGa);
-                    }
+            recurseIntoModules(root, basedir, groupId, version, projects, declaredParentGa, rootDir);
+        } catch (Exception e) {
+            LOGGER.warning("Skipping unparseable module: " + pomPath + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private static void recurseIntoModules(
+            Element root,
+            Path basedir,
+            String groupId,
+            String version,
+            List<PilotProject> projects,
+            Map<PilotProject, String> declaredParentGa,
+            Path rootDir)
+            throws IOException {
+        Element modulesEl = getDirectChildElement(root, "modules");
+        if (modulesEl == null) return;
+        NodeList moduleNodes = modulesEl.getElementsByTagName("module");
+        for (int i = 0; i < moduleNodes.getLength(); i++) {
+            String moduleName = moduleNodes.item(i).getTextContent().trim();
+            Path modulePom = basedir.resolve(moduleName)
+                    .resolve(POM_XML)
+                    .toAbsolutePath()
+                    .normalize();
+            if (Files.isRegularFile(modulePom)) {
+                Path realModulePom = modulePom.toRealPath();
+                if (realModulePom.startsWith(rootDir)) {
+                    discoverModulesRecursive(realModulePom, groupId, version, projects, declaredParentGa, rootDir);
                 }
             }
-        } catch (Exception ignored) {
-            // Skip unparseable modules
         }
     }
 
@@ -429,7 +447,7 @@ public class PilotMain {
             // Recursively extend the parent's parent chain
             resolveExternalParentChain(session, mbs, parentProject, projectsByGa, extensionProperties);
         } catch (Exception e) {
-            // External parent resolution is best-effort
+            LOGGER.warning("Could not resolve external parent for " + project.ga() + ": " + e.getMessage());
         }
     }
 

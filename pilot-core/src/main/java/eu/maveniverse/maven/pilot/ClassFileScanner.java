@@ -71,8 +71,9 @@ public final class ClassFileScanner {
         try (Stream<Path> walk = Files.walk(classesDir)) {
             walk.filter(p -> p.toString().endsWith(".class")).forEach(p -> {
                 try {
-                    result.referencedClasses.addAll(scanFile(p).referencedClasses);
-                    for (var entry : scanFile(p).memberReferences.entrySet()) {
+                    ScanResult fileResult = scanFile(p);
+                    result.referencedClasses.addAll(fileResult.referencedClasses);
+                    for (var entry : fileResult.memberReferences.entrySet()) {
                         result.memberReferences
                                 .computeIfAbsent(entry.getKey(), k -> new HashSet<>())
                                 .addAll(entry.getValue());

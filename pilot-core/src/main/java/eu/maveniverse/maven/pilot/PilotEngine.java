@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 /**
  * Panel creation logic decoupled from Maven plugin API.
@@ -41,6 +42,7 @@ import java.util.function.Consumer;
  */
 public class PilotEngine {
 
+    private static final Logger LOGGER = Logger.getLogger(PilotEngine.class.getName());
     private final PilotResolver resolver;
     private final List<PilotProject> allProjects;
     private final String scope;
@@ -63,10 +65,8 @@ public class PilotEngine {
         int total = projects.size();
         projects.parallelStream().forEach(p -> {
             cachedCollectDependencies(p);
-            synchronized (loaded) {
-                int count = loaded.incrementAndGet();
-                progress.accept("Resolving dependencies… " + count + "/" + total + "\n" + p.artifactId);
-            }
+            int count = loaded.incrementAndGet();
+            progress.accept("Resolving dependencies… " + count + "/" + total + "\n" + p.artifactId);
         });
     }
 
@@ -353,6 +353,9 @@ public class PilotEngine {
     }
 
     private static String reactorGav(List<PilotProject> projects) {
+        if (projects.isEmpty()) {
+            throw new IllegalArgumentException("projects must not be empty");
+        }
         return projects.get(0).gav() + " (reactor: " + projects.size() + " modules)";
     }
 
@@ -466,7 +469,8 @@ public class PilotEngine {
             if (pomFile != null && Files.exists(pomFile)) {
                 try {
                     parentPomContents.put(modelId, Files.readString(pomFile).split("\n"));
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    LOGGER.warning("Could not read parent POM " + modelId + ": " + e.getMessage());
                 }
             }
             current = current.parent;
@@ -536,6 +540,9 @@ public class PilotEngine {
     }
 
     static PilotProject findManagementPom(List<PilotProject> projects) {
+        if (projects.isEmpty()) {
+            throw new IllegalArgumentException("projects must not be empty");
+        }
         PilotProject child = projects.size() > 1 ? projects.get(1) : projects.get(0);
         PilotProject current = child.parent;
 

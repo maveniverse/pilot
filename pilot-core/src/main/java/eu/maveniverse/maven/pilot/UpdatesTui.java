@@ -138,7 +138,6 @@ public class UpdatesTui extends ToolPanel {
     List<ReactorRow> displayRows = new ArrayList<>();
     Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
-    private final DiffOverlay diffOverlay = new DiffOverlay();
     private final Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
     private final TableState detailTableState = new TableState();
     boolean showDetails = true;
@@ -149,8 +148,6 @@ public class UpdatesTui extends ToolPanel {
     int failedCount = 0;
     int dateFetchesPending;
     boolean datesLoading;
-    private boolean pendingQuit;
-
     /**
      * Standalone constructor — creates a local session cache.
      */
@@ -272,7 +269,7 @@ public class UpdatesTui extends ToolPanel {
         for (var dep : reactorResult.allDependencies) {
             if (!dep.hasUpdate()) continue;
             CompletableFuture.supplyAsync(
-                            () -> ReleaseDateFetcher.fetchReleaseDate(dep.groupId, dep.artifactId, dep.primaryVersion),
+                            () -> MavenCentralClient.fetchReleaseDate(dep.groupId, dep.artifactId, dep.primaryVersion),
                             httpPool)
                     .thenAccept(date -> runner.runOnRenderThread(() -> {
                         dep.currentReleaseDate = date;
@@ -287,7 +284,7 @@ public class UpdatesTui extends ToolPanel {
                         return null;
                     });
             CompletableFuture.supplyAsync(
-                            () -> ReleaseDateFetcher.fetchReleaseDate(dep.groupId, dep.artifactId, dep.newestVersion),
+                            () -> MavenCentralClient.fetchReleaseDate(dep.groupId, dep.artifactId, dep.newestVersion),
                             httpPool)
                     .thenAccept(date -> runner.runOnRenderThread(() -> {
                         dep.newestReleaseDate = date;
@@ -633,18 +630,7 @@ public class UpdatesTui extends ToolPanel {
         }
 
         // Pending quit confirmation
-        if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                if (save()) runner.quit();
-                else pendingQuit = false;
-            } else if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-            } else if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                updateStatusIfDone();
-            }
-            return true;
-        }
+        if (handlePendingQuit(key)) return true;
 
         // Diff overlay in standalone
         if (diffOverlay.isActive()) {
@@ -956,7 +942,8 @@ public class UpdatesTui extends ToolPanel {
 
     // -- Diff preview --
 
-    private void toggleDiffView() {
+    @Override
+    protected void toggleDiffView() {
         Map<Path, PomEditor> previewEditors = buildPreviewEditors();
 
         // Merge applied diffs (this tool's sessions) with cross-tool diffs
@@ -1127,13 +1114,23 @@ public class UpdatesTui extends ToolPanel {
         }
     }
 
-    private void requestQuit() {
-        if (isDirty()) {
-            pendingQuit = true;
-            status = "Save changes to POM? (y/n/Esc)";
-        } else {
+    @Override
+    protected void saveAndQuit() {
+        if (save()) {
             runner.quit();
+        } else {
+            pendingQuit = false;
         }
+    }
+
+    @Override
+    protected void onStatusChange(String message) {
+        this.status = message;
+    }
+
+    @Override
+    protected void onPendingQuitCancelled() {
+        status = buildStatusMessage();
     }
 
     private void applyUpdates() {
