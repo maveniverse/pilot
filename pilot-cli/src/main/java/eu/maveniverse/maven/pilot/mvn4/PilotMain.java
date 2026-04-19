@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Logger;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.maven.api.DownloadedArtifact;
 import org.apache.maven.api.Session;
@@ -65,6 +66,7 @@ import org.w3c.dom.NodeList;
  */
 public class PilotMain {
 
+    private static final Logger LOGGER = Logger.getLogger(PilotMain.class.getName());
     private static final String POM_XML = "pom.xml";
 
     record LoadedReactor(Map<Path, PilotProject> projectsByPomPath, PilotEngine engine) {}
@@ -256,7 +258,7 @@ public class PilotMain {
                 }
             }
         } catch (Exception e) {
-            System.err.println("Skipping unparseable module: " + pomPath + " (" + e.getMessage() + ")");
+            LOGGER.warning("Skipping unparseable module: " + pomPath + " (" + e.getMessage() + ")");
         }
     }
 
@@ -431,7 +433,7 @@ public class PilotMain {
             // Recursively extend the parent's parent chain
             resolveExternalParentChain(session, mbs, parentProject, projectsByGa, extensionProperties);
         } catch (Exception e) {
-            System.err.println("Could not resolve external parent for " + project.ga() + ": " + e.getMessage());
+            LOGGER.warning("Could not resolve external parent for " + project.ga() + ": " + e.getMessage());
         }
     }
 

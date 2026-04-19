@@ -18,6 +18,7 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -31,6 +32,7 @@ import java.util.Collections;
 import java.util.List;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -92,8 +94,7 @@ class MavenCentralClient {
     static List<String> fetchVersions(String groupId, String artifactId) {
         List<String> versions = new ArrayList<>();
         try {
-            String path = groupId.replace('.', '/') + "/" + artifactId + "/maven-metadata.xml";
-            String metaUrl = CENTRAL_BASE + path;
+            String metaUrl = CENTRAL_BASE + pomBasePath(groupId, artifactId) + "maven-metadata.xml";
             HttpURLConnection conn = openConnection(metaUrl, "GET");
             try {
                 if (conn.getResponseCode() != 200) {
@@ -145,11 +146,15 @@ class MavenCentralClient {
 
     // -- Internal helpers --
 
-    private static String pomPath(String groupId, String artifactId, String version) {
-        return groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-" + version + ".pom";
+    private static String pomBasePath(String groupId, String artifactId) {
+        return groupId.replace('.', '/') + "/" + artifactId + "/";
     }
 
-    private static HttpURLConnection openConnection(String url, String method) throws Exception {
+    private static String pomPath(String groupId, String artifactId, String version) {
+        return pomBasePath(groupId, artifactId) + version + "/" + artifactId + "-" + version + ".pom";
+    }
+
+    private static HttpURLConnection openConnection(String url, String method) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
         conn.setRequestMethod(method);
         conn.setConnectTimeout(5_000);
@@ -291,7 +296,7 @@ class MavenCentralClient {
         return null;
     }
 
-    static DocumentBuilder createSafeDocumentBuilder() throws Exception {
+    static DocumentBuilder createSafeDocumentBuilder() throws ParserConfigurationException {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
         dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
         dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
@@ -303,11 +308,9 @@ class MavenCentralClient {
     private static String getChildText(Element parent, String tagName) {
         NodeList list = parent.getChildNodes();
         for (int i = 0; i < list.getLength(); i++) {
-            if (list.item(i) instanceof Element el) {
-                if (el.getTagName().equals(tagName)) {
-                    String text = el.getTextContent();
-                    return (text != null && !text.trim().isEmpty()) ? text.trim() : null;
-                }
+            if (list.item(i) instanceof Element el && el.getTagName().equals(tagName)) {
+                String text = el.getTextContent();
+                return (text != null && !text.trim().isEmpty()) ? text.trim() : null;
             }
         }
         return null;

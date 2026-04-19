@@ -57,7 +57,7 @@ class SortStateTest {
     void cycleNextThroughAllColumns() {
         SortState state = new SortState(3);
         state.cycleNext();
-        assertThat(state.sortColumn()).isEqualTo(0);
+        assertThat(state.sortColumn()).isZero();
         state.cycleNext();
         assertThat(state.sortColumn()).isEqualTo(1);
         state.cycleNext();

@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 /**
  * Panel creation logic decoupled from Maven plugin API.
@@ -41,6 +42,7 @@ import java.util.function.Consumer;
  */
 public class PilotEngine {
 
+    private static final Logger LOGGER = Logger.getLogger(PilotEngine.class.getName());
     private final PilotResolver resolver;
     private final List<PilotProject> allProjects;
     private final String scope;
@@ -468,7 +470,7 @@ public class PilotEngine {
                 try {
                     parentPomContents.put(modelId, Files.readString(pomFile).split("\n"));
                 } catch (Exception e) {
-                    System.err.println("Could not read parent POM " + modelId + ": " + e.getMessage());
+                    LOGGER.warning("Could not read parent POM " + modelId + ": " + e.getMessage());
                 }
             }
             current = current.parent;
