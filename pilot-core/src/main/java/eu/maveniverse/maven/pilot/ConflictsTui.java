@@ -30,7 +30,6 @@ import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
-import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -110,8 +109,8 @@ public class ConflictsTui extends ToolPanel {
 
     private List<ConflictGroup> conflicts;
     private final String projectGav;
+    private PomEditSession managementSession;
     private final TableState tableState = new TableState();
-    private boolean showDetails = true;
     private boolean showAll = false;
     private String status;
 
@@ -155,6 +154,7 @@ public class ConflictsTui extends ToolPanel {
     /** Panel-mode constructor — uses a shared PomEditSession from the shell. */
     public ConflictsTui(List<ConflictGroup> conflicts, PomEditSession session, String projectGav) {
         this.editSession = session;
+        this.managementSession = session;
         this.conflicts = conflicts;
         this.projectGav = projectGav;
         this.status = conflicts.size() + " dependency group(s) with version variance";
@@ -166,8 +166,13 @@ public class ConflictsTui extends ToolPanel {
 
     /** Async-loading constructor — collects conflicts in the background after setRunner(). */
     public ConflictsTui(
-            List<PilotProject> projects, PomEditSession session, String projectGav, TreeResolver treeResolver) {
+            List<PilotProject> projects,
+            PomEditSession session,
+            PomEditSession managementSession,
+            String projectGav,
+            TreeResolver treeResolver) {
         this.editSession = session;
+        this.managementSession = managementSession;
         this.conflicts = new ArrayList<>();
         this.projectGav = projectGav;
         this.totalModules = projects.size();
@@ -209,14 +214,14 @@ public class ConflictsTui extends ToolPanel {
             return false;
         }
 
-        // Diff overlay mode — standalone allows q to quit
+        // Diff overlay mode — standalone
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+            if (key.isCtrlC()) {
                 requestQuit();
                 return true;
             }
@@ -274,25 +279,20 @@ public class ConflictsTui extends ToolPanel {
         } else if (helpOverlay.isActive()) {
             helpOverlay.render(frame, area);
         } else {
-            boolean detailsVisible = showDetails;
-            if (detailsVisible) {
-                var zones = Layout.vertical()
-                        .constraints(Constraint.fill(), Constraint.length(1), Constraint.percentage(30))
-                        .split(area);
-                lastContentHeight = zones.get(0).height();
-                renderConflicts(frame, zones.get(0));
-                renderDivider(frame, zones.get(1));
-                renderDetails(frame, zones.get(2));
-            } else {
-                renderConflicts(frame, area);
-            }
+            var zones = Layout.vertical()
+                    .constraints(Constraint.fill(), Constraint.length(1), Constraint.percentage(30))
+                    .split(area);
+            lastContentHeight = zones.get(0).height();
+            renderConflicts(frame, zones.get(0));
+            renderDivider(frame, zones.get(1));
+            renderDetails(frame, zones.get(2));
         }
     }
 
     @Override
     public boolean handleKeyEvent(KeyEvent key) {
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
@@ -315,7 +315,6 @@ public class ConflictsTui extends ToolPanel {
         }
 
         if (key.isKey(KeyCode.ENTER) || key.isCharIgnoreCase(' ')) {
-            showDetails = !showDetails;
             return true;
         }
 
@@ -349,6 +348,10 @@ public class ConflictsTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (diffOverlay.isActive()) {
+            diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
+        }
         if (handleMouseSortHeader(
                 mouse,
                 List.of(
@@ -356,26 +359,7 @@ public class ConflictsTui extends ToolPanel {
                         Constraint.percentage(15), Constraint.fill()))) {
             return true;
         }
-        if (mouse.isClick()) {
-            var displayed = displayedConflicts();
-            int row = mouseToTableRow(mouse, displayed.size(), tableState);
-            if (row >= 0) {
-                tableState.select(row);
-                return true;
-            }
-        }
-        if (mouse.isScroll()) {
-            var displayed = displayedConflicts();
-            if (displayed.isEmpty()) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(displayed.size() - 1, sel + 1));
-            }
-            return true;
-        }
-        return false;
+        return handleMouseTableInteraction(mouse, displayedConflicts().size(), tableState);
     }
 
     @Override
@@ -394,8 +378,6 @@ public class ConflictsTui extends ToolPanel {
         } else {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Navigate  "));
-            spans.add(Span.raw("Enter").bold());
-            spans.add(Span.raw(":Details  "));
             spans.add(Span.raw("t").bold());
             spans.add(Span.raw(showAll ? ":Conflicts only  " : ":Show all  "));
             spans.add(Span.raw("p").bold());
@@ -433,7 +415,6 @@ public class ConflictsTui extends ToolPanel {
 
                 ## Conflict Actions
                 ↑ / ↓           Move selection up / down
-                Enter / Space   Toggle dependency path details
                 t               Toggle between conflicts only / all groups
                 p               Pin resolved version in dependencyManagement
                 d               Preview POM changes as a unified diff
@@ -566,7 +547,7 @@ public class ConflictsTui extends ToolPanel {
             editSession.beforeMutation();
             String resolvedVersion = group.resolvedVersion();
             var coords = Coordinates.of(group.entries.get(0).groupId, group.entries.get(0).artifactId, resolvedVersion);
-            editSession.editor().dependencies().updateManagedDependency(true, coords);
+            editSession.addManagedDependencyAligned(coords, managementSession);
             editSession.recordChange(
                     PomEditSession.ChangeType.ADD, "managed", group.ga, "pinned to " + resolvedVersion, "conflicts");
 
@@ -596,8 +577,13 @@ public class ConflictsTui extends ToolPanel {
     }
 
     private void toggleDiffView() {
-        long changes = diffOverlay.open(editSession.originalContent(), editSession.currentXml());
-        status = changes == 0 ? "No changes to show" : changes + " line(s) changed";
+        var diffs = collectAllDiffs();
+        if (diffs.isEmpty()) {
+            status = "No changes to show";
+            return;
+        }
+        long changes = diffOverlay.openMulti(diffs);
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
     private List<HelpOverlay.Section> buildHelpStandalone() {
@@ -605,7 +591,6 @@ public class ConflictsTui extends ToolPanel {
         List<HelpOverlay.Section> parsed = HelpOverlay.parse("""
                 ## Keys
                 """ + NAV_KEYS + """
-                Enter / Space   Toggle dependency path details
                 t               Toggle between conflicts only / all groups
                 p               Pin resolved version in dependencyManagement
                 d               Preview POM changes as a unified diff
@@ -621,7 +606,7 @@ public class ConflictsTui extends ToolPanel {
     // -- Rendering --
 
     void renderStandalone(Frame frame) {
-        boolean detailsVisible = showDetails && !diffOverlay.isActive() && !helpOverlay.isActive();
+        boolean detailsVisible = !diffOverlay.isActive() && !helpOverlay.isActive();
         var zones = Layout.vertical()
                 .constraints(
                         Constraint.length(3),

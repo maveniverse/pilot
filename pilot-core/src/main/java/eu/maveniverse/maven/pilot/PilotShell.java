@@ -139,6 +139,7 @@ public class PilotShell {
     private final Map<String, Future<?>> runningTasks = new HashMap<>();
     private String panelError;
     private volatile String panelLoadingStatus;
+    private volatile boolean pendingRedraw;
     private final LoadingStatusSupplier loadingStatusSupplier;
 
     public PilotShell(ReactorModel reactorModel, List<PilotProject> projects, ToolPanelFactory panelFactory) {
@@ -154,6 +155,11 @@ public class PilotShell {
         this.projects = projects;
         this.panelFactory = panelFactory;
         this.loadingStatusSupplier = loadingStatusSupplier;
+
+        // Set root directory for display paths (relative to project root, not CWD)
+        if (!projects.isEmpty()) {
+            ToolPanel.setRootDir(projects.get(0).pomPath.getParent());
+        }
 
         boolean singleModule = reactorModel == null || projects.size() <= 1;
 
@@ -243,6 +249,11 @@ public class PilotShell {
     }
 
     private boolean needsTickRedraw() {
+        // UI state changed from a background thread callback
+        if (pendingRedraw) {
+            pendingRedraw = false;
+            return true;
+        }
         // Tree width animation in progress
         if (currentTreeCols >= 0) {
             int fullWidth = 120;
@@ -268,25 +279,10 @@ public class PilotShell {
             runner.quit();
             return true;
         }
-
-        // Pending quit prompt: y/n/Esc
         if (pendingQuit) {
-            if (key.isCharIgnoreCase('y')) {
-                saveAllAndQuit();
-                return true;
-            }
-            if (key.isCharIgnoreCase('n')) {
-                runner.quit();
-                return true;
-            }
-            if (key.isKey(KeyCode.ESCAPE)) {
-                pendingQuit = false;
-                pendingQuitStatus = null;
-                return true;
-            }
-            return true; // consume all keys during quit prompt
+            handlePendingQuitKey(key);
+            return true;
         }
-
         // Alt+letter: switch tool (checked before delegation because
         // isCharIgnoreCase does not check modifiers)
         if (key.modifiers().alt() && key.code() == KeyCode.CHAR) {
@@ -298,39 +294,72 @@ public class PilotShell {
                 }
             }
         }
-
         // Edit lifecycle keys (before panel delegation so they're global)
-        PomEditSession session = currentSession();
-        if (key.isCharIgnoreCase('w') && session != null && session.isDirty()) {
-            PomEditSession.SaveResult result = session.save();
-            pendingQuitStatus = result.message();
-            return true;
-        }
-        if (key.isChar('z') && session != null && session.isDirty()) {
-            if (session.undoLast()) {
-                pendingQuitStatus = "Undid last change";
-            }
-            return true;
-        }
-        if (key.isChar('R') && session != null && session.isDirty()) {
-            session.revertAll();
-            // Invalidate cached panels for this POM so they refresh
-            invalidatePanelCacheForPom(session.pomPath());
-            refreshActivePanel();
-            pendingQuitStatus = "Reverted all changes";
-            return true;
-        }
-
+        if (handleEditLifecycleKey(key)) return true;
         // Delegate to focused pane (search inputs consume chars like q)
         if (focus == Focus.TREE && treePane != null) {
             if (treePane.handleKeyEvent(key)) return true;
         } else if (focus == Focus.CONTENT && activePanel != null) {
             if (activePanel.handleKeyEvent(key)) return true;
         }
-
         // Shell-level keys (unhandled by focused pane)
+        return handleShellKey(key);
+    }
+
+    /** Handles y/n/Esc keys while the quit confirmation prompt is active. */
+    private void handlePendingQuitKey(KeyEvent key) {
+        if (key.isCharIgnoreCase('y')) {
+            saveAllAndQuit();
+        } else if (key.isCharIgnoreCase('n')) {
+            runner.quit();
+        } else if (key.isKey(KeyCode.ESCAPE)) {
+            pendingQuit = false;
+            pendingQuitStatus = null;
+        }
+        // all other keys consumed silently during quit prompt
+    }
+
+    /** Handles save (w), undo (z), and revert (R) keys. */
+    private boolean handleEditLifecycleKey(KeyEvent key) {
+        List<PomEditSession> dirtySessions =
+                sessionCache.values().stream().filter(PomEditSession::isDirty).toList();
+        if (key.isCharIgnoreCase('w') && !dirtySessions.isEmpty()) {
+            int saved = 0;
+            for (PomEditSession s : dirtySessions) {
+                PomEditSession.SaveResult result = s.save();
+                if (!result.success()) {
+                    pendingQuitStatus = result.message();
+                    return true;
+                }
+                saved++;
+            }
+            pendingQuitStatus = "Saved " + saved + " file(s)";
+            return true;
+        }
+        PomEditSession session = currentSession();
+        if (key.isChar('z') && session != null && session.isDirty()) {
+            if (session.undoLast()) {
+                invalidatePanelCacheForPom(null);
+                refreshActivePanel();
+                pendingQuitStatus = "Undid last change";
+            }
+            return true;
+        }
+        if (key.isChar('R') && !dirtySessions.isEmpty()) {
+            for (PomEditSession s : dirtySessions) {
+                s.revertAll();
+            }
+            invalidatePanelCacheForPom(null);
+            refreshActivePanel();
+            pendingQuitStatus = "Reverted all changes across " + dirtySessions.size() + " file(s)";
+            return true;
+        }
+        return false;
+    }
+
+    /** Handles navigation keys: Tab, number keys, Enter, q, ?, h, backslash. */
+    private boolean handleShellKey(KeyEvent key) {
         if (key.isKey(KeyCode.TAB)) {
-            // Tab toggles focus between tree and content
             if (treePane != null) {
                 toggleFocus();
             }
@@ -342,23 +371,7 @@ public class PilotShell {
                 && !key.hasAlt()
                 && key.character() >= '0'
                 && key.character() <= '9') {
-            if (key.character() == '0') {
-                if (treePane != null) {
-                    setFocus(Focus.TREE);
-                }
-                return true;
-            }
-            int index = key.character() - '1';
-            if (activePanel != null && index < activePanel.subViewCount()) {
-                activePanel.setActiveSubView(index);
-                if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
-                return true;
-            }
-            // Even if panel has only one view, '1' focuses content
-            if (activePanel != null && index == 0) {
-                if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
-                return true;
-            }
+            return handleNumberKey(key);
         }
         if (key.isKey(KeyCode.ENTER) && focus == Focus.TREE) {
             setFocus(Focus.CONTENT);
@@ -376,7 +389,28 @@ public class PilotShell {
             cycleTreeWidth();
             return true;
         }
+        return false;
+    }
 
+    /** Handles digit keys: 0 focuses the module tree, 1-9 selects sub-view tabs. */
+    private boolean handleNumberKey(KeyEvent key) {
+        if (key.character() == '0') {
+            if (treePane != null) {
+                setFocus(Focus.TREE);
+            }
+            return true;
+        }
+        int index = key.character() - '1';
+        if (activePanel != null && index < activePanel.subViewCount()) {
+            activePanel.setActiveSubView(index);
+            if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
+            return true;
+        }
+        // Even if panel has only one view, '1' focuses content
+        if (activePanel != null && index == 0) {
+            if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
+            return true;
+        }
         return false;
     }
 
@@ -612,8 +646,12 @@ public class PilotShell {
         } else {
             session = null;
         }
-        final java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider =
-                path -> sessionCache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
+        final java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider = path -> {
+            if (PilotEngine.isRepositoryPom(path)) {
+                throw new IllegalArgumentException("Cannot modify repository POM: " + path);
+            }
+            return sessionCache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
+        };
         Future<?> task = panelExecutor.submit(() -> {
             try {
                 ToolPanel panel = panelFactory.create(tool.id, proj, scope, session, sessionProvider, s -> {
@@ -626,6 +664,8 @@ public class PilotShell {
                 }
             } catch (Exception e) {
                 handlePanelLoadError(cacheKey, e);
+            } catch (Error e) {
+                handlePanelLoadError(cacheKey, e);
             }
         });
         runningTasks.put(cacheKey, task);
@@ -633,6 +673,7 @@ public class PilotShell {
 
     private void onPanelLoaded(String cacheKey, ToolPanel panel, int subView) {
         panel.setRunner(runner);
+        panel.setAllSessionsSupplier(sessionCache::values);
         PomEditSession session = currentSession();
         if (session != null) {
             panel.lastSeenMutationCount = session.mutationCount();
@@ -648,10 +689,14 @@ public class PilotShell {
                 activePanel.setActiveSubView(subView);
             }
             loadingCacheKey = null;
+            pendingRedraw = true;
         }
     }
 
-    private void handlePanelLoadError(String cacheKey, Exception e) {
+    @SuppressWarnings("squid:S106") // no logger framework available; stderr is intentional for diagnostics
+    private void handlePanelLoadError(String cacheKey, Throwable e) {
+        System.err.println("[Pilot] Panel load error for " + cacheKey + ": " + e);
+        e.printStackTrace(System.err);
         String msg = e.getMessage();
         if (msg == null) msg = e.getClass().getSimpleName();
         final String errorMsg = msg;
@@ -661,6 +706,7 @@ public class PilotShell {
                 if (cacheKey.equals(loadingCacheKey)) {
                     loadingCacheKey = null;
                     panelError = errorMsg;
+                    pendingRedraw = true;
                 }
             });
         }

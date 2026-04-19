@@ -646,14 +646,14 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
 
-        // Diff overlay in standalone — allow q to quit
+        // Diff overlay in standalone
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
             if (diffOverlay.handleScrollKey(key, lastContentHeight)) return true;
-            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+            if (key.isCtrlC()) {
                 requestQuit();
                 return true;
             }
@@ -704,7 +704,7 @@ public class UpdatesTui extends ToolPanel {
     public boolean handleKeyEvent(KeyEvent key) {
         // Diff overlay mode — consume all keys
         if (diffOverlay.isActive()) {
-            if (key.isKey(KeyCode.ESCAPE)) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
                 diffOverlay.close();
                 return true;
             }
@@ -959,15 +959,15 @@ public class UpdatesTui extends ToolPanel {
     private void toggleDiffView() {
         Map<Path, PomEditor> previewEditors = buildPreviewEditors();
 
-        Map<String, Map.Entry<String, String>> fileDiffs;
-        if (previewEditors.isEmpty()) {
-            fileDiffs = collectAppliedDiffs();
-            if (fileDiffs.isEmpty()) {
-                status = "No updates selected";
-                return;
-            }
-        } else {
-            fileDiffs = collectPreviewDiffs(previewEditors);
+        // Merge applied diffs (this tool's sessions) with cross-tool diffs
+        Map<String, Map.Entry<String, String>> fileDiffs = collectAppliedDiffs();
+        fileDiffs.putAll(collectAllDiffs());
+        if (!previewEditors.isEmpty()) {
+            fileDiffs.putAll(collectPreviewDiffs(previewEditors));
+        }
+        if (fileDiffs.isEmpty()) {
+            status = "No updates selected";
+            return;
         }
 
         long changes = diffOverlay.openMulti(fileDiffs);
@@ -1007,9 +1007,11 @@ public class UpdatesTui extends ToolPanel {
 
     private Map<String, Map.Entry<String, String>> collectAppliedDiffs() {
         Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
-        for (PomEditSession session : mutatedSessions) {
+        // Check all reactor modules for dirty sessions (includes changes from other tools)
+        for (var module : reactorModel.allModules) {
+            PomEditSession session = sessionProvider.apply(Path.of(module.pomPath));
             if (session.isDirty()) {
-                diffs.put(session.pomPath().toString(), Map.entry(session.originalContent(), session.currentXml()));
+                diffs.put(displayPath(session.pomPath()), Map.entry(session.originalContent(), session.currentXml()));
             }
         }
         return diffs;
@@ -1021,7 +1023,7 @@ public class UpdatesTui extends ToolPanel {
             PomEditSession session = sessionProvider.apply(entry.getKey());
             String original = session.originalContent();
             String modified = entry.getValue().toXml();
-            diffs.put(entry.getKey().toString(), Map.entry(original, modified));
+            diffs.put(displayPath(entry.getKey()), Map.entry(original, modified));
         }
         return diffs;
     }
@@ -1701,6 +1703,10 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (diffOverlay.isActive()) {
+            diffOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
+        }
         if (handleMouseTabBar(mouse)) return true;
         List<Constraint> widths;
         if (view == View.DEPENDENCIES) {

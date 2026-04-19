@@ -47,6 +47,8 @@ import org.apache.maven.api.services.ModelBuilder;
 import org.apache.maven.api.services.ModelBuilderRequest;
 import org.apache.maven.api.services.ModelBuilderResult;
 import org.apache.maven.api.services.Sources;
+import org.apache.maven.api.services.model.RootLocator;
+import org.apache.maven.impl.model.rootlocator.DefaultRootLocator;
 import org.apache.maven.impl.standalone.ApiRunner;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -63,13 +65,15 @@ import org.w3c.dom.NodeList;
  */
 public class PilotMain {
 
+    private static final String POM_XML = "pom.xml";
+
     record LoadedReactor(Map<Path, PilotProject> projectsByPomPath, PilotEngine engine) {}
 
     public static void main(String[] args) throws Exception {
         // Suppress noisy Maven resolver warnings (e.g., strict POM validation of third-party deps)
         System.setProperty("maven.logger.defaultLogLevel", "ERROR");
 
-        Path pomPath = args.length > 0 ? Path.of(args[0]) : Path.of("pom.xml");
+        Path pomPath = args.length > 0 ? Path.of(args[0]) : Path.of(POM_XML);
         pomPath = pomPath.toAbsolutePath().normalize();
 
         if (!Files.isRegularFile(pomPath)) {
@@ -77,11 +81,14 @@ public class PilotMain {
             System.exit(1);
         }
 
-        // Phase 1: Quick reactor discovery from raw XML (instant, no Maven API needed)
-        List<PilotProject> stubProjects = discoverReactorFromXml(pomPath);
+        // Find project root by walking up (like Maven bootstrap)
+        Path rootPom = findRootPom(pomPath);
 
-        // Phase 2: Start heavy Maven loading in background
-        final Path pom = pomPath;
+        // Phase 1: Quick reactor discovery from root POM (instant, no Maven API needed)
+        List<PilotProject> stubProjects = discoverReactorFromXml(rootPom);
+
+        // Phase 2: Start heavy Maven loading in background (from root for full context)
+        final Path pom = rootPom;
         AtomicReference<String> loadingStatus = new AtomicReference<>("Initializing Maven session…");
         CompletableFuture<LoadedReactor> loadingFuture = CompletableFuture.supplyAsync(() -> {
             try {
@@ -119,8 +126,12 @@ public class PilotMain {
                         + " scope projects not found in reactor (path mismatch)");
             }
             try {
-                return reactor.engine.createPanel(toolId, realProject, realScope, session, sessionProvider, progress);
+                var panel =
+                        reactor.engine.createPanel(toolId, realProject, realScope, session, sessionProvider, progress);
+                loadingStatus.set(null);
+                return panel;
             } catch (Exception e) {
+                loadingStatus.set(null);
                 System.err.println(
                         "[Pilot] Failed to create '" + toolId + "' panel for " + realProject.ga() + ": " + e);
                 e.printStackTrace(System.err);
@@ -131,6 +142,25 @@ public class PilotMain {
         // Phase 4: Launch TUI immediately with module tree visible
         ReactorModel reactorModel = stubProjects.size() > 1 ? ReactorModel.build(stubProjects) : null;
         new PilotShell(reactorModel, stubProjects, panelFactory, loadingStatus::get).run();
+    }
+
+    // ── Root POM discovery ──────────────────────────────────────────────
+
+    /**
+     * Find the project root using Maven 4's {@link RootLocator} API,
+     * which checks for {@code .mvn} directory and {@code root="true"} POM attribute.
+     * Falls back to the given POM if no root is found.
+     */
+    private static Path findRootPom(Path pomPath) {
+        RootLocator locator = new DefaultRootLocator();
+        Path rootDir = locator.findRoot(pomPath.getParent());
+        if (rootDir != null) {
+            Path rootPom = rootDir.resolve(POM_XML);
+            if (Files.isRegularFile(rootPom)) {
+                return rootPom;
+            }
+        }
+        return pomPath;
     }
 
     // ── Quick reactor discovery ─────────────────────────────────────────
@@ -215,7 +245,7 @@ public class PilotMain {
                 for (int i = 0; i < moduleNodes.getLength(); i++) {
                     String moduleName = moduleNodes.item(i).getTextContent().trim();
                     Path modulePom = basedir.resolve(moduleName)
-                            .resolve("pom.xml")
+                            .resolve(POM_XML)
                             .toAbsolutePath()
                             .normalize();
                     if (Files.isRegularFile(modulePom)) {

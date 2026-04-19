@@ -35,9 +35,15 @@ import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.TableState;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Base class for tool panels that render into the right-side area of the unified shell.
@@ -200,6 +206,53 @@ public abstract class ToolPanel {
     /** Called when the TuiRunner is available (for async operations). */
     void setRunner(TuiRunner runner) {
         this.runner = runner;
+    }
+
+    /** Supplier for all POM edit sessions across the reactor (set by PilotShell). */
+    protected Supplier<Collection<PomEditSession>> allSessionsSupplier;
+
+    void setAllSessionsSupplier(Supplier<Collection<PomEditSession>> supplier) {
+        this.allSessionsSupplier = supplier;
+    }
+
+    private static final AtomicReference<Path> rootDir =
+            new AtomicReference<>(Path.of("").toAbsolutePath());
+
+    static void setRootDir(Path dir) {
+        rootDir.set(dir);
+    }
+
+    /**
+     * Return a display-friendly path, relative to the project root when possible.
+     */
+    static String displayPath(Path path) {
+        try {
+            return rootDir.get().relativize(path).toString();
+        } catch (IllegalArgumentException e) {
+            return path.toString();
+        }
+    }
+
+    /**
+     * Collect diffs from all dirty sessions across the reactor.
+     * Falls back to just the panel's own editSession in standalone mode.
+     */
+    protected Map<String, Map.Entry<String, String>> collectAllDiffs() {
+        Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
+        Collection<PomEditSession> sessions;
+        if (allSessionsSupplier != null) {
+            sessions = allSessionsSupplier.get();
+        } else if (editSession != null) {
+            sessions = List.of(editSession);
+        } else {
+            sessions = List.of();
+        }
+        for (PomEditSession session : sessions) {
+            if (session.isDirty()) {
+                diffs.put(displayPath(session.pomPath()), Map.entry(session.originalContent(), session.currentXml()));
+            }
+        }
+        return diffs;
     }
 
     /**
@@ -423,6 +476,30 @@ public abstract class ToolPanel {
         int row = mouse.y() - dataStartY + state.offset();
         if (row < 0 || row >= rowCount) return -1;
         return row;
+    }
+
+    /**
+     * Handle mouse click-to-select and scroll-to-navigate on a table.
+     * Returns {@code true} if the event was consumed.
+     */
+    protected boolean handleMouseTableInteraction(MouseEvent mouse, int rowCount, TableState state) {
+        if (mouse.isClick()) {
+            int row = mouseToTableRow(mouse, rowCount, state);
+            if (row >= 0) {
+                state.select(row);
+                return true;
+            }
+        }
+        if (mouse.isScroll()) {
+            if (rowCount == 0) return false;
+            if (mouse.kind() == dev.tamboui.tui.event.MouseEventKind.SCROLL_UP) {
+                state.selectPrevious();
+            } else {
+                state.selectNext(rowCount);
+            }
+            return true;
+        }
+        return false;
     }
 
     /** Returns sort-specific key hints, or empty list if sorting is not active. */

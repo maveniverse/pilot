@@ -38,10 +38,15 @@ class UnifiedDiff {
     enum Type {
         CONTEXT,
         ADDED,
-        REMOVED
+        REMOVED,
+        HEADER
     }
 
-    record DiffLine(Type type, String text) {}
+    record DiffLine(Type type, String text, int lineNumber) {
+        DiffLine(Type type, String text) {
+            this(type, text, 0);
+        }
+    }
 
     /**
      * Compute a line-based diff between two strings.
@@ -68,19 +73,19 @@ class UnifiedDiff {
             }
         }
 
-        // Backtrack to produce diff
+        // Backtrack to produce diff with line numbers (based on new file)
         List<DiffLine> result = new ArrayList<>();
         int i = 0, j = 0;
         while (i < m || j < n) {
             if (i < m && j < n && oldLines[i].equals(newLines[j])) {
-                result.add(new DiffLine(Type.CONTEXT, oldLines[i]));
+                result.add(new DiffLine(Type.CONTEXT, oldLines[i], j + 1));
                 i++;
                 j++;
             } else if (i < m && (j >= n || lcs[i + 1][j] >= lcs[i][j + 1])) {
-                result.add(new DiffLine(Type.REMOVED, oldLines[i]));
+                result.add(new DiffLine(Type.REMOVED, oldLines[i], 0));
                 i++;
             } else if (j < n) {
-                result.add(new DiffLine(Type.ADDED, newLines[j]));
+                result.add(new DiffLine(Type.ADDED, newLines[j], j + 1));
                 j++;
             }
         }
@@ -124,24 +129,30 @@ class UnifiedDiff {
         int end = Math.min(scroll + innerHeight, lines.size());
         for (int idx = scroll; idx < end; idx++) {
             DiffLine dl = lines.get(idx);
+            Theme theme = Theme.DEFAULT;
+            if (dl.type() == Type.HEADER) {
+                visibleLines.add(Line.from(Span.raw(dl.text()).bold().white()));
+                continue;
+            }
             String prefix;
             Style style;
-            Theme theme = Theme.DEFAULT;
             switch (dl.type()) {
                 case ADDED -> {
-                    prefix = "+ ";
+                    prefix = "+";
                     style = theme.diffAdded();
                 }
                 case REMOVED -> {
-                    prefix = "- ";
+                    prefix = "-";
                     style = theme.diffRemoved();
                 }
                 default -> {
-                    prefix = "  ";
+                    prefix = " ";
                     style = Style.create().dim();
                 }
             }
-            visibleLines.add(Line.from(Span.raw(prefix + dl.text()).style(style)));
+            String lineNum = dl.lineNumber() > 0 ? String.format("%4d ", dl.lineNumber()) : "     ";
+            visibleLines.add(Line.from(
+                    Span.raw(lineNum).dim(), Span.raw(prefix + " " + dl.text()).style(style)));
         }
 
         // Build a single Text block from all visible lines

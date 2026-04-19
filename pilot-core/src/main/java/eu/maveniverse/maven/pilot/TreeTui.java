@@ -695,6 +695,7 @@ public class TreeTui extends ToolPanel {
             sortChildrenRecursive(model.root, cmp);
         }
         refreshDisplay();
+        fetchPomInfoIfNeeded();
     }
 
     private void sortChildrenRecursive(
