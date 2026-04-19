@@ -639,7 +639,7 @@ class UpdatesTuiTest {
         var dep = result.ungroupedDependencies.get(0);
         dep.newestVersion = "2.0.0";
         dep.updateType = VersionComparator.UpdateType.MAJOR;
-        dep.selected = true;
+        dep.applied = true;
 
         tui.loading = false;
         tui.buildDisplayRows();

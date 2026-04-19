@@ -39,9 +39,7 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
-import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.Coordinates;
-import eu.maveniverse.domtrip.maven.PomEditor;
 import java.nio.file.Path;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -122,7 +120,6 @@ public class UpdatesTui extends ToolPanel {
     private static final String ARROW = " \u2192 ";
     private static final String KEY_NAV = ":Nav  ";
     private static final String KEY_SPACE = "Space";
-    private static final String KEY_ENTER = "Enter";
 
     private final ReactorCollector.CollectionResult reactorResult;
     private final ReactorModel reactorModel;
@@ -468,9 +465,9 @@ public class UpdatesTui extends ToolPanel {
 
     private String extractCheckColumn(ReactorRow row) {
         if (row.isGroupHeader()) {
-            return row.propertyGroup.selected ? "[✓]" : "[ ]";
+            return row.propertyGroup.applied ? "[·]" : "[ ]";
         }
-        return row.dependency.selected ? "[✓]" : "   ";
+        return row.dependency != null && row.dependency.applied ? "[·]" : "   ";
     }
 
     private String extractIdColumn(ReactorRow row) {
@@ -724,24 +721,12 @@ public class UpdatesTui extends ToolPanel {
             handleDepsLeftKey();
             return true;
         }
-        if (key.isCharIgnoreCase(' ')) {
-            toggleSelection();
-            return true;
-        }
-        if (key.isCharIgnoreCase('a')) {
-            selectAll();
-            return true;
-        }
-        if (key.isCharIgnoreCase('n')) {
-            deselectAll();
+        if (key.isCharIgnoreCase(' ') || key.isKey(KeyCode.ENTER)) {
+            applyCurrentUpdate();
             return true;
         }
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            applyUpdates();
             return true;
         }
         if (key.isChar('f')) {
@@ -879,140 +864,96 @@ public class UpdatesTui extends ToolPanel {
         return false;
     }
 
-    private void toggleSelection() {
+    private void applyCurrentUpdate() {
         Integer sel = tableState.selected();
         if (sel == null || sel >= displayRows.size()) return;
 
         var row = displayRows.get(sel);
         if (row.isGroupHeader()) {
-            var group = row.propertyGroup;
-            if (group.applied) return;
-            boolean newState = !group.selected;
-            group.selected = newState;
-            for (var dep : group.dependencies) {
-                dep.selected = newState;
-            }
-        } else if (row.dependency != null && row.dependency.hasUpdate()) {
-            var dep = row.dependency;
-            if (dep.applied) return;
-            boolean newState = !dep.selected;
-            dep.selected = newState;
-            // If part of a property group, toggle the whole group
-            if (dep.isPropertyManaged()) {
+            applyGroupUpdate(row.propertyGroup);
+        } else if (row.dependency != null && row.dependency.hasUpdate() && !row.dependency.applied) {
+            if (row.dependency.isPropertyManaged()) {
                 for (var group : reactorResult.propertyGroups) {
-                    if (group.dependencies.contains(dep)) {
-                        group.selected = newState;
-                        for (var other : group.dependencies) {
-                            other.selected = newState;
-                        }
+                    if (group.dependencies.contains(row.dependency)) {
+                        applyGroupUpdate(group);
                         break;
                     }
                 }
+            } else {
+                applySingleUpdate(row.dependency);
             }
         }
     }
 
-    private void selectAll() {
-        for (var row : displayRows) {
-            if (row.isGroupHeader() && row.propertyGroup.hasUpdate() && !row.propertyGroup.applied) {
-                row.propertyGroup.selected = true;
-                for (var dep : row.propertyGroup.dependencies) {
-                    dep.selected = true;
-                }
-            } else if (row.dependency != null
-                    && !row.dependency.isPropertyManaged()
-                    && row.dependency.hasUpdate()
-                    && !row.dependency.applied) {
-                row.dependency.selected = true;
-            }
+    private void applyGroupUpdate(ReactorCollector.PropertyGroup group) {
+        if (group.applied || !group.hasUpdate()) return;
+
+        PomEditSession session = sessionProvider.apply(group.origin.pomPath);
+        session.beforeMutation();
+        session.editor().properties().updateProperty(true, group.propertyName, group.newestVersion);
+        session.recordChange(
+                PomEditSession.ChangeType.MODIFY,
+                "property",
+                group.propertyName,
+                group.resolvedVersion + ARROW + group.newestVersion,
+                "updates");
+        mutatedSessions.add(session);
+        group.applied = true;
+        for (var dep : group.dependencies) {
+            dep.applied = true;
         }
+        updateReactorCounts();
+        buildDisplayRows();
+        status = "Updated ${" + group.propertyName + "}: " + group.resolvedVersion + ARROW + group.newestVersion;
     }
 
-    private void deselectAll() {
-        for (var group : reactorResult.propertyGroups) {
-            group.selected = false;
-            for (var dep : group.dependencies) {
-                dep.selected = false;
-            }
+    private void applySingleUpdate(ReactorCollector.AggregatedDependency dep) {
+        if (dep.applied || !dep.hasUpdate()) return;
+
+        var loc = findUpdateLocation(dep);
+        PomEditSession session = sessionProvider.apply(loc.pomPath);
+        session.beforeMutation();
+        var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+        if (loc.managed) {
+            session.editor().dependencies().updateManagedDependency(true, coords);
+        } else {
+            session.editor().dependencies().updateDependency(true, coords);
         }
-        for (var dep : reactorResult.ungroupedDependencies) {
-            dep.selected = false;
-        }
+        session.recordChange(
+                PomEditSession.ChangeType.MODIFY,
+                loc.managed ? "managed" : "dependency",
+                dep.ga(),
+                dep.primaryVersion + ARROW + dep.newestVersion,
+                "updates");
+        mutatedSessions.add(session);
+        dep.applied = true;
+        updateReactorCounts();
+        buildDisplayRows();
+        status = "Updated " + dep.ga() + ": " + dep.primaryVersion + ARROW + dep.newestVersion;
     }
 
     // -- Diff preview --
 
     @Override
-    protected void toggleDiffView() {
-        Map<Path, PomEditor> previewEditors = buildPreviewEditors();
-
-        // Merge applied diffs (this tool's sessions) with cross-tool diffs
-        Map<String, Map.Entry<String, String>> fileDiffs = collectAppliedDiffs();
-        fileDiffs.putAll(collectAllDiffs());
-        if (!previewEditors.isEmpty()) {
-            fileDiffs.putAll(collectPreviewDiffs(previewEditors));
+    protected Map<String, Map.Entry<String, String>> collectAllDiffs() {
+        Map<String, Map.Entry<String, String>> diffs = super.collectAllDiffs();
+        for (PomEditSession session : mutatedSessions) {
+            if (session.isDirty()) {
+                String key = displayPath(session.pomPath());
+                diffs.putIfAbsent(key, Map.entry(session.originalContent(), session.currentXml()));
+            }
         }
-        if (fileDiffs.isEmpty()) {
-            status = "No updates selected";
+        return diffs;
+    }
+
+    private void toggleDiffView() {
+        var diffs = collectAllDiffs();
+        if (diffs.isEmpty()) {
+            status = "No changes to show";
             return;
         }
-
-        long changes = diffOverlay.openMulti(fileDiffs);
-        status = changes == 0
-                ? "No changes to show"
-                : changes + " line(s) changed across " + fileDiffs.size() + " file(s)";
-    }
-
-    private Map<Path, PomEditor> buildPreviewEditors() {
-        Map<Path, PomEditor> editors = new LinkedHashMap<>();
-        for (var group : reactorResult.propertyGroups) {
-            if (group.selected && group.hasUpdate()) {
-                PomEditor editor = editors.computeIfAbsent(group.origin.pomPath, p -> {
-                    PomEditSession session = sessionProvider.apply(p);
-                    return new PomEditor(Document.of(session.currentXml()));
-                });
-                editor.properties().updateProperty(true, group.propertyName, group.newestVersion);
-            }
-        }
-        for (var dep : reactorResult.ungroupedDependencies) {
-            if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
-                var loc = findUpdateLocation(dep);
-                PomEditor editor = editors.computeIfAbsent(loc.pomPath, p -> {
-                    PomEditSession session = sessionProvider.apply(p);
-                    return new PomEditor(Document.of(session.currentXml()));
-                });
-                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                if (loc.managed) {
-                    editor.dependencies().updateManagedDependency(true, coords);
-                } else {
-                    editor.dependencies().updateDependency(true, coords);
-                }
-            }
-        }
-        return editors;
-    }
-
-    private Map<String, Map.Entry<String, String>> collectAppliedDiffs() {
-        Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
-        // Check all reactor modules for dirty sessions (includes changes from other tools)
-        for (var module : reactorModel.allModules) {
-            PomEditSession session = sessionProvider.apply(Path.of(module.pomPath));
-            if (session.isDirty()) {
-                diffs.put(displayPath(session.pomPath()), Map.entry(session.originalContent(), session.currentXml()));
-            }
-        }
-        return diffs;
-    }
-
-    private Map<String, Map.Entry<String, String>> collectPreviewDiffs(Map<Path, PomEditor> previewEditors) {
-        Map<String, Map.Entry<String, String>> diffs = new LinkedHashMap<>();
-        for (var entry : previewEditors.entrySet()) {
-            PomEditSession session = sessionProvider.apply(entry.getKey());
-            String original = session.originalContent();
-            String modified = entry.getValue().toXml();
-            diffs.put(displayPath(entry.getKey()), Map.entry(original, modified));
-        }
-        return diffs;
+        long changes = diffOverlay.openMulti(diffs);
+        status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
     // -- Apply --
@@ -1027,144 +968,12 @@ public class UpdatesTui extends ToolPanel {
         return new UpdateLocation(dep.usages.get(0).project.pomPath, false);
     }
 
-    private Map<Path, List<Map.Entry<String, String>>> collectPropertyUpdates() {
-        Map<Path, List<Map.Entry<String, String>>> updates = new LinkedHashMap<>();
-        for (var group : reactorResult.propertyGroups) {
-            if (group.selected && group.hasUpdate()) {
-                updates.computeIfAbsent(group.origin.pomPath, k -> new ArrayList<>())
-                        .add(Map.entry(group.propertyName, group.newestVersion));
-            }
-        }
-        return updates;
-    }
-
-    private Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> collectDependencyUpdates() {
-        Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> updates = new LinkedHashMap<>();
-        for (var dep : reactorResult.ungroupedDependencies) {
-            if (dep.selected && dep.hasUpdate() && !dep.usages.isEmpty()) {
-                var loc = findUpdateLocation(dep);
-                updates.computeIfAbsent(loc.pomPath, k -> new ArrayList<>()).add(Map.entry(dep, loc.managed));
-            }
-        }
-        return updates;
-    }
-
-    private int applyPropertyChanges(
-            Map<Path, List<Map.Entry<String, String>>> propertyUpdates, Map<Path, PomEditSession> sessions) {
-        int count = 0;
-        for (var entry : propertyUpdates.entrySet()) {
-            PomEditSession session = sessions.get(entry.getKey());
-            for (var propEntry : entry.getValue()) {
-                session.editor().properties().updateProperty(true, propEntry.getKey(), propEntry.getValue());
-                session.recordChange(
-                        PomEditSession.ChangeType.MODIFY,
-                        "property",
-                        propEntry.getKey(),
-                        propEntry.getValue(),
-                        "reactor-updates");
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private int applyDependencyChanges(
-            Map<Path, List<Map.Entry<ReactorCollector.AggregatedDependency, Boolean>>> depUpdates,
-            Map<Path, PomEditSession> sessions) {
-        int count = 0;
-        for (var entry : depUpdates.entrySet()) {
-            PomEditSession session = sessions.get(entry.getKey());
-            for (var depEntry : entry.getValue()) {
-                var dep = depEntry.getKey();
-                boolean managed = depEntry.getValue();
-                var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
-                if (managed) {
-                    session.editor().dependencies().updateManagedDependency(true, coords);
-                } else {
-                    session.editor().dependencies().updateDependency(true, coords);
-                }
-                session.recordChange(
-                        PomEditSession.ChangeType.MODIFY,
-                        managed ? "managed" : "dependency",
-                        dep.ga(),
-                        dep.primaryVersion + ARROW + dep.newestVersion,
-                        "reactor-updates");
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private void markAppliedUpdates() {
-        for (var group : reactorResult.propertyGroups) {
-            if (group.selected && group.hasUpdate()) {
-                group.applied = true;
-                group.selected = false;
-                for (var dep : group.dependencies) {
-                    dep.applied = true;
-                    dep.selected = false;
-                }
-            }
-        }
-        for (var dep : reactorResult.ungroupedDependencies) {
-            if (dep.selected && dep.hasUpdate()) {
-                dep.applied = true;
-                dep.selected = false;
-            }
-        }
-    }
-
-    @Override
-    protected void saveAndQuit() {
-        if (save()) {
-            runner.quit();
+    private void requestQuit() {
+        if (isDirty()) {
+            pendingQuit = true;
+            status = "Save changes to POM? (y/n/Esc)";
         } else {
-            pendingQuit = false;
-        }
-    }
-
-    @Override
-    protected void onStatusChange(String message) {
-        this.status = message;
-    }
-
-    @Override
-    protected void onPendingQuitCancelled() {
-        status = buildStatusMessage();
-    }
-
-    private void applyUpdates() {
-        var propertyUpdates = collectPropertyUpdates();
-        var depUpdates = collectDependencyUpdates();
-
-        if (propertyUpdates.isEmpty() && depUpdates.isEmpty()) {
-            status = "No updates selected";
-            return;
-        }
-
-        try {
-            // Get sessions for all affected POMs and snapshot before mutations
-            Map<Path, PomEditSession> sessions = new LinkedHashMap<>();
-            for (Path p : propertyUpdates.keySet()) {
-                sessions.computeIfAbsent(p, sessionProvider);
-            }
-            for (Path p : depUpdates.keySet()) {
-                sessions.computeIfAbsent(p, sessionProvider);
-            }
-            for (PomEditSession session : sessions.values()) {
-                session.beforeMutation();
-            }
-
-            int totalUpdates = applyPropertyChanges(propertyUpdates, sessions);
-            totalUpdates += applyDependencyChanges(depUpdates, sessions);
-
-            mutatedSessions.addAll(sessions.values());
-            markAppliedUpdates();
-            updateReactorCounts();
-            buildDisplayRows();
-            status = "Applied " + totalUpdates + " update(s) — save on exit";
-        } catch (Exception e) {
-            status = "Failed to apply: " + e.getMessage();
+            runner.quit();
         }
     }
 
@@ -1288,14 +1097,7 @@ public class UpdatesTui extends ToolPanel {
 
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
-        String check;
-        if (group.applied) {
-            check = "[·]";
-        } else if (group.selected) {
-            check = "[✓]";
-        } else {
-            check = "[ ]";
-        }
+        String check = group.applied ? "[·]" : "[ ]";
         String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
@@ -1330,14 +1132,7 @@ public class UpdatesTui extends ToolPanel {
     }
 
     private Row createStandaloneDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
-        String check;
-        if (dep.applied) {
-            check = "[·]";
-        } else if (dep.selected) {
-            check = "[✓]";
-        } else {
-            check = "[ ]";
-        }
+        String check = dep.applied ? "[·]" : "[ ]";
         String ga = dep.artifactId;
         String current = dep.primaryVersion != null ? dep.primaryVersion : "";
         String arrow = dep.hasUpdate() ? "→" : "";
@@ -1579,18 +1374,11 @@ public class UpdatesTui extends ToolPanel {
                 .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1))
                 .split(area);
 
-        // Status + selected count
+        // Status + applied count
         List<Span> statusSpans = new ArrayList<>();
         statusSpans.add(Span.raw(" " + status).fg(theme.standaloneStatusColor()));
-        long selectedCount = reactorResult.allDependencies.stream()
-                .filter(d -> d.selected && d.hasUpdate())
-                .count();
         long appliedCount =
                 reactorResult.allDependencies.stream().filter(d -> d.applied).count();
-        if (selectedCount > 0) {
-            statusSpans.add(
-                    Span.raw("  " + selectedCount + " update(s) selected").fg(theme.selectedCountColor()));
-        }
         if (appliedCount > 0) {
             statusSpans.add(Span.raw("  " + appliedCount + " applied").dim());
         }
@@ -1629,15 +1417,9 @@ public class UpdatesTui extends ToolPanel {
         spans.add(Span.raw("←→").bold());
         spans.add(Span.raw(":Expand  "));
         spans.add(Span.raw(KEY_SPACE).bold());
-        spans.add(Span.raw(":Toggle  "));
-        spans.add(Span.raw("a").bold());
-        spans.add(Span.raw(":All  "));
-        spans.add(Span.raw("n").bold());
-        spans.add(Span.raw(":None  "));
+        spans.add(Span.raw(":Apply  "));
         spans.add(Span.raw("d").bold());
         spans.add(Span.raw(":Diff  "));
-        spans.add(Span.raw(KEY_ENTER).bold());
-        spans.add(Span.raw(":Apply  "));
         spans.add(Span.raw("f").bold());
         spans.add(Span.raw(":Filter  "));
         spans.add(Span.raw("i").bold());
@@ -1780,18 +1562,12 @@ public class UpdatesTui extends ToolPanel {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(KEY_NAV));
             spans.add(Span.raw(KEY_SPACE).bold());
-            spans.add(Span.raw(":Toggle  "));
-            spans.add(Span.raw("a").bold());
-            spans.add(Span.raw(":All  "));
-            spans.add(Span.raw("n").bold());
-            spans.add(Span.raw(":None  "));
+            spans.add(Span.raw(":Apply  "));
             spans.addAll(sortKeyHints());
             spans.add(Span.raw("/").bold());
             spans.add(Span.raw(":Search  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
-            spans.add(Span.raw(KEY_ENTER).bold());
-            spans.add(Span.raw(":Apply  "));
             spans.add(Span.raw("f").bold());
             spans.add(Span.raw(":Filter"));
         }
@@ -1804,22 +1580,23 @@ public class UpdatesTui extends ToolPanel {
         if (singleModule) {
             descEntries.add(new HelpOverlay.Entry("", "Shows available dependency updates for this project."));
             descEntries.add(new HelpOverlay.Entry("", "Dependencies managed via properties (e.g."));
-            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"));
-            descEntries.add(new HelpOverlay.Entry("", "the group header toggles all dependencies in it."));
+            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — applying"));
+            descEntries.add(new HelpOverlay.Entry("", "updates the property and all dependencies in it."));
         } else {
             descEntries.add(new HelpOverlay.Entry("", "Aggregates dependency updates across all reactor"));
             descEntries.add(new HelpOverlay.Entry("", "modules. Dependencies managed via properties (e.g."));
-            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — selecting"));
-            descEntries.add(new HelpOverlay.Entry("", "the group header toggles all dependencies in it."));
+            descEntries.add(new HelpOverlay.Entry("", "${jackson.version}) are grouped together — applying"));
+            descEntries.add(new HelpOverlay.Entry("", "updates the property and all dependencies in it."));
             descEntries.add(new HelpOverlay.Entry("", ""));
             descEntries.add(new HelpOverlay.Entry("", "The 'N mod' column shows how many reactor modules"));
             descEntries.add(new HelpOverlay.Entry("", "use each dependency. 'M' indicates a managed"));
             descEntries.add(new HelpOverlay.Entry("", "dependency (from dependencyManagement)."));
         }
         descEntries.add(new HelpOverlay.Entry("", ""));
-        descEntries.add(new HelpOverlay.Entry("", "When you apply updates, property-based deps edit"));
-        descEntries.add(new HelpOverlay.Entry("", "the <properties> in the POM that defines them;"));
-        descEntries.add(new HelpOverlay.Entry("", "direct deps edit the module's own POM."));
+        descEntries.add(new HelpOverlay.Entry("", "Press Space to apply an update immediately."));
+        descEntries.add(new HelpOverlay.Entry("", "Property-based deps edit the <properties> in the"));
+        descEntries.add(new HelpOverlay.Entry("", "POM that defines them; direct deps edit the"));
+        descEntries.add(new HelpOverlay.Entry("", "module's own POM. Use Ctrl+Z to undo."));
 
         String sectionTitle = singleModule ? "Dependency Updates" : "Reactor Dependency Updates";
         String actionsTitle = singleModule ? "Actions" : "Reactor Updates Actions";
@@ -1839,11 +1616,10 @@ public class UpdatesTui extends ToolPanel {
                                 new HelpOverlay.Entry("← / →", "Collapse / expand property group"),
                                 new HelpOverlay.Entry("PgUp / PgDn", "Move selection up / down by one page"),
                                 new HelpOverlay.Entry("Home / End", "Jump to first / last row"),
-                                new HelpOverlay.Entry(KEY_SPACE, "Toggle selection (group or individual)"),
-                                new HelpOverlay.Entry("a / n", "Select all / deselect all"),
-                                new HelpOverlay.Entry(KEY_ENTER, "Apply selected updates to POM files"),
+                                new HelpOverlay.Entry(KEY_SPACE, "Apply update to POM immediately"),
+                                new HelpOverlay.Entry("Ctrl+Z", "Undo last change"),
                                 new HelpOverlay.Entry("f / F", "Cycle filter: all → patch → minor → major"),
-                                new HelpOverlay.Entry("d", "Preview changes as a multi-file diff"),
+                                new HelpOverlay.Entry("d", "Show POM changes as a multi-file diff"),
                                 new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))));
     }
 

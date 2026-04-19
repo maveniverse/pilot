@@ -229,63 +229,44 @@ class UpdatesTuiRenderTest {
         assertThat(output).contains("─".repeat(10));
     }
 
-    // ── Selection ──────────────────────────────────────────────────────────
+    // ── Apply ─────────────────────────────────────────────────────────────
 
     @Test
-    void initiallyNoDependenciesSelected() throws Exception {
+    void initiallyNoDependenciesApplied() throws Exception {
         var tui = createTuiWithUpdates();
         String output = render(tui::renderStandalone);
 
-        assertThat(output).doesNotContain("[\u2713]"); // [✓]
+        assertThat(output).doesNotContain("[\u00b7]"); // [·]
     }
 
     @Test
-    void spaceTogglesSelectionOnCurrentRow() throws Exception {
+    void spaceAppliesCurrentRow() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofChar(' '), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("[\u2713]");
-        assertThat(countOccurrences(output, "[\u2713]")).isEqualTo(1);
+        assertThat(output).contains("[\u00b7]");
+        assertThat(countOccurrences(output, "[\u00b7]")).isEqualTo(1);
     }
 
     @Test
-    void spaceTogglesSelectionOff() throws Exception {
+    void spaceOnAppliedRowDoesNothing() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // select
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // deselect
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // no-op
 
         String output = render(tui::renderStandalone);
-        assertThat(output).doesNotContain("[\u2713]");
+        assertThat(countOccurrences(output, "[\u00b7]")).isEqualTo(1);
     }
 
     @Test
-    void selectAllMarksAllDependencies() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar('a'), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(countOccurrences(output, "[\u2713]")).isEqualTo(3);
-    }
-
-    @Test
-    void deselectAllClearsCheckmarks() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar('a'), null);
-        tui.handleEvent(KeyEvent.ofChar('n'), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(output).doesNotContain("[\u2713]");
-    }
-
-    @Test
-    void selectOnSecondRowAfterNavigation() throws Exception {
+    void applyOnSecondRowAfterNavigation() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null); // move to row 1
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // select row 1
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply row 1
 
         String output = render(tui::renderStandalone);
-        assertThat(countOccurrences(output, "[\u2713]")).isEqualTo(1);
+        assertThat(countOccurrences(output, "[\u00b7]")).isEqualTo(1);
     }
 
     // ── Filtering ──────────────────────────────────────────────────────────
@@ -338,16 +319,16 @@ class UpdatesTuiRenderTest {
     // ── Navigation ─────────────────────────────────────────────────────────
 
     @Test
-    void navigationDownThenSelectHitsSecondRow() throws Exception {
+    void navigationDownThenApplyHitsSecondRow() throws Exception {
         var tui = createTuiWithUpdates();
-        // Select first row
+        // Apply first row
         tui.handleEvent(KeyEvent.ofChar(' '), null);
-        // Move down and select second row
+        // Move down and apply second row
         tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
         tui.handleEvent(KeyEvent.ofChar(' '), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(countOccurrences(output, "[\u2713]")).isEqualTo(2);
+        assertThat(countOccurrences(output, "[\u00b7]")).isEqualTo(2);
     }
 
     @Test
@@ -364,59 +345,38 @@ class UpdatesTuiRenderTest {
     // ── Apply updates ──────────────────────────────────────────────────────
 
     @Test
-    void applyWithNothingSelectedShowsMessage() throws Exception {
+    void spaceAppliesUpdateShowsMessage() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply first dep
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("No updates selected");
+        assertThat(output).contains("Updated");
     }
 
     @Test
-    void applyUpdatesShowsAppliedMessage() throws Exception {
+    void spaceAppliesUpdateShowsAppliedMarker() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // select first dep
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply first dep
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("Applied").contains("update(s)");
-    }
-
-    @Test
-    void applyUpdatesShowsAppliedMarker() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // select first dep
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(output).contains("guava").contains("[·]").contains("slf4j-api");
-    }
-
-    @Test
-    void applyAllUpdatesShowsAllApplied() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar('a'), null); // select all
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(output).contains("[·]").contains("applied");
+        assertThat(output).contains("[\u00b7]");
     }
 
     // ── Diff overlay ───────────────────────────────────────────────────────
 
     @Test
-    void diffWithNoSelectionShowsMessage() throws Exception {
+    void diffWithNoChangesShowsMessage() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofChar('d'), null);
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("No updates selected");
+        assertThat(output).contains("No changes to show");
     }
 
     @Test
-    void diffPreviewShowsOverlayTitle() throws Exception {
+    void diffAfterApplyShowsOverlayTitle() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // select dep
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply dep
         tui.handleEvent(KeyEvent.ofChar('d'), null); // open diff
 
         String output = render(tui::renderStandalone);
@@ -426,7 +386,7 @@ class UpdatesTuiRenderTest {
     @Test
     void diffOverlayClosesOnEscape() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null);
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply
         tui.handleEvent(KeyEvent.ofChar('d'), null);
         tui.handleEvent(KeyEvent.ofKey(KeyCode.ESCAPE), null);
 
@@ -435,12 +395,12 @@ class UpdatesTuiRenderTest {
     }
 
     @Test
-    void diffAfterApplyShowsChanges() throws Exception {
+    void diffAfterMultipleAppliesShowsChanges() throws Exception {
         var tui = createTuiWithUpdates();
         // Apply first dep
         tui.handleEvent(KeyEvent.ofChar(' '), null);
-        tui.handleEvent(KeyEvent.ofKey(KeyCode.ENTER), null);
-        // Select next dep and preview diff
+        // Move down and apply second dep
+        tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
         tui.handleEvent(KeyEvent.ofChar(' '), null);
         tui.handleEvent(KeyEvent.ofChar('d'), null);
 
@@ -455,18 +415,13 @@ class UpdatesTuiRenderTest {
         var tui = createTuiWithUpdates();
         String output = render(tui::renderStandalone);
 
-        assertThat(output)
-                .contains("Nav")
-                .contains("Toggle")
-                .contains("Apply")
-                .contains("Filter")
-                .contains("Quit");
+        assertThat(output).contains("Nav").contains("Apply").contains("Filter").contains("Quit");
     }
 
     @Test
     void diffOverlayShowsDiffKeyHints() throws Exception {
         var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null);
+        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply first
         tui.handleEvent(KeyEvent.ofChar('d'), null);
 
         String output = render(tui::renderStandalone);
@@ -580,14 +535,5 @@ class UpdatesTuiRenderTest {
 
         String output = render(tui::renderStandalone);
         assertThat(output).contains("${spring.version}").contains("guava");
-    }
-
-    @Test
-    void selectAllIncludesPropertyGroupAndUngrouped() throws Exception {
-        var tui = createTuiWithPropertyGroup();
-        tui.handleEvent(KeyEvent.ofChar('a'), null);
-
-        String output = render(tui::renderStandalone);
-        assertThat(countOccurrences(output, "[\u2713]")).isGreaterThanOrEqualTo(2);
     }
 }

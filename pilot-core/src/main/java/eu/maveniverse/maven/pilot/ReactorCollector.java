@@ -64,7 +64,6 @@ public class ReactorCollector {
 
         String newestVersion;
         VersionComparator.UpdateType updateType;
-        boolean selected;
         boolean applied;
         LocalDate currentReleaseDate;
         LocalDate newestReleaseDate;
@@ -101,7 +100,6 @@ public class ReactorCollector {
 
         String newestVersion;
         VersionComparator.UpdateType updateType;
-        boolean selected;
         boolean applied;
         boolean expanded = false;
         float libYears = -1;
