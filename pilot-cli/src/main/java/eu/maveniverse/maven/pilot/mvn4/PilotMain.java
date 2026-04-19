@@ -243,27 +243,36 @@ public class PilotMain {
                 declaredParentGa.put(project, declaredParentGroupId + ":" + declaredParentArtifactId);
             }
 
-            // Recurse into modules
-            Element modulesEl = getDirectChildElement(root, "modules");
-            if (modulesEl != null) {
-                NodeList moduleNodes = modulesEl.getElementsByTagName("module");
-                for (int i = 0; i < moduleNodes.getLength(); i++) {
-                    String moduleName = moduleNodes.item(i).getTextContent().trim();
-                    Path modulePom = basedir.resolve(moduleName)
-                            .resolve(POM_XML)
-                            .toAbsolutePath()
-                            .normalize();
-                    if (Files.isRegularFile(modulePom)) {
-                        Path realModulePom = modulePom.toRealPath();
-                        if (realModulePom.startsWith(rootDir)) {
-                            discoverModulesRecursive(
-                                    realModulePom, groupId, version, projects, declaredParentGa, rootDir);
-                        }
-                    }
-                }
-            }
+            recurseIntoModules(root, basedir, groupId, version, projects, declaredParentGa, rootDir);
         } catch (Exception e) {
             LOGGER.warning("Skipping unparseable module: " + pomPath + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private static void recurseIntoModules(
+            Element root,
+            Path basedir,
+            String groupId,
+            String version,
+            List<PilotProject> projects,
+            Map<PilotProject, String> declaredParentGa,
+            Path rootDir)
+            throws IOException {
+        Element modulesEl = getDirectChildElement(root, "modules");
+        if (modulesEl == null) return;
+        NodeList moduleNodes = modulesEl.getElementsByTagName("module");
+        for (int i = 0; i < moduleNodes.getLength(); i++) {
+            String moduleName = moduleNodes.item(i).getTextContent().trim();
+            Path modulePom = basedir.resolve(moduleName)
+                    .resolve(POM_XML)
+                    .toAbsolutePath()
+                    .normalize();
+            if (Files.isRegularFile(modulePom)) {
+                Path realModulePom = modulePom.toRealPath();
+                if (realModulePom.startsWith(rootDir)) {
+                    discoverModulesRecursive(realModulePom, groupId, version, projects, declaredParentGa, rootDir);
+                }
+            }
         }
     }
 

@@ -60,6 +60,7 @@ public class DependenciesTui extends ToolPanel {
     private static final String COL_VERSION = "version";
     private static final String COL_SCOPE = "scope";
     private static final String SECTION_DEPENDENCIES = "dependencies";
+    private static final String HINT_REMOVE = ":Remove  ";
     private static final String TARGET_DEPENDENCY = "dependency";
     private static final String HIGHLIGHT_SYMBOL = "▸ ";
 
@@ -667,13 +668,13 @@ public class DependenciesTui extends ToolPanel {
             spans.add(Span.raw(":Nav  "));
             if (view == View.DECLARED || view == View.UNUSED_DECLARED) {
                 spans.add(Span.raw("x/Enter").bold());
-                spans.add(Span.raw(":Remove  "));
+                spans.add(Span.raw(HINT_REMOVE));
             } else if (view == View.TRANSITIVE || view == View.USED_TRANSITIVE) {
                 spans.add(Span.raw("a/Enter").bold());
                 spans.add(Span.raw(":Add  "));
             } else {
                 spans.add(Span.raw("x").bold());
-                spans.add(Span.raw(":Remove  "));
+                spans.add(Span.raw(HINT_REMOVE));
             }
             if (!reactorMode) {
                 spans.add(Span.raw("c").bold());
@@ -1591,7 +1592,7 @@ public class DependenciesTui extends ToolPanel {
             spans.add(Span.raw(":Add to POM  "));
         } else if (view == View.MANAGED) {
             spans.add(Span.raw("x").bold());
-            spans.add(Span.raw(":Remove  "));
+            spans.add(Span.raw(HINT_REMOVE));
         }
         spans.add(Span.raw("c").bold());
         spans.add(Span.raw(":Change scope  "));
