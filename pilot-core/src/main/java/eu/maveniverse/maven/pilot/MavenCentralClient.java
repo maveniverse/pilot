@@ -36,6 +36,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
 class MavenCentralClient {
 
@@ -198,7 +199,8 @@ class MavenCentralClient {
 
     private record LicenseInfo(String name, String url) {}
 
-    private static PomInfo parsePomInfo(InputStream is, String date) throws Exception {
+    private static PomInfo parsePomInfo(InputStream is, String date)
+            throws IOException, ParserConfigurationException, SAXException {
         DocumentBuilder db = createSafeDocumentBuilder();
         Document doc = db.parse(is);
         Element root = doc.getDocumentElement();

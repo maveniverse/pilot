@@ -52,37 +52,30 @@ class SearchController {
 
     boolean handleSearchInput(KeyEvent key) {
         if (searchMode) {
-            return handleSearchModeInput(key);
+            handleSearchModeInput(key);
+            return true;
         }
         return handleNormalModeInput(key);
     }
 
-    private boolean handleSearchModeInput(KeyEvent key) {
+    private void handleSearchModeInput(KeyEvent key) {
         if (key.isKey(KeyCode.ESCAPE)) {
             searchMode = false;
             activeSearch = null;
             searchMatches = List.of();
             searchMatchIndex = -1;
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
+        } else if (key.isKey(KeyCode.ENTER)) {
             searchMode = false;
             if (!searchBuffer.isEmpty()) {
                 activeSearch = searchBuffer.toString().toLowerCase();
             }
-            return true;
-        }
-        if (key.isKey(KeyCode.BACKSPACE) && !searchBuffer.isEmpty()) {
+        } else if (key.isKey(KeyCode.BACKSPACE) && !searchBuffer.isEmpty()) {
             searchBuffer.deleteCharAt(searchBuffer.length() - 1);
             updateMatches();
-            return true;
-        }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+        } else if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
             searchBuffer.append(key.character());
             updateMatches();
-            return true;
         }
-        return true;
     }
 
     private boolean handleNormalModeInput(KeyEvent key) {
