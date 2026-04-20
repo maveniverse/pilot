@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Run release drafter
         id: drafter
-        uses: release-drafter/release-drafter@a6a982fee9675c45c1765e9fa5308f7d6c3ecbd4 # v7
+        uses: release-drafter/release-drafter@5de93583980a40bd78603b6dfdcda5b4df377b32 # v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
