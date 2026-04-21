@@ -345,21 +345,12 @@ class UpdatesTuiRenderTest {
     // ── Apply updates ──────────────────────────────────────────────────────
 
     @Test
-    void spaceAppliesUpdateShowsMessage() throws Exception {
+    void spaceAppliesUpdateShowsMessageAndMarker() throws Exception {
         var tui = createTuiWithUpdates();
         tui.handleEvent(KeyEvent.ofChar(' '), null); // apply first dep
 
         String output = render(tui::renderStandalone);
-        assertThat(output).contains("Updated");
-    }
-
-    @Test
-    void spaceAppliesUpdateShowsAppliedMarker() throws Exception {
-        var tui = createTuiWithUpdates();
-        tui.handleEvent(KeyEvent.ofChar(' '), null); // apply first dep
-
-        String output = render(tui::renderStandalone);
-        assertThat(output).contains("[\u00b7]");
+        assertThat(output).contains("Updated").contains("[\u00b7]");
     }
 
     // ── Diff overlay ───────────────────────────────────────────────────────

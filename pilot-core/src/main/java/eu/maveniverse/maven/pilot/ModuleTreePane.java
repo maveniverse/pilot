@@ -232,7 +232,7 @@ class ModuleTreePane {
                 tableState.select(row);
                 var node = visible.get(row);
                 if (node.hasChildren()) {
-                    int arrowX = area.x() + 1 + node.depth * 2; // border(1) + indent
+                    int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
                     if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                         node.expanded = !node.expanded;
                     }

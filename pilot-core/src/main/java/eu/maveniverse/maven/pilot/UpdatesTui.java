@@ -876,24 +876,38 @@ public class UpdatesTui extends ToolPanel {
 
         var row = displayRows.get(sel);
         if (row.isGroupHeader()) {
-            if (row.propertyGroup.applied || !row.propertyGroup.hasUpdate()) {
-                status = row.propertyGroup.applied ? "Already applied" : "No update available";
+            applyGroupHeaderUpdate(row.propertyGroup);
+        } else if (row.dependency != null) {
+            applyDependencyUpdate(row.dependency);
+        }
+    }
+
+    private void applyGroupHeaderUpdate(ReactorCollector.PropertyGroup group) {
+        if (group.applied || !group.hasUpdate()) {
+            status = group.applied ? "Already applied" : "No update available";
+            return;
+        }
+        applyGroupUpdate(group);
+    }
+
+    private void applyDependencyUpdate(ReactorCollector.AggregatedDependency dep) {
+        if (!dep.hasUpdate() || dep.applied) {
+            status = dep.applied ? "Already applied" : "No update available";
+            return;
+        }
+        if (dep.isPropertyManaged()) {
+            applyPropertyManagedDep(dep);
+        } else {
+            applySingleUpdate(dep);
+        }
+    }
+
+    private void applyPropertyManagedDep(ReactorCollector.AggregatedDependency dep) {
+        for (var group : reactorResult.propertyGroups) {
+            if (group.dependencies.contains(dep)) {
+                applyGroupUpdate(group);
                 return;
             }
-            applyGroupUpdate(row.propertyGroup);
-        } else if (row.dependency != null && row.dependency.hasUpdate() && !row.dependency.applied) {
-            if (row.dependency.isPropertyManaged()) {
-                for (var group : reactorResult.propertyGroups) {
-                    if (group.dependencies.contains(row.dependency)) {
-                        applyGroupUpdate(group);
-                        break;
-                    }
-                }
-            } else {
-                applySingleUpdate(row.dependency);
-            }
-        } else {
-            status = (row.dependency != null && row.dependency.applied) ? "Already applied" : "No update available";
         }
     }
 
@@ -958,7 +972,8 @@ public class UpdatesTui extends ToolPanel {
         return diffs;
     }
 
-    private void toggleDiffView() {
+    @Override
+    protected void toggleDiffView() {
         var diffs = collectAllDiffs();
         if (diffs.isEmpty()) {
             status = "No changes to show";
@@ -980,7 +995,8 @@ public class UpdatesTui extends ToolPanel {
         return new UpdateLocation(dep.usages.get(0).project.pomPath, false);
     }
 
-    private void requestQuit() {
+    @Override
+    protected void requestQuit() {
         if (isDirty()) {
             pendingQuit = true;
             status = "Save changes to POM? (y/n/Esc)";
@@ -1332,7 +1348,7 @@ public class UpdatesTui extends ToolPanel {
             return;
         }
 
-        Row header = sortState.decorateHeader(List.of("module", "updates"), theme.tableHeader());
+        Row header = sortState.decorateHeader(List.of("module", ORIGIN_UPDATES), theme.tableHeader());
 
         List<Row> rows = new ArrayList<>();
         for (var node : visible) {
