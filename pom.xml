@@ -26,7 +26,7 @@ under the License.
     <version>52</version>
   </parent>
 
-  <groupId>eu.maveniverse.maven.plugins</groupId>
+  <groupId>eu.maveniverse.maven.pilot</groupId>
   <artifactId>pilot</artifactId>
   <version>${nisse.jgit.dynamicVersion}</version>
   <packaging>pom</packaging>
@@ -73,7 +73,7 @@ under the License.
     <dependencies>
       <!-- Internal -->
       <dependency>
-        <groupId>eu.maveniverse.maven.plugins</groupId>
+        <groupId>eu.maveniverse.maven.pilot</groupId>
         <artifactId>pilot-core</artifactId>
         <version>${project.version}</version>
       </dependency>
