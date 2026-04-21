@@ -626,7 +626,7 @@ class UpdatesTuiTest {
     }
 
     @Test
-    void renderWithSelectedUngroupedDependency() throws IOException {
+    void renderWithAppliedUngroupedDependency() throws IOException {
         Path dir = subdir("render6");
 
         PilotProject.Dep d = dep("com.example", "lib", "1.0");
@@ -639,7 +639,7 @@ class UpdatesTuiTest {
         var dep = result.ungroupedDependencies.get(0);
         dep.newestVersion = "2.0.0";
         dep.updateType = VersionComparator.UpdateType.MAJOR;
-        dep.selected = true;
+        dep.applied = true;
 
         tui.loading = false;
         tui.buildDisplayRows();

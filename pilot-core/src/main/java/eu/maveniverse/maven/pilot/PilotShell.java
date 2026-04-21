@@ -270,6 +270,8 @@ public class PilotShell {
         if (helpOverlay.isAnimating()) return true;
         // Panel loading in progress
         if (panelLoadingStatus != null) return true;
+        // Active panel has background work (e.g. async version resolution)
+        if (activePanel != null && activePanel.needsTickRedraw()) return true;
         return loadingStatusSupplier != null && loadingStatusSupplier.get() != null;
     }
 

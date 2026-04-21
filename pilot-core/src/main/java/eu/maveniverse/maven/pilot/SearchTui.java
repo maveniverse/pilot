@@ -190,6 +190,11 @@ public class SearchTui extends ToolPanel {
     }
 
     @Override
+    boolean needsTickRedraw() {
+        return loading || prefetchingMore;
+    }
+
+    @Override
     void close() {
         httpPool.shutdownNow();
     }
