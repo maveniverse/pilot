@@ -300,33 +300,39 @@ public class PomTui extends ToolPanel {
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (handleMouseTabBar(mouse)) return true;
         if (mouse.isClick()) {
-            var visible = currentModel().visibleNodes();
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // tab bar + border
-            if (row >= 0 && row < visible.size()) {
-                tableState.select(row);
-                // Toggle expand/collapse when clicking the arrow
-                var node = visible.get(row);
-                if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e)) {
-                    int arrowX = area.x() + 2 + currentModel().relativeDepth(e) * 2; // highlight(2) + indent
-                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
-                        currentModel().setExpanded(e, !currentModel().isExpanded(e));
-                    }
-                }
-                return true;
-            }
+            return handlePomMouseClick(mouse, area);
         }
         if (mouse.isScroll()) {
-            var visible = currentModel().visibleNodes();
-            if (visible.isEmpty()) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(visible.size() - 1, sel + 1));
-            }
-            return true;
+            return handlePomMouseScroll(mouse);
         }
         return false;
+    }
+
+    private boolean handlePomMouseClick(MouseEvent mouse, Rect area) {
+        var visible = currentModel().visibleNodes();
+        int row = mouse.y() - area.y() - 2 + tableState.offset(); // tab bar + border
+        if (row < 0 || row >= visible.size()) return false;
+        tableState.select(row);
+        var node = visible.get(row);
+        if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e)) {
+            int arrowX = area.x() + 1 + 2 + currentModel().relativeDepth(e) * 2; // border(1) + highlight(2) + indent
+            if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                currentModel().setExpanded(e, !currentModel().isExpanded(e));
+            }
+        }
+        return true;
+    }
+
+    private boolean handlePomMouseScroll(MouseEvent mouse) {
+        var visible = currentModel().visibleNodes();
+        if (visible.isEmpty()) return false;
+        int sel = tableState.selected();
+        if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+            tableState.select(Math.max(0, sel - 1));
+        } else {
+            tableState.select(Math.min(visible.size() - 1, sel + 1));
+        }
+        return true;
     }
 
     @Override

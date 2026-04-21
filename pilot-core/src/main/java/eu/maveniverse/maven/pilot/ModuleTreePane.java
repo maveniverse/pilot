@@ -225,35 +225,41 @@ class ModuleTreePane {
 
     boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (mouse.isClick()) {
-            // Calculate which row was clicked (area has border, no header + scroll offset)
-            int row = mouse.y() - area.y() - 1 + tableState.offset(); // border + scroll
-            var visible = visibleNodes();
-            if (row >= 0 && row < visible.size()) {
-                tableState.select(row);
-                var node = visible.get(row);
-                if (node.hasChildren()) {
-                    int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
-                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
-                        node.expanded = !node.expanded;
-                    }
-                }
-                notifySelection();
-                return true;
-            }
+            return handleMouseClick(mouse, area);
         }
         if (mouse.isScroll()) {
-            var visible = visibleNodes();
-            if (visible.isEmpty()) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(visible.size() - 1, sel + 1));
-            }
-            notifySelection();
-            return true;
+            return handleMouseScroll(mouse);
         }
         return false;
+    }
+
+    private boolean handleMouseClick(MouseEvent mouse, Rect area) {
+        int row = mouse.y() - area.y() - 1 + tableState.offset(); // border + scroll
+        var visible = visibleNodes();
+        if (row < 0 || row >= visible.size()) return false;
+        tableState.select(row);
+        var node = visible.get(row);
+        if (node.hasChildren()) {
+            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+            if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                node.expanded = !node.expanded;
+            }
+        }
+        notifySelection();
+        return true;
+    }
+
+    private boolean handleMouseScroll(MouseEvent mouse) {
+        var visible = visibleNodes();
+        if (visible.isEmpty()) return false;
+        int sel = tableState.selected();
+        if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+            tableState.select(Math.max(0, sel - 1));
+        } else {
+            tableState.select(Math.min(visible.size() - 1, sel + 1));
+        }
+        notifySelection();
+        return true;
     }
 
     private void notifySelection() {

@@ -191,7 +191,7 @@ public class SearchTui extends ToolPanel {
 
     @Override
     boolean needsTickRedraw() {
-        return loading;
+        return loading || prefetchingMore;
     }
 
     @Override

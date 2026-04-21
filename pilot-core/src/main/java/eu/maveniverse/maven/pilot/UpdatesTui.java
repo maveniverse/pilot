@@ -31,7 +31,6 @@ import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
-import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
@@ -727,7 +726,7 @@ public class UpdatesTui extends ToolPanel {
             handleDepsLeftKey();
             return true;
         }
-        if (key.isCharIgnoreCase(' ') || key.isKey(KeyCode.ENTER)) {
+        if (key.isChar(' ') || key.isKey(KeyCode.ENTER)) {
             applyCurrentUpdate();
             return true;
         }
@@ -909,6 +908,7 @@ public class UpdatesTui extends ToolPanel {
                 return;
             }
         }
+        status = "No matching property group found";
     }
 
     private void applyGroupUpdate(ReactorCollector.PropertyGroup group) {
@@ -1515,72 +1515,57 @@ public class UpdatesTui extends ToolPanel {
             return true;
         }
         if (handleMouseTabBar(mouse)) return true;
-        List<Constraint> widths;
-        if (view == View.DEPENDENCIES) {
-            widths = depsTableWidths();
-        } else {
-            widths = List.of(Constraint.percentage(75), Constraint.percentage(25));
-        }
-        if (handleMouseSortHeader(mouse, widths)) {
-            return true;
-        }
-        if (view == View.MODULES) {
-            List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
-            if (mouse.isClick()) {
-                int row = mouseToTableRow(mouse, visible.size(), moduleTableState);
-                if (row >= 0) {
-                    moduleTableState.select(row);
-                    var node = visible.get(row);
-                    if (node.hasChildren() && lastTableInner != null) {
-                        int arrowX = lastTableInner.x() + 2 + node.depth * 2; // highlight(2) + indent
-                        if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
-                            node.expanded = !node.expanded;
-                        }
-                    }
-                    return true;
-                }
-            }
-            if (mouse.isScroll()) {
-                if (visible.isEmpty()) return false;
-                int sel = moduleTableState.selected();
-                if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                    moduleTableState.select(Math.max(0, sel - 1));
-                } else {
-                    moduleTableState.select(Math.min(visible.size() - 1, sel + 1));
-                }
-                return true;
-            }
-        } else {
-            if (mouse.isClick()) {
-                int row = mouseToTableRow(mouse, displayRows.size(), tableState);
-                if (row >= 0) {
-                    tableState.select(row);
-                    // Toggle expand/collapse when clicking near the arrow
-                    if (lastTableInner != null) {
-                        int nameColStart = lastTableInner.x() + 3 + 2; // checkbox(3) + highlight(2)
-                        if (mouse.x() >= nameColStart && mouse.x() < nameColStart + 2) {
-                            var r = displayRows.get(row);
-                            if (r.isGroupHeader()) {
-                                r.propertyGroup.expanded = !r.propertyGroup.expanded;
-                                rebuildDisplayRowsKeepSelection();
-                            }
-                        }
-                    }
-                    return true;
-                }
-            }
-            if (mouse.isScroll()) {
-                if (displayRows.isEmpty()) return false;
-                int sel = tableState.selected();
-                if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                    tableState.select(Math.max(0, sel - 1));
-                } else {
-                    tableState.select(Math.min(displayRows.size() - 1, sel + 1));
-                }
+        List<Constraint> widths = view == View.DEPENDENCIES
+                ? depsTableWidths()
+                : List.of(Constraint.percentage(75), Constraint.percentage(25));
+        if (handleMouseSortHeader(mouse, widths)) return true;
+        return view == View.MODULES ? handleModulesMouseEvent(mouse) : handleDepsMouseEvent(mouse);
+    }
+
+    private boolean handleModulesMouseEvent(MouseEvent mouse) {
+        List<ReactorModel.ModuleNode> visible = reactorModel.visibleNodes();
+        if (mouse.isClick()) {
+            int row = mouseToTableRow(mouse, visible.size(), moduleTableState);
+            if (row >= 0) {
+                moduleTableState.select(row);
+                toggleModuleExpand(visible.get(row), mouse);
                 return true;
             }
         }
-        return false;
+        return handleMouseTableInteraction(mouse, visible.size(), moduleTableState);
+    }
+
+    private void toggleModuleExpand(ReactorModel.ModuleNode node, MouseEvent mouse) {
+        if (node.hasChildren() && lastTableInner != null) {
+            int arrowX = lastTableInner.x() + 2 + node.depth * 2; // highlight(2) + indent
+            if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                node.expanded = !node.expanded;
+            }
+        }
+    }
+
+    private boolean handleDepsMouseEvent(MouseEvent mouse) {
+        if (mouse.isClick()) {
+            int row = mouseToTableRow(mouse, displayRows.size(), tableState);
+            if (row >= 0) {
+                tableState.select(row);
+                toggleGroupExpand(row, mouse);
+                return true;
+            }
+        }
+        return handleMouseTableInteraction(mouse, displayRows.size(), tableState);
+    }
+
+    private void toggleGroupExpand(int row, MouseEvent mouse) {
+        if (lastTableInner == null) return;
+        int nameColStart = lastTableInner.x() + 3 + 2; // checkbox(3) + highlight(2)
+        if (mouse.x() >= nameColStart && mouse.x() < nameColStart + 2) {
+            var r = displayRows.get(row);
+            if (r.isGroupHeader()) {
+                r.propertyGroup.expanded = !r.propertyGroup.expanded;
+                rebuildDisplayRowsKeepSelection();
+            }
+        }
     }
 
     @Override

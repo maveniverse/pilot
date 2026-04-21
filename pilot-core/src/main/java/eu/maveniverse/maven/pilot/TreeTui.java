@@ -173,33 +173,40 @@ public class TreeTui extends ToolPanel {
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (handleMouseSortHeader(mouse, List.of(TREE_WIDTHS))) return true;
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
-            if (row >= 0 && row < displayNodes.size()) {
-                tableState.select(row);
-                var node = displayNodes.get(row);
-                if (node.hasChildren()) {
-                    int arrowX = area.x() + 2 + node.depth * 2; // highlight(2) + indent
-                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
-                        node.expanded = !node.expanded;
-                        refreshDisplay();
-                    }
-                }
-                fetchPomInfoIfNeeded();
-                return true;
-            }
+            return handleTreeMouseClick(mouse, area);
         }
         if (mouse.isScroll()) {
-            if (displayNodes.isEmpty()) return false;
-            int sel = tableState.selected();
-            if (mouse.kind() == MouseEventKind.SCROLL_UP) {
-                tableState.select(Math.max(0, sel - 1));
-            } else {
-                tableState.select(Math.min(displayNodes.size() - 1, sel + 1));
-            }
-            fetchPomInfoIfNeeded();
-            return true;
+            return handleTreeMouseScroll(mouse);
         }
         return false;
+    }
+
+    private boolean handleTreeMouseClick(MouseEvent mouse, Rect area) {
+        int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
+        if (row < 0 || row >= displayNodes.size()) return false;
+        tableState.select(row);
+        var node = displayNodes.get(row);
+        if (node.hasChildren()) {
+            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+            if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                node.expanded = !node.expanded;
+                refreshDisplay();
+            }
+        }
+        fetchPomInfoIfNeeded();
+        return true;
+    }
+
+    private boolean handleTreeMouseScroll(MouseEvent mouse) {
+        if (displayNodes.isEmpty()) return false;
+        int sel = tableState.selected();
+        if (mouse.kind() == MouseEventKind.SCROLL_UP) {
+            tableState.select(Math.max(0, sel - 1));
+        } else {
+            tableState.select(Math.min(displayNodes.size() - 1, sel + 1));
+        }
+        fetchPomInfoIfNeeded();
+        return true;
     }
 
     @Override
