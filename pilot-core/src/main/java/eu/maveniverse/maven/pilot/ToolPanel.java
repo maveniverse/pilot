@@ -92,6 +92,10 @@ public abstract class ToolPanel {
     /** Diff overlay for previewing POM changes. */
     protected final DiffOverlay diffOverlay = new DiffOverlay();
 
+    boolean needsTickRedraw() {
+        return false;
+    }
+
     /** Help overlay for standalone mode (shell has its own for panel mode). */
     protected final HelpOverlay helpOverlay = new HelpOverlay();
 
@@ -497,7 +501,7 @@ public abstract class ToolPanel {
      * The inner area of the last rendered table (after block borders/titles/padding).
      * This is where the Table widget positions the header and data rows.
      */
-    private Rect lastTableInner;
+    protected Rect lastTableInner;
 
     /**
      * The width of the highlight symbol used in the last rendered table.

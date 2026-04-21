@@ -1826,6 +1826,32 @@ public class AuditTui extends ToolPanel {
         }
         if (handleMouseTabBar(mouse)) return true;
         if (handleMouseSortHeader(mouse, currentTableWidths())) return true;
+        if (mouse.isClick()) {
+            var state = activeTableState();
+            int row = mouseToTableRow(mouse, activeRowCount(), state);
+            if (row >= 0) {
+                state.select(row);
+                if (lastTableInner != null) {
+                    int arrowX = lastTableInner.x() + 2; // highlight(2)
+                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                        if (view == View.VULNERABILITIES
+                                && row < vulnDisplayRows.size()
+                                && vulnDisplayRows.get(row).isGroupHeader()) {
+                            var group = vulnDisplayRows.get(row).group();
+                            group.expanded = !group.expanded;
+                            rebuildVulnDisplayRows();
+                        } else if (view == View.LICENSES
+                                && licensesGrouped
+                                && row < byLicenseRows.size()
+                                && byLicenseRows.get(row).isGroup()) {
+                            byLicenseRows.get(row).expanded = !byLicenseRows.get(row).expanded;
+                            rebuildByLicenseRows();
+                        }
+                    }
+                }
+                return true;
+            }
+        }
         return handleMouseTableInteraction(mouse, activeRowCount(), activeTableState());
     }
 
@@ -1892,6 +1918,11 @@ public class AuditTui extends ToolPanel {
     public void setRunner(TuiRunner runner) {
         super.setRunner(runner);
         fetchAllData();
+    }
+
+    @Override
+    boolean needsTickRedraw() {
+        return licensesLoaded < entries.size() || vulnsLoaded < entries.size();
     }
 
     @Override

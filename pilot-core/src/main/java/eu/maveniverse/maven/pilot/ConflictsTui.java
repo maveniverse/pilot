@@ -415,6 +415,11 @@ public class ConflictsTui extends ToolPanel {
     }
 
     @Override
+    boolean needsTickRedraw() {
+        return loading;
+    }
+
+    @Override
     public void setRunner(TuiRunner runner) {
         super.setRunner(runner);
         if (loading && pendingProjects != null) {

@@ -245,7 +245,12 @@ public class UpdatesTui extends ToolPanel {
     }
 
     void updateStatusIfDone() {
-        if (loadedCount < reactorResult.allDependencies.size()) {
+        int total = reactorResult.allDependencies.size();
+        if (loadedCount < total) {
+            status = "Checking dependencies " + loadedCount + "/" + total + "…";
+            computePropertyGroupVersions();
+            updateReactorCounts();
+            rebuildDisplayRowsKeepSelection();
             return;
         }
         loading = false;
@@ -1509,6 +1514,13 @@ public class UpdatesTui extends ToolPanel {
                 int row = mouseToTableRow(mouse, visible.size(), moduleTableState);
                 if (row >= 0) {
                     moduleTableState.select(row);
+                    var node = visible.get(row);
+                    if (node.hasChildren() && lastTableInner != null) {
+                        int arrowX = lastTableInner.x() + 2 + node.depth * 2; // highlight(2) + indent
+                        if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                            node.expanded = !node.expanded;
+                        }
+                    }
                     return true;
                 }
             }
@@ -1527,6 +1539,17 @@ public class UpdatesTui extends ToolPanel {
                 int row = mouseToTableRow(mouse, displayRows.size(), tableState);
                 if (row >= 0) {
                     tableState.select(row);
+                    // Toggle expand/collapse when clicking near the arrow
+                    if (lastTableInner != null) {
+                        int nameColStart = lastTableInner.x() + 3 + 2; // checkbox(3) + highlight(2)
+                        if (mouse.x() >= nameColStart && mouse.x() < nameColStart + 2) {
+                            var r = displayRows.get(row);
+                            if (r.isGroupHeader()) {
+                                r.propertyGroup.expanded = !r.propertyGroup.expanded;
+                                rebuildDisplayRowsKeepSelection();
+                            }
+                        }
+                    }
                     return true;
                 }
             }
@@ -1636,6 +1659,11 @@ public class UpdatesTui extends ToolPanel {
         if (loading) {
             fetchAllUpdates();
         }
+    }
+
+    @Override
+    boolean needsTickRedraw() {
+        return loading || datesLoading;
     }
 
     @Override

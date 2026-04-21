@@ -176,6 +176,14 @@ public class TreeTui extends ToolPanel {
             int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
             if (row >= 0 && row < displayNodes.size()) {
                 tableState.select(row);
+                var node = displayNodes.get(row);
+                if (node.hasChildren()) {
+                    int arrowX = area.x() + 2 + node.depth * 2; // highlight(2) + indent
+                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                        node.expanded = !node.expanded;
+                        refreshDisplay();
+                    }
+                }
                 fetchPomInfoIfNeeded();
                 return true;
             }

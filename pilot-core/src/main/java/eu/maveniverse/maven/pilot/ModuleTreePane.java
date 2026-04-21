@@ -230,6 +230,13 @@ class ModuleTreePane {
             var visible = visibleNodes();
             if (row >= 0 && row < visible.size()) {
                 tableState.select(row);
+                var node = visible.get(row);
+                if (node.hasChildren()) {
+                    int arrowX = area.x() + 1 + node.depth * 2; // border(1) + indent
+                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                        node.expanded = !node.expanded;
+                    }
+                }
                 notifySelection();
                 return true;
             }

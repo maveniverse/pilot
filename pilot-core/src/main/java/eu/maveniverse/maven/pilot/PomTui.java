@@ -304,10 +304,13 @@ public class PomTui extends ToolPanel {
             int row = mouse.y() - area.y() - 2 + tableState.offset(); // tab bar + border
             if (row >= 0 && row < visible.size()) {
                 tableState.select(row);
-                // Toggle expand/collapse on click
+                // Toggle expand/collapse when clicking the arrow
                 var node = visible.get(row);
                 if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e)) {
-                    currentModel().setExpanded(e, !currentModel().isExpanded(e));
+                    int arrowX = area.x() + 2 + currentModel().relativeDepth(e) * 2; // highlight(2) + indent
+                    if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
+                        currentModel().setExpanded(e, !currentModel().isExpanded(e));
+                    }
                 }
                 return true;
             }
