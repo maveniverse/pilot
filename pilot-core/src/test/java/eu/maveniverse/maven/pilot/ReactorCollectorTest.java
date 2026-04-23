@@ -432,6 +432,130 @@ class ReactorCollectorTest {
     }
 
     @Test
+    void collectIncludesBomManagedDepWithExplicitVersionOverride() {
+        // BOM import
+        PilotProject.Dep bomImport =
+                new PilotProject.Dep("io.quarkus", "quarkus-bom", "3.0.0", "import", "pom", null, false, List.of());
+
+        // Effective managed deps (BOM flattened)
+        PilotProject.Dep effMgmt1 = dep("io.quarkus", "quarkus-core", "3.1.0");
+
+        // Dependency declared with an explicit version override (should be included)
+        PilotProject.Dep effDep = dep("io.quarkus", "quarkus-core", "3.1.0");
+        PilotProject.Dep origDep = dep("io.quarkus", "quarkus-core", "3.1.0");
+
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                tempDir,
+                List.of(effDep),
+                List.of(effMgmt1),
+                List.of(origDep),
+                List.of(bomImport));
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).ga()).isEqualTo("io.quarkus:quarkus-core");
+    }
+
+    @Test
+    void collectIncludesBomManagedDepWithPropertyVersion() {
+        // BOM import
+        PilotProject.Dep bomImport =
+                new PilotProject.Dep("io.quarkus", "quarkus-bom", "3.0.0", "import", "pom", null, false, List.of());
+
+        // Effective managed deps (BOM flattened)
+        PilotProject.Dep effMgmt1 = dep("io.quarkus", "quarkus-core", "3.1.0");
+
+        // Dependency declared with a property version expression (should be included)
+        PilotProject.Dep effDep = dep("io.quarkus", "quarkus-core", "3.1.0");
+        PilotProject.Dep origDep = dep("io.quarkus", "quarkus-core", "${quarkus.version}");
+
+        Properties props = new Properties();
+        props.setProperty("quarkus.version", "3.1.0");
+
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                tempDir,
+                List.of(effDep),
+                List.of(effMgmt1),
+                List.of(origDep),
+                List.of(bomImport),
+                props);
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).ga()).isEqualTo("io.quarkus:quarkus-core");
+        assertThat(result.allDependencies.get(0).propertyName).isEqualTo("quarkus.version");
+    }
+
+    @Test
+    void collectExcludesBomManagedDepsInMultiModule() throws IOException {
+        Path parentDir = subdir("bom-parent");
+        Path childDir = subdir("bom-child");
+
+        // Parent imports a BOM
+        PilotProject.Dep bomImport =
+                new PilotProject.Dep("io.quarkus", "quarkus-bom", "3.0.0", "import", "pom", null, false, List.of());
+        PilotProject.Dep effMgmt = dep("io.quarkus", "quarkus-core", "3.0.0");
+
+        PilotProject parent = createProject(
+                "com.example", "parent", "1.0", parentDir, List.of(), List.of(effMgmt), List.of(), List.of(bomImport));
+
+        // Child uses a BOM-managed dep without a version and a direct dep with a version
+        PilotProject.Dep childEffDep1 = dep("io.quarkus", "quarkus-core", "3.0.0");
+        PilotProject.Dep childOrigDep1 = new PilotProject.Dep("io.quarkus", "quarkus-core", null);
+        PilotProject.Dep childEffDep2 = dep("com.example", "my-lib", "2.0");
+        PilotProject.Dep childOrigDep2 = dep("com.example", "my-lib", "2.0");
+
+        PilotProject child = createProject(
+                "com.example",
+                "child",
+                "1.0",
+                childDir,
+                List.of(childEffDep1, childEffDep2),
+                List.of(effMgmt),
+                List.of(childOrigDep1, childOrigDep2),
+                List.of());
+        child.parent = parent;
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child));
+
+        // Only the child's explicitly versioned dep should appear
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).ga()).isEqualTo("com.example:my-lib");
+    }
+
+    @Test
+    void collectExcludesInheritedDependenciesNotInOriginal() {
+        // Effective deps include an inherited dep not declared in this POM
+        PilotProject.Dep effDep1 = dep("com.example", "inherited-lib", "1.0");
+        PilotProject.Dep effDep2 = dep("com.example", "my-lib", "2.0");
+        // Only my-lib is in originalDependencies
+        PilotProject.Dep origDep = dep("com.example", "my-lib", "2.0");
+
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                tempDir,
+                List.of(effDep1, effDep2),
+                List.of(),
+                List.of(origDep),
+                List.of());
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).ga()).isEqualTo("com.example:my-lib");
+    }
+
+    @Test
     void collectWithPropertyInParent() throws IOException {
         Path parentDir = subdir("parent2");
         Path childDir = subdir("child2");
