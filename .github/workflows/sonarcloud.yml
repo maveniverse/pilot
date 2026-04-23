@@ -25,7 +25,10 @@ jobs:
           cache: maven
 
       - name: Build and analyze
-        run: ./mvnw -B verify sonar:sonar
+        run: |
+          ./mvnw -B verify
+          mkdir -p target/classes
+          ./mvnw -B sonar:sonar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
