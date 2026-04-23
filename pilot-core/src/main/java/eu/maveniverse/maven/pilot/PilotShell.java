@@ -95,6 +95,7 @@ public class PilotShell {
             new ToolDef("Updates", "updates", 'u', true),
             new ToolDef("Conflicts", "conflicts", 'c', true),
             new ToolDef("Audit", "audit", 'a', true),
+            new ToolDef("Plugins", "plugins", 'g', true),
             new ToolDef("Pom", "pom", 'p', false),
             new ToolDef("Align", "align", 'l', true),
             new ToolDef("Search", "search", 's', false));

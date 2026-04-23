@@ -206,6 +206,73 @@ class Maven4PilotResolver implements PilotResolver {
     }
 
     @Override
+    public DependencyTreeModel collectManagedDependencyTree(PilotProject project) {
+        Model model = modelFor(project);
+        try {
+            if (model.getDependencyManagement() == null
+                    || model.getDependencyManagement().getDependencies().isEmpty()) {
+                return emptyTree(model);
+            }
+            List<org.apache.maven.api.model.Dependency> managed =
+                    model.getDependencyManagement().getDependencies().stream()
+                            .filter(d -> !("pom".equals(d.getType()) && "import".equals(d.getScope())))
+                            .toList();
+            if (managed.isEmpty()) {
+                return emptyTree(model);
+            }
+            DependencyResolver resolver = session.getService(DependencyResolver.class);
+            DependencyResolverRequest request = DependencyResolverRequest.builder()
+                    .session(session)
+                    .requestType(DependencyResolverRequest.RequestType.COLLECT)
+                    .rootArtifact(session.createArtifact(
+                            model.getGroupId(),
+                            model.getArtifactId(),
+                            model.getVersion(),
+                            model.getPackaging() != null ? model.getPackaging() : "jar"))
+                    .dependencies(toDependencyCoordinates(managed))
+                    .pathScope(PathScope.TEST_RUNTIME)
+                    .build();
+            DependencyResolverResult result = resolver.resolve(request);
+            return convertTree(result.getRoot());
+        } catch (Exception e) {
+            LOGGER.warning("collectManagedDependencyTree failed for " + model.getGroupId() + ":" + model.getArtifactId()
+                    + ": " + e);
+            return emptyTree(model);
+        }
+    }
+
+    private static DependencyTreeModel emptyTree(Model model) {
+        DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
+                model.getGroupId(),
+                model.getArtifactId(),
+                "",
+                model.getVersion() != null ? model.getVersion() : "?",
+                "",
+                false,
+                0);
+        return new DependencyTreeModel(root, List.of(), 1);
+    }
+
+    @Override
+    public DependencyTreeModel collectArtifactDependencies(String groupId, String artifactId, String version) {
+        try {
+            DependencyResolver resolver = session.getService(DependencyResolver.class);
+            DependencyResolverRequest request = DependencyResolverRequest.builder()
+                    .session(session)
+                    .requestType(DependencyResolverRequest.RequestType.COLLECT)
+                    .rootArtifact(session.createArtifact(groupId, artifactId, version, "jar"))
+                    .pathScope(PathScope.MAIN_RUNTIME)
+                    .build();
+            DependencyResolverResult result = resolver.resolve(request);
+            return convertTree(result.getRoot());
+        } catch (Exception e) {
+            DependencyTreeModel.TreeNode root =
+                    new DependencyTreeModel.TreeNode(groupId, artifactId, "", version, "", false, 0);
+            return new DependencyTreeModel(root, List.of(), 1);
+        }
+    }
+
+    @Override
     public String effectivePom(PilotProject project) {
         return session.getService(ModelXmlFactory.class).toXmlString(modelFor(project));
     }

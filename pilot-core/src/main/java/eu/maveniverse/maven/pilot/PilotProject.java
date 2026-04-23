@@ -45,6 +45,8 @@ public class PilotProject {
     final Path outputDirectory;
     final Path testOutputDirectory;
     public PilotProject parent;
+    public List<Plugin> plugins = List.of();
+    public List<Plugin> managedPlugins = List.of();
 
     public PilotProject(
             String groupId,
@@ -117,4 +119,23 @@ public class PilotProject {
      * Simplified exclusion representation.
      */
     public record Excl(String groupId, String artifactId) {}
+
+    /**
+     * Simplified plugin representation, independent of Maven model types.
+     */
+    public record Plugin(
+            String groupId, String artifactId, String version, List<Dep> dependencies, List<Excl> exclusions) {
+
+        Plugin(String groupId, String artifactId, String version) {
+            this(groupId, artifactId, version, List.of(), List.of());
+        }
+
+        String ga() {
+            return groupId + ":" + artifactId;
+        }
+
+        String gav() {
+            return groupId + ":" + artifactId + ":" + version;
+        }
+    }
 }
