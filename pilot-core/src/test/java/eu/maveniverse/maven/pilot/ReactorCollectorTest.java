@@ -556,6 +556,52 @@ class ReactorCollectorTest {
     }
 
     @Test
+    void collectTracksParentDeclaredDepViaParentNotChild() throws IOException {
+        Path parentDir = subdir("dep-parent");
+        Path childDir = subdir("dep-child");
+
+        // Parent declares a dependency with an explicit version
+        PilotProject.Dep parentDep = dep("org.slf4j", "slf4j-api", "2.0.9");
+        PilotProject parent = createProject(
+                "com.example",
+                "parent",
+                "1.0",
+                parentDir,
+                List.of(parentDep),
+                List.of(),
+                List.of(parentDep),
+                List.of());
+
+        // Child inherits the dep (in effective deps) but doesn't declare it
+        PilotProject.Dep childOwnDep = dep("com.example", "my-lib", "1.0");
+        PilotProject child = createProject(
+                "com.example",
+                "child",
+                "1.0",
+                childDir,
+                List.of(parentDep, childOwnDep),
+                List.of(),
+                List.of(childOwnDep),
+                List.of());
+        child.parent = parent;
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(parent, child));
+
+        // Both deps tracked: slf4j-api from parent, my-lib from child
+        assertThat(result.allDependencies).hasSize(2);
+        assertThat(result.allDependencies).anyMatch(d -> d.ga().equals("org.slf4j:slf4j-api"));
+        assertThat(result.allDependencies).anyMatch(d -> d.ga().equals("com.example:my-lib"));
+
+        // slf4j-api has exactly one usage (parent), not two
+        var slf4j = result.allDependencies.stream()
+                .filter(d -> d.ga().equals("org.slf4j:slf4j-api"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(slf4j.usages).hasSize(1);
+        assertThat(slf4j.usages.get(0).project).isSameAs(parent);
+    }
+
+    @Test
     void collectWithPropertyInParent() throws IOException {
         Path parentDir = subdir("parent2");
         Path childDir = subdir("child2");
