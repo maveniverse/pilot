@@ -394,6 +394,44 @@ class ReactorCollectorTest {
     }
 
     @Test
+    void collectExcludesBomManagedDependencies() {
+        // BOM import in dependencyManagement
+        PilotProject.Dep bomImport =
+                new PilotProject.Dep("io.quarkus", "quarkus-bom", "3.0.0", "import", "pom", null, false, List.of());
+
+        // Effective managed deps (BOM flattened)
+        PilotProject.Dep effMgmt1 = dep("io.quarkus", "quarkus-core", "3.0.0");
+        PilotProject.Dep effMgmt2 = dep("io.quarkus", "quarkus-arc", "3.0.0");
+
+        // Dependencies declared in <dependencies> without a version (version from BOM)
+        PilotProject.Dep effDep1 = dep("io.quarkus", "quarkus-core", "3.0.0");
+        PilotProject.Dep effDep2 = dep("io.quarkus", "quarkus-arc", "3.0.0");
+        PilotProject.Dep origDep1 = new PilotProject.Dep("io.quarkus", "quarkus-core", null);
+        PilotProject.Dep origDep2 = new PilotProject.Dep("io.quarkus", "quarkus-arc", null);
+
+        // A dependency with an explicit version (should be included)
+        PilotProject.Dep effDep3 = dep("com.example", "my-lib", "1.0");
+        PilotProject.Dep origDep3 = dep("com.example", "my-lib", "1.0");
+
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                tempDir,
+                List.of(effDep1, effDep2, effDep3),
+                List.of(effMgmt1, effMgmt2),
+                List.of(origDep1, origDep2, origDep3),
+                List.of(bomImport));
+
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+
+        // Only the explicitly versioned dependency should appear
+        assertThat(result.allDependencies).hasSize(1);
+        assertThat(result.allDependencies.get(0).groupId).isEqualTo("com.example");
+        assertThat(result.allDependencies.get(0).artifactId).isEqualTo("my-lib");
+    }
+
+    @Test
     void collectWithPropertyInParent() throws IOException {
         Path parentDir = subdir("parent2");
         Path childDir = subdir("child2");

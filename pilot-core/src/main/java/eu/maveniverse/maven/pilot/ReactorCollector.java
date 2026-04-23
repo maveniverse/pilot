@@ -206,8 +206,20 @@ public class ReactorCollector {
         List<PilotProject.Dep> originalDeps =
                 project.originalDependencies != null ? project.originalDependencies : List.of();
 
+        // Only include dependencies explicitly declared with a version in this project's POM,
+        // not those whose version is inherited from imported BOMs
+        Set<String> declaredDependencyGAs = new HashSet<>();
+        for (PilotProject.Dep odep : originalDeps) {
+            if (odep.version() != null && !odep.version().isEmpty()) {
+                declaredDependencyGAs.add(odep.ga());
+            }
+        }
+
         for (PilotProject.Dep dep : project.dependencies) {
             String ga = dep.ga();
+            if (!declaredDependencyGAs.contains(ga)) {
+                continue;
+            }
             AggregatedDependency agg =
                     byGA.computeIfAbsent(ga, k -> new AggregatedDependency(dep.groupId(), dep.artifactId()));
 
