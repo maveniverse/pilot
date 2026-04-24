@@ -24,6 +24,7 @@ import eu.maveniverse.domtrip.maven.AlignOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -675,7 +676,7 @@ class AlignBatchTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                new java.util.Properties(),
+                new Properties(),
                 null,
                 null);
     }

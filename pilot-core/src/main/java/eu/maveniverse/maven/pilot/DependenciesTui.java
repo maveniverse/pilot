@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
@@ -230,7 +231,7 @@ public class DependenciesTui extends ToolPanel {
     private final boolean bytecodeAnalyzed;
     private final boolean reactorMode;
     private final PomEditSession managementSession;
-    private final java.util.function.Function<Path, PomEditSession> sessionProvider;
+    private final Function<Path, PomEditSession> sessionProvider;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
@@ -338,7 +339,7 @@ public class DependenciesTui extends ToolPanel {
             String projectGav,
             int modulesScanned,
             int modulesSkipped,
-            java.util.function.Function<Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             PomEditSession managementSession) {
         this.editSession = null;
         this.managementSession = managementSession;
@@ -364,7 +365,7 @@ public class DependenciesTui extends ToolPanel {
     @Override
     boolean onSessionChanged() {
         if (editSession == null) return true;
-        Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(java.util.stream.Collectors.toSet());
+        Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(Collectors.toSet());
         for (PomEditSession.Change change : editSession.changes()) {
             if (change.type() == PomEditSession.ChangeType.REMOVE) {
                 return false;

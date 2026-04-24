@@ -13,6 +13,10 @@ Use `./mvnw` instead of `mvn` for all Maven commands. Always add `-B` (batch mod
 
 After packaging (`./mvnw package -B -DskipTests`), compute the full absolute path to the pilot-cli jar (matching `pilot-cli/target/pilot-cli-*-SNAPSHOT.jar` under the project root) and give the `java -jar <path>` command to the user so they can run it from any directory.
 
+## Code Style
+
+Avoid inline fully-qualified class names (FQCNs). Use `import` statements and simple class names instead. Exception: when two classes share the same simple name (e.g., `org.apache.maven.model.Dependency` vs `org.apache.maven.api.model.Dependency`), keep FQCNs to disambiguate.
+
 ## After Creating a PR
 
 After pushing a PR, monitor and address all automated feedback:

@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import javax.inject.Inject;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
@@ -199,7 +200,7 @@ public class DependenciesMojo extends AbstractMojo {
         } else {
             dep.totalClasses = depClasses.size();
             Set<String> refs = TEST_SCOPES.contains(dep.scope) ? allClassRefs : mainClassRefs;
-            Map<String, List<String>> members = new java.util.TreeMap<>();
+            Map<String, List<String>> members = new TreeMap<>();
             for (String className : depClasses) {
                 if (refs.contains(className)) {
                     Set<String> memberSet = allMemberRefs.get(className);

@@ -37,6 +37,9 @@ import dev.tamboui.tui.event.TickEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,6 +49,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Unified shell container for the Pilot TUI.
@@ -80,8 +85,8 @@ public class PilotShell {
                 PilotProject project,
                 List<PilotProject> scope,
                 PomEditSession session,
-                java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
-                java.util.function.Consumer<String> progress)
+                Function<Path, PomEditSession> sessionProvider,
+                Consumer<String> progress)
                 throws Exception;
     }
 
@@ -125,9 +130,6 @@ public class PilotShell {
     private PilotProject selectedProject;
     private List<PilotProject> selectedScope;
     private TuiRunner runner;
-
-    // Captured log output (redirected from System.out/err during TUI)
-    private java.io.ByteArrayOutputStream capturedLog;
 
     // Async panel creation
     private final ExecutorService panelExecutor = Executors.newCachedThreadPool(r -> {
@@ -192,8 +194,8 @@ public class PilotShell {
         // to a buffer to prevent corruption of the TUI on the alternate screen
         var origOut = System.out;
         var origErr = System.err;
-        capturedLog = new java.io.ByteArrayOutputStream();
-        var logStream = new java.io.PrintStream(capturedLog, true);
+        var capturedLog = new ByteArrayOutputStream();
+        var logStream = new PrintStream(capturedLog, true);
         System.setOut(logStream);
         System.setErr(logStream);
         try {
@@ -449,7 +451,7 @@ public class PilotShell {
     }
 
     @SuppressWarnings("unused")
-    private void invalidatePanelCacheForPom(java.nio.file.Path pomPath) {
+    private void invalidatePanelCacheForPom(Path pomPath) {
         panelCache.entrySet().removeIf(entry -> {
             // Cache keys are "toolId:moduleGA" — we need to match by POM path
             // which requires checking the project. For simplicity, clear all module-dependent panels.
@@ -648,7 +650,7 @@ public class PilotShell {
         } else {
             session = null;
         }
-        final java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider = path -> {
+        final Function<Path, PomEditSession> sessionProvider = path -> {
             if (PilotEngine.isRepositoryPom(path)) {
                 throw new IllegalArgumentException("Cannot modify repository POM: " + path);
             }
