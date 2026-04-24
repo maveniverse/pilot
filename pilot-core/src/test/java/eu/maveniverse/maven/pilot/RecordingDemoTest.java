@@ -36,6 +36,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
@@ -449,7 +450,7 @@ class RecordingDemoTest {
                 List.of(),
                 deps,
                 List.of(),
-                new java.util.Properties(),
+                new Properties(),
                 null,
                 null);
         List<PilotProject> projects = List.of(proj);

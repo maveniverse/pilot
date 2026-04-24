@@ -128,7 +128,7 @@ class Theme {
                 ? label.toLowerCase().indexOf(mnemonic)
                 : label.indexOf(mnemonic);
         if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
-        List<Span> spans = new java.util.ArrayList<>();
+        List<Span> spans = new ArrayList<>();
         spans.add(Span.raw("[▸").bold().cyan());
         if (idx >= 0) {
             if (idx > 0) spans.add(Span.raw(label.substring(0, idx)).bold().cyan());
@@ -148,7 +148,7 @@ class Theme {
                 ? label.toLowerCase().indexOf(mnemonic)
                 : label.indexOf(mnemonic);
         if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
-        List<Span> spans = new java.util.ArrayList<>();
+        List<Span> spans = new ArrayList<>();
         if (idx >= 0) {
             if (idx > 0) spans.add(Span.raw(label.substring(0, idx)));
             spans.add(Span.raw(String.valueOf(label.charAt(idx))).underlined());
@@ -165,7 +165,7 @@ class Theme {
                 ? label.toLowerCase().indexOf(mnemonic)
                 : label.indexOf(mnemonic);
         if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
-        List<Span> spans = new java.util.ArrayList<>();
+        List<Span> spans = new ArrayList<>();
         if (idx >= 0) {
             if (idx > 0) spans.add(Span.raw(label.substring(0, idx)).fg(Color.DARK_GRAY));
             spans.add(Span.raw(String.valueOf(label.charAt(idx)))
