@@ -60,7 +60,7 @@ under the License.
     <mavenVersion>3.9.15</mavenVersion>
     <maven4Version>4.0.0-rc-5</maven4Version>
     <tamboui.version>0.2.0</tamboui.version>
-    <domtrip.version>1.3.0</domtrip.version>
+    <domtrip.version>1.4.0</domtrip.version>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
