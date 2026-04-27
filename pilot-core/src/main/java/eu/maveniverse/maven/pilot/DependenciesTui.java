@@ -969,16 +969,7 @@ public class DependenciesTui extends ToolPanel {
         session.beforeMutation();
         PomEditor editor = session.editor();
         AlignOptions detected = editor.dependencies().detectConventions();
-        // TODO: replace with editor.dependencies().findManagedVersion(coords) != null
-        //  when DomTrip exposes it (https://github.com/maveniverse/domtrip/issues/215)
-        boolean hadManagedEntry = editor.document()
-                .root()
-                .childElement("dependencyManagement")
-                .flatMap(dm -> dm.childElement(SECTION_DEPENDENCIES))
-                .flatMap(deps -> deps.childElements(TARGET_DEPENDENCY)
-                        .filter(coords.predicateGATC())
-                        .findFirst())
-                .isPresent();
+        boolean hadManagedEntry = editor.dependencies().findManagedVersion(coords) != null;
         AlignOptions.Builder builder = AlignOptions.builder()
                 .versionStyle(detected.versionStyle())
                 .versionSource(detected.versionSource())
