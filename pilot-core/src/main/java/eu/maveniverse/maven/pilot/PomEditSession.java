@@ -19,7 +19,6 @@
 package eu.maveniverse.maven.pilot;
 
 import eu.maveniverse.domtrip.Document;
-import eu.maveniverse.domtrip.maven.AlignOptions;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.io.IOException;
@@ -184,20 +183,11 @@ public class PomEditSession {
      * @param managementSession the session whose POM should receive the managed dependency
      */
     void addManagedDependencyAligned(Coordinates coords, PomEditSession managementSession) {
-        PomEditor targetEditor = managementSession.editor();
-        AlignOptions conventions = targetEditor.dependencies().detectConventions();
-        AlignOptions.VersionSource versionSource = conventions.versionSource();
         String version = coords.version();
         if (managementSession != this) {
             managementSession.beforeMutation();
         }
-        if (versionSource == AlignOptions.VersionSource.PROPERTY) {
-            AlignOptions.PropertyNamingConvention naming = conventions.namingConvention();
-            String propName = AlignOptions.generatePropertyName(coords, naming);
-            targetEditor.properties().updateProperty(true, propName, version);
-            coords = Coordinates.of(coords.groupId(), coords.artifactId(), "${" + propName + "}");
-        }
-        targetEditor.dependencies().updateManagedDependency(true, coords);
+        managementSession.editor().dependencies().updateManagedDependencyAligned(true, coords);
         if (managementSession != this) {
             managementSession.recordChange(
                     ChangeType.ADD,
