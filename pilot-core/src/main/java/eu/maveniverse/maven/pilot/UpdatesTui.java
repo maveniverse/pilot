@@ -360,8 +360,7 @@ public class UpdatesTui extends ToolPanel {
         if (!datesLoading) {
             float total = totalLibYears();
             if (total > 0) {
-                int tenths = Math.round(total * 10);
-                msg += " \u2014 " + (tenths / 10) + "." + (tenths % 10) + " libyear(s) behind";
+                msg += " \u2014 " + VersionComparator.formatLibYears(total) + " libyear(s) behind";
             }
         }
         return msg;
@@ -381,8 +380,7 @@ public class UpdatesTui extends ToolPanel {
     private String formatAge(float libYears, boolean hasUpdate) {
         if (!hasUpdate) return "";
         if (libYears < 0) return datesLoading ? "\u2026" : "";
-        int tenths = Math.round(libYears * 10);
-        return (tenths / 10) + "." + (tenths % 10) + "y";
+        return VersionComparator.formatLibYears(libYears) + "y";
     }
 
     private void computePropertyGroupVersions() {
@@ -554,21 +552,11 @@ public class UpdatesTui extends ToolPanel {
     }
 
     private static String updateTypeLabel(VersionComparator.UpdateType type) {
-        if (type == null) return "";
-        return switch (type) {
-            case PATCH -> "patch";
-            case MINOR -> "minor";
-            case MAJOR -> "major";
-        };
+        return VersionComparator.updateTypeLabel(type);
     }
 
     private Style updateTypeStyle(VersionComparator.UpdateType type) {
-        if (type == null) return Style.create().dim();
-        return switch (type) {
-            case PATCH -> Style.create().dim();
-            case MINOR -> Style.create();
-            case MAJOR -> Style.create().fg(Color.YELLOW);
-        };
+        return VersionComparator.updateTypeStyle(type);
     }
 
     private static List<Constraint> depsTableWidths() {

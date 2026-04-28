@@ -18,6 +18,9 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
+
 /**
  * Classifies version updates as patch, minor, or major.
  */
@@ -69,6 +72,29 @@ public class VersionComparator {
             if (cmp != 0) return cmp;
         }
         return Integer.compare(p1.length, p2.length);
+    }
+
+    static String updateTypeLabel(UpdateType type) {
+        if (type == null) return "";
+        return switch (type) {
+            case PATCH -> "patch";
+            case MINOR -> "minor";
+            case MAJOR -> "major";
+        };
+    }
+
+    static Style updateTypeStyle(UpdateType type) {
+        if (type == null) return Style.create().dim();
+        return switch (type) {
+            case PATCH -> Style.create().dim();
+            case MINOR -> Style.create();
+            case MAJOR -> Style.create().fg(Color.YELLOW);
+        };
+    }
+
+    static String formatLibYears(float libYears) {
+        int tenths = Math.round(libYears * 10);
+        return (tenths / 10) + "." + (tenths % 10);
     }
 
     private static int[] parseSemver(String version) {

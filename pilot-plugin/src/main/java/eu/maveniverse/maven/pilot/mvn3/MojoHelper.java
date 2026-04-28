@@ -174,8 +174,8 @@ public final class MojoHelper {
                 outputDir,
                 testOutputDir);
 
-        pp.plugins = extractPlugins(mp);
-        pp.managedPlugins = extractManagedPlugins(mp);
+        pp.setPlugins(extractPlugins(mp));
+        pp.setManagedPlugins(extractManagedPlugins(mp));
 
         cache.put(mp, pp);
 

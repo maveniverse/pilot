@@ -381,6 +381,38 @@ public abstract class ToolPanel {
      */
     abstract boolean handleEvent(Event event, TuiRunner runner);
 
+    /**
+     * Default standalone event handling: help overlay, quit, and help key.
+     * Subclasses with only basic standalone keys can delegate here.
+     */
+    protected boolean handleSimpleStandaloneEvent(Event event, TuiRunner runner) {
+        if (!(event instanceof KeyEvent key)) {
+            return true;
+        }
+        if (helpOverlay.isActive()) {
+            if (helpOverlay.handleKey(key)) return true;
+            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
+                runner.quit();
+                return true;
+            }
+            return false;
+        }
+        if (key.isCtrlC()) {
+            runner.quit();
+            return true;
+        }
+        if (handleKeyEvent(key)) return true;
+        if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
+            runner.quit();
+            return true;
+        }
+        if (key.isCharIgnoreCase('h')) {
+            helpOverlay.open(helpSections());
+            return true;
+        }
+        return false;
+    }
+
     /** Render the panel in standalone mode (full terminal). */
     abstract void renderStandalone(Frame frame);
 

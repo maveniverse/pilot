@@ -538,8 +538,8 @@ public class PilotMain {
                 origProps,
                 outputDir,
                 testOutputDir);
-        pp.plugins = extractPlugins(effectiveModel);
-        pp.managedPlugins = extractManagedPlugins(effectiveModel);
+        pp.setPlugins(extractPlugins(effectiveModel));
+        pp.setManagedPlugins(extractManagedPlugins(effectiveModel));
         return pp;
     }
 

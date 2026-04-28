@@ -45,8 +45,24 @@ public class PilotProject {
     final Path outputDirectory;
     final Path testOutputDirectory;
     public PilotProject parent;
-    public List<Plugin> plugins = List.of();
-    public List<Plugin> managedPlugins = List.of();
+    private List<Plugin> plugins = List.of();
+    private List<Plugin> managedPlugins = List.of();
+
+    public List<Plugin> getPlugins() {
+        return plugins;
+    }
+
+    public void setPlugins(List<Plugin> plugins) {
+        this.plugins = plugins;
+    }
+
+    public List<Plugin> getManagedPlugins() {
+        return managedPlugins;
+    }
+
+    public void setManagedPlugins(List<Plugin> managedPlugins) {
+        this.managedPlugins = managedPlugins;
+    }
 
     public PilotProject(
             String groupId,

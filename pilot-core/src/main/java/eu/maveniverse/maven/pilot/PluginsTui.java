@@ -28,7 +28,6 @@ import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
-import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
 import dev.tamboui.widgets.block.Block;
@@ -146,12 +145,12 @@ public class PluginsTui extends ToolPanel {
     private static void collectPlugins(
             PilotProject p, Map<String, PluginEntry> pluginsMap, Map<String, PluginEntry> managedMap) {
         String moduleName = p.artifactId;
-        for (PilotProject.Plugin plugin : p.plugins) {
+        for (PilotProject.Plugin plugin : p.getPlugins()) {
             PluginEntry entry = pluginsMap.computeIfAbsent(
                     plugin.ga(), k -> new PluginEntry(plugin.groupId(), plugin.artifactId(), plugin.version(), false));
             mergeModule(entry, moduleName, plugin.version());
         }
-        for (PilotProject.Plugin plugin : p.managedPlugins) {
+        for (PilotProject.Plugin plugin : p.getManagedPlugins()) {
             PluginEntry entry = managedMap.computeIfAbsent(
                     plugin.ga(), k -> new PluginEntry(plugin.groupId(), plugin.artifactId(), plugin.version(), true));
             mergeModule(entry, moduleName, plugin.version());
@@ -327,8 +326,7 @@ public class PluginsTui extends ToolPanel {
         if (!datesLoading) {
             float total = totalLibYears();
             if (total > 0) {
-                int tenths = Math.round(total * 10);
-                msg += " \u2014 " + (tenths / 10) + "." + (tenths % 10) + " libyear(s) behind";
+                msg += " \u2014 " + VersionComparator.formatLibYears(total) + " libyear(s) behind";
             }
         }
         return msg;
@@ -345,26 +343,15 @@ public class PluginsTui extends ToolPanel {
     private String formatAge(PluginEntry entry) {
         if (!entry.hasUpdate()) return "";
         if (entry.libYears < 0) return datesLoading ? "\u2026" : "";
-        int tenths = Math.round(entry.libYears * 10);
-        return (tenths / 10) + "." + (tenths % 10) + "y";
+        return VersionComparator.formatLibYears(entry.libYears) + "y";
     }
 
     private static String updateTypeLabel(VersionComparator.UpdateType type) {
-        if (type == null) return "";
-        return switch (type) {
-            case PATCH -> "patch";
-            case MINOR -> "minor";
-            case MAJOR -> "major";
-        };
+        return VersionComparator.updateTypeLabel(type);
     }
 
     private Style updateTypeStyle(VersionComparator.UpdateType type) {
-        if (type == null) return Style.create().dim();
-        return switch (type) {
-            case PATCH -> Style.create().dim();
-            case MINOR -> Style.create();
-            case MAJOR -> Style.create().fg(Color.YELLOW);
-        };
+        return VersionComparator.updateTypeStyle(type);
     }
 
     // -- Sorting --
@@ -485,31 +472,7 @@ public class PluginsTui extends ToolPanel {
     }
 
     boolean handleEvent(Event event, TuiRunner runner) {
-        if (!(event instanceof KeyEvent key)) {
-            return true;
-        }
-        if (helpOverlay.isActive()) {
-            if (helpOverlay.handleKey(key)) return true;
-            if (key.isCharIgnoreCase('q') || key.isCtrlC()) {
-                runner.quit();
-                return true;
-            }
-            return false;
-        }
-        if (key.isCtrlC()) {
-            runner.quit();
-            return true;
-        }
-        if (handleKeyEvent(key)) return true;
-        if (key.isCharIgnoreCase('q') || key.isKey(KeyCode.ESCAPE)) {
-            runner.quit();
-            return true;
-        }
-        if (key.isCharIgnoreCase('h')) {
-            helpOverlay.open(helpSections());
-            return true;
-        }
-        return false;
+        return handleSimpleStandaloneEvent(event, runner);
     }
 
     // -- ToolPanel methods --
