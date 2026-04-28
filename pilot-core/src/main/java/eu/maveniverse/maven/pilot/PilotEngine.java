@@ -90,6 +90,7 @@ public class PilotEngine {
             case "updates" -> createUpdatesPanel(proj, projects, session, sessionProvider, progress);
             case "conflicts" -> createConflictsPanel(proj, projects, session, sessionProvider, progress);
             case "audit" -> createAuditPanel(proj, projects, session, sessionProvider, progress);
+            case "plugins" -> createPluginsPanel(proj, projects);
             case "pom" -> createPomPanel(proj, session);
             case "align" -> createAlignPanel(proj, projects);
             case "search" -> createSearchPanel();
@@ -172,10 +173,13 @@ public class PilotEngine {
         DependencyTreeModel treeModel = cachedCollectDependencies(proj);
         TreeTui treeTui = new TreeTui(treeModel, scope, proj.gav());
 
+        DependencyTreeModel dmTreeModel = resolver.collectManagedDependencyTree(proj);
+        TreeTui dmTreeTui = dmTreeModel.totalNodes > 1 ? new TreeTui(dmTreeModel, scope, proj.gav()) : null;
+
         PomEditSession s = session != null ? session : new PomEditSession(proj.pomPath);
         PomEditSession mgmtSession = resolveManagementSession(proj, projects, s, sessionProvider);
         return new DependenciesTui(
-                declared, transitive, managed, s, mgmtSession, proj.gav(), bytecodeAnalyzed, treeTui);
+                declared, transitive, managed, s, mgmtSession, proj.gav(), bytecodeAnalyzed, treeTui, dmTreeTui);
     }
 
     private ToolPanel createReactorDependenciesPanel(
@@ -368,11 +372,21 @@ public class PilotEngine {
             Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress) {
         UpdatesTui.VersionResolver versionResolver = resolver::resolveVersions;
+        UpdatesTui.TreeImpactResolver treeImpactResolver = (g, a, oldV, newV) -> {
+            DependencyTreeModel oldTree = resolver.collectArtifactDependencies(g, a, oldV);
+            DependencyTreeModel newTree = resolver.collectArtifactDependencies(g, a, newV);
+            return TreeDiff.diff(oldTree, newTree);
+        };
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
         ReactorCollector.CollectionResult result = ReactorCollector.collect(targetProjects);
         ReactorModel reactorModel = ReactorModel.build(targetProjects);
         String gav = targetProjects.get(0).gav();
-        return new UpdatesTui(result, reactorModel, gav, versionResolver, sessionProvider);
+        return new UpdatesTui(result, reactorModel, gav, versionResolver, treeImpactResolver, sessionProvider);
+    }
+
+    private ToolPanel createPluginsPanel(PilotProject proj, List<PilotProject> projects) {
+        List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
+        return new PluginsTui(proj, targetProjects, resolver::resolveVersions);
     }
 
     private ToolPanel createConflictsPanel(

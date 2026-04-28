@@ -17,6 +17,7 @@ Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI outp
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
 | `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies |
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
+| `pilot:plugins` | Browse declared and managed plugins, check for version updates with libyear scoring |
 
 ## Quick Start
 
@@ -56,6 +57,9 @@ mvn pilot:audit
 
 # Align dependency conventions
 mvn pilot:align
+
+# Browse plugins and check for plugin updates
+mvn pilot:plugins
 ```
 
 ### Standalone CLI

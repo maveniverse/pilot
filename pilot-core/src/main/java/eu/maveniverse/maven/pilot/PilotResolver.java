@@ -50,6 +50,16 @@ public interface PilotResolver {
     Path resolveArtifact(String groupId, String artifactId, String version, String type);
 
     /**
+     * Collect the managed dependency tree (transitive closure of dependencyManagement entries only).
+     */
+    DependencyTreeModel collectManagedDependencyTree(PilotProject project);
+
+    /**
+     * Collect the transitive dependency tree for an arbitrary artifact (not bound to a project).
+     */
+    DependencyTreeModel collectArtifactDependencies(String groupId, String artifactId, String version);
+
+    /**
      * Get the serialized effective POM for a project.
      */
     String effectivePom(PilotProject project);

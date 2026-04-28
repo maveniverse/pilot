@@ -524,7 +524,7 @@ public class PilotMain {
 
         String packaging = effectiveModel.getPackaging() != null ? effectiveModel.getPackaging() : "jar";
 
-        return new PilotProject(
+        PilotProject pp = new PilotProject(
                 effectiveModel.getGroupId(),
                 effectiveModel.getArtifactId(),
                 effectiveModel.getVersion(),
@@ -538,6 +538,35 @@ public class PilotMain {
                 origProps,
                 outputDir,
                 testOutputDir);
+        pp.setPlugins(extractPlugins(effectiveModel));
+        pp.setManagedPlugins(extractManagedPlugins(effectiveModel));
+        return pp;
+    }
+
+    private static List<PilotProject.Plugin> extractPlugins(Model model) {
+        if (model.getBuild() == null || model.getBuild().getPlugins() == null) return List.of();
+        return model.getBuild().getPlugins().stream()
+                .map(PilotMain::modelPluginToPilotPlugin)
+                .toList();
+    }
+
+    private static List<PilotProject.Plugin> extractManagedPlugins(Model model) {
+        if (model.getBuild() == null
+                || model.getBuild().getPluginManagement() == null
+                || model.getBuild().getPluginManagement().getPlugins() == null) return List.of();
+        return model.getBuild().getPluginManagement().getPlugins().stream()
+                .map(PilotMain::modelPluginToPilotPlugin)
+                .toList();
+    }
+
+    private static PilotProject.Plugin modelPluginToPilotPlugin(org.apache.maven.api.model.Plugin plugin) {
+        List<PilotProject.Dep> deps = plugin.getDependencies() != null
+                ? plugin.getDependencies().stream()
+                        .map(PilotMain::modelDepToPilotDep)
+                        .toList()
+                : List.of();
+        return new PilotProject.Plugin(
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of());
     }
 
     private static PilotProject.Dep modelDepToPilotDep(org.apache.maven.api.model.Dependency dep) {

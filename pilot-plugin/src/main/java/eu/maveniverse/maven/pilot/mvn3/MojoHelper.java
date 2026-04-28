@@ -174,12 +174,36 @@ public final class MojoHelper {
                 outputDir,
                 testOutputDir);
 
+        pp.setPlugins(extractPlugins(mp));
+        pp.setManagedPlugins(extractManagedPlugins(mp));
+
         cache.put(mp, pp);
 
         if (mp.getParent() != null) {
             pp.parent = toPilotProject(mp.getParent(), cache);
         }
         return pp;
+    }
+
+    private static List<PilotProject.Plugin> extractPlugins(MavenProject mp) {
+        if (mp.getBuildPlugins() == null) return List.of();
+        return mp.getBuildPlugins().stream().map(MojoHelper::toPilotPlugin).toList();
+    }
+
+    private static List<PilotProject.Plugin> extractManagedPlugins(MavenProject mp) {
+        if (mp.getPluginManagement() == null || mp.getPluginManagement().getPlugins() == null) return List.of();
+        return mp.getPluginManagement().getPlugins().stream()
+                .map(MojoHelper::toPilotPlugin)
+                .toList();
+    }
+
+    private static PilotProject.Plugin toPilotPlugin(org.apache.maven.model.Plugin plugin) {
+        List<PilotProject.Dep> deps = plugin.getDependencies() != null
+                ? plugin.getDependencies().stream().map(MojoHelper::toPilotDep).toList()
+                : List.of();
+        List<PilotProject.Excl> exclusions = List.of();
+        return new PilotProject.Plugin(
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, exclusions);
     }
 
     static PilotProject.Dep toPilotDep(org.apache.maven.model.Dependency dep) {
