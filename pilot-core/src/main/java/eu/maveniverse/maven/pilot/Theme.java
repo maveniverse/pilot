@@ -23,6 +23,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.text.Span;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.UnaryOperator;
 
 /**
  * Centralizes all color and style decisions for the Pilot TUI.
@@ -124,57 +125,40 @@ class Theme {
 
     /** Active tool tab in the header with underlined mnemonic. */
     List<Span> activeToolTab(String label, char mnemonic) {
-        int idx = Character.toLowerCase(mnemonic) == mnemonic
-                ? label.toLowerCase().indexOf(mnemonic)
-                : label.indexOf(mnemonic);
-        if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
+        UnaryOperator<Span> style = s -> s.bold().cyan();
         List<Span> spans = new ArrayList<>();
-        spans.add(Span.raw("[▸").bold().cyan());
-        if (idx >= 0) {
-            if (idx > 0) spans.add(Span.raw(label.substring(0, idx)).bold().cyan());
-            spans.add(Span.raw(String.valueOf(label.charAt(idx))).bold().cyan().underlined());
-            if (idx < label.length() - 1)
-                spans.add(Span.raw(label.substring(idx + 1)).bold().cyan());
-        } else {
-            spans.add(Span.raw(label).bold().cyan());
-        }
-        spans.add(Span.raw("]").bold().cyan());
+        spans.add(style.apply(Span.raw("[▸")));
+        spans.addAll(mnemonicSpans(label, mnemonicIndex(label, mnemonic), style));
+        spans.add(style.apply(Span.raw("]")));
         return spans;
     }
 
     /** Inactive but available tool tab with underlined mnemonic. */
     List<Span> inactiveToolTab(String label, char mnemonic) {
-        int idx = Character.toLowerCase(mnemonic) == mnemonic
-                ? label.toLowerCase().indexOf(mnemonic)
-                : label.indexOf(mnemonic);
-        if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
-        List<Span> spans = new ArrayList<>();
-        if (idx >= 0) {
-            if (idx > 0) spans.add(Span.raw(label.substring(0, idx)));
-            spans.add(Span.raw(String.valueOf(label.charAt(idx))).underlined());
-            if (idx < label.length() - 1) spans.add(Span.raw(label.substring(idx + 1)));
-        } else {
-            spans.add(Span.raw(label));
-        }
-        return spans;
+        return mnemonicSpans(label, mnemonicIndex(label, mnemonic), s -> s);
     }
 
     /** Unavailable tool tab with underlined mnemonic. */
     List<Span> unavailableToolTab(String label, char mnemonic) {
+        return mnemonicSpans(label, mnemonicIndex(label, mnemonic), s -> s.fg(Color.DARK_GRAY));
+    }
+
+    private static int mnemonicIndex(String label, char mnemonic) {
         int idx = Character.toLowerCase(mnemonic) == mnemonic
                 ? label.toLowerCase().indexOf(mnemonic)
                 : label.indexOf(mnemonic);
         if (idx < 0) idx = label.toLowerCase().indexOf(Character.toLowerCase(mnemonic));
+        return idx;
+    }
+
+    private static List<Span> mnemonicSpans(String label, int idx, UnaryOperator<Span> style) {
         List<Span> spans = new ArrayList<>();
         if (idx >= 0) {
-            if (idx > 0) spans.add(Span.raw(label.substring(0, idx)).fg(Color.DARK_GRAY));
-            spans.add(Span.raw(String.valueOf(label.charAt(idx)))
-                    .fg(Color.DARK_GRAY)
-                    .underlined());
-            if (idx < label.length() - 1)
-                spans.add(Span.raw(label.substring(idx + 1)).fg(Color.DARK_GRAY));
+            if (idx > 0) spans.add(style.apply(Span.raw(label.substring(0, idx))));
+            spans.add(style.apply(Span.raw(String.valueOf(label.charAt(idx)))).underlined());
+            if (idx < label.length() - 1) spans.add(style.apply(Span.raw(label.substring(idx + 1))));
         } else {
-            spans.add(Span.raw(label).fg(Color.DARK_GRAY));
+            spans.add(style.apply(Span.raw(label)));
         }
         return spans;
     }
