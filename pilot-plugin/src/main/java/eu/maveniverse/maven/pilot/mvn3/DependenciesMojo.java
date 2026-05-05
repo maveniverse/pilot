@@ -138,13 +138,15 @@ public class DependenciesMojo extends AbstractMojo {
                     : new ClassFileScanner.ScanResult(Set.of(), Map.of());
 
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                    mainScan.referencedClasses(),
-                    testScan.referencedClasses(),
-                    classIndex,
-                    gaToJar,
-                    declared,
-                    transitive);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                    .build()
+                    .analyze(
+                            mainScan.referencedClasses(),
+                            testScan.referencedClasses(),
+                            classIndex,
+                            gaToJar,
+                            declared,
+                            transitive);
 
             // Build reverse index: GA -> set of class names provided
             Map<String, Set<String>> gaToClasses = new HashMap<>();
