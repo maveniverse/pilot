@@ -149,13 +149,15 @@ public class PilotEngine {
                     ? ClassFileScanner.scanDirectory(testClassesDir)
                     : new ClassFileScanner.ScanResult(Set.of(), Map.of());
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                    mainScan.referencedClasses(),
-                    testScan.referencedClasses(),
-                    classIndex,
-                    gaToJar,
-                    declared,
-                    transitive);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                    .build()
+                    .analyze(
+                            mainScan.referencedClasses(),
+                            testScan.referencedClasses(),
+                            classIndex,
+                            gaToJar,
+                            declared,
+                            transitive);
             for (var dep : declared) {
                 dep.usageStatus =
                         usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
@@ -237,8 +239,15 @@ public class PilotEngine {
                 ? ClassFileScanner.scanDirectory(p.testOutputDirectory)
                 : new ClassFileScanner.ScanResult(Set.of(), Map.of());
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                mainScan.referencedClasses(), testScan.referencedClasses(), classIndex, gaToJar, declared, transitive);
+        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(
+                        mainScan.referencedClasses(),
+                        testScan.referencedClasses(),
+                        classIndex,
+                        gaToJar,
+                        declared,
+                        transitive);
         populateDepDetails(declared, transitive, classIndex, gaToJar, mainScan, testScan);
 
         accumulateEntries(
