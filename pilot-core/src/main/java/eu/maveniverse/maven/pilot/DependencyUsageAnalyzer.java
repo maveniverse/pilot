@@ -33,6 +33,24 @@ import java.util.jar.JarFile;
 /**
  * Builds a class-to-artifact index from resolved JARs and classifies dependency usage
  * based on bytecode analysis results.
+ *
+ * <p>The analyzer supports three optional allowlists that override the default classification
+ * for dependencies that are legitimately used but cannot be detected through bytecode analysis:</p>
+ * <ul>
+ *   <li><b>runtimeArtifacts</b> — artifacts needed only at runtime (JDBC drivers, SLF4J backends)</li>
+ *   <li><b>annotationOnlyArtifacts</b> — artifacts providing source/class-retention annotations</li>
+ *   <li><b>reflectionLoadedClasses</b> — classes loaded via reflection, verified against the JAR</li>
+ * </ul>
+ *
+ * <p>Use {@link #builder()} to configure allowlists:</p>
+ * <pre>{@code
+ * DependencyUsageAnalyzer analyzer = DependencyUsageAnalyzer.builder()
+ *     .runtimeArtifacts(Set.of("org.postgresql:postgresql"))
+ *     .annotationOnlyArtifacts(Set.of("org.projectlombok:lombok"))
+ *     .reflectionLoadedClasses(Map.of(
+ *         "org.postgresql:postgresql", List.of("org.postgresql.Driver")))
+ *     .build();
+ * }</pre>
  */
 public final class DependencyUsageAnalyzer {
 
@@ -48,7 +66,21 @@ public final class DependencyUsageAnalyzer {
 
     public record AnalysisResult(Map<String, UsageStatus> declaredUsage, Map<String, UsageStatus> transitiveUsage) {}
 
-    private DependencyUsageAnalyzer() {}
+    private final Set<String> runtimeArtifacts;
+    private final Set<String> annotationOnlyArtifacts;
+    private final Map<String, List<String>> reflectionLoadedClasses;
+
+    private DependencyUsageAnalyzer(Builder builder) {
+        this.runtimeArtifacts = Set.copyOf(builder.runtimeArtifacts);
+        this.annotationOnlyArtifacts = Set.copyOf(builder.annotationOnlyArtifacts);
+        HashMap<String, List<String>> copy = new HashMap<>();
+        builder.reflectionLoadedClasses.forEach((k, v) -> copy.put(k, List.copyOf(v)));
+        this.reflectionLoadedClasses = Collections.unmodifiableMap(copy);
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
 
     /**
      * Build an index mapping fully-qualified class names to their providing artifact's
@@ -92,7 +124,7 @@ public final class DependencyUsageAnalyzer {
      * @param transitive   transitive dependency entries
      * @return analysis result with usage status for each dependency
      */
-    public static AnalysisResult analyze(
+    public AnalysisResult analyze(
             Set<String> mainRefs,
             Set<String> testRefs,
             Map<String, String> classIndex,
@@ -123,7 +155,7 @@ public final class DependencyUsageAnalyzer {
         return new AnalysisResult(declaredUsage, transitiveUsage);
     }
 
-    private static UsageStatus classify(
+    private UsageStatus classify(
             DependenciesTui.DepEntry dep,
             Map<String, Set<String>> gaToClasses,
             Map<String, File> gaToJar,
@@ -141,25 +173,77 @@ public final class DependencyUsageAnalyzer {
             return UsageStatus.USED;
         }
 
+        if (isUsedByRuntimeDiscovery(dep, gaToJar, refs)) {
+            return UsageStatus.USED;
+        }
+
+        if (matchesArtifactPattern(dep.ga(), annotationOnlyArtifacts)
+                || matchesArtifactPattern(dep.ga(), runtimeArtifacts)
+                || matchesReflectionLoadedClasses(dep.ga(), depClasses)) {
+            return UsageStatus.USED;
+        }
+
+        return depClasses == null ? UsageStatus.UNDETERMINED : UsageStatus.UNUSED;
+    }
+
+    private static boolean isUsedByRuntimeDiscovery(
+            DependenciesTui.DepEntry dep, Map<String, File> gaToJar, Set<String> refs) {
         File jarFile = gaToJar.get(dep.ga());
-        if (jarFile != null) {
-            Set<String> discoveryClasses = getRuntimeDiscoveryClasses(jarFile);
-            if (!Collections.disjoint(discoveryClasses, refs)) {
-                return UsageStatus.USED;
-            }
-            // Annotation processors are used at compile time without direct bytecode references.
-            // They can be declared with "provided" or "compile" scope (e.g. Lombok).
-            if (("provided".equals(dep.scope) || "compile".equals(dep.scope))
-                    && discoveryClasses.contains("javax.annotation.processing.Processor")) {
-                return UsageStatus.USED;
-            }
+        if (jarFile == null) {
+            return false;
         }
+        Set<String> discoveryClasses = getRuntimeDiscoveryClasses(jarFile);
+        if (!Collections.disjoint(discoveryClasses, refs)) {
+            return true;
+        }
+        // Annotation processors are used at compile time without direct bytecode references.
+        // They can be declared with "provided" or "compile" scope (e.g. Lombok).
+        return ("provided".equals(dep.scope) || "compile".equals(dep.scope))
+                && discoveryClasses.contains("javax.annotation.processing.Processor");
+    }
 
+    private boolean matchesReflectionLoadedClasses(String ga, Set<String> depClasses) {
         if (depClasses == null) {
-            return UsageStatus.UNDETERMINED;
+            return false;
         }
+        List<String> expectedClasses = reflectionLoadedClasses.get(ga);
+        if (expectedClasses == null) {
+            return false;
+        }
+        for (String cls : expectedClasses) {
+            if (depClasses.contains(cls)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
-        return UsageStatus.UNUSED;
+    /**
+     * Check whether a dependency's GA coordinates match any pattern in the given set.
+     * Supports exact matches ({@code groupId:artifactId}) and wildcard matches ({@code groupId:*}).
+     * For dependencies with a classifier ({@code groupId:artifactId:classifier}), the pattern
+     * is also matched against the base {@code groupId:artifactId}.
+     */
+    static boolean matchesArtifactPattern(String ga, Set<String> patterns) {
+        if (patterns.isEmpty()) {
+            return false;
+        }
+        if (patterns.contains(ga)) {
+            return true;
+        }
+        int firstColon = ga.indexOf(':');
+        if (firstColon > 0) {
+            // Check wildcard: groupId:*
+            if (patterns.contains(ga.substring(0, firstColon) + ":*")) {
+                return true;
+            }
+            // For classifier deps (g:a:c), also try matching g:a
+            int secondColon = ga.indexOf(':', firstColon + 1);
+            if (secondColon > 0) {
+                return patterns.contains(ga.substring(0, secondColon));
+            }
+        }
+        return false;
     }
 
     /**
@@ -205,6 +289,50 @@ public final class DependencyUsageAnalyzer {
             if (!entry.contains("/") && !entry.isEmpty()) {
                 classes.add(entry);
             }
+        }
+    }
+
+    public static final class Builder {
+        private Set<String> runtimeArtifacts = Set.of();
+        private Set<String> annotationOnlyArtifacts = Set.of();
+        private Map<String, List<String>> reflectionLoadedClasses = Map.of();
+
+        private Builder() {}
+
+        /**
+         * Artifacts that are needed only at runtime and never referenced in bytecode
+         * (JDBC drivers, SLF4J backends, XML parser implementations, JVM agents).
+         * Patterns: {@code groupId:artifactId} or {@code groupId:*}.
+         */
+        public Builder runtimeArtifacts(Set<String> patterns) {
+            this.runtimeArtifacts = patterns;
+            return this;
+        }
+
+        /**
+         * Artifacts that provide only source- or class-retention annotations which are
+         * erased during compilation (Lombok, SpotBugs annotations, ErrorProne).
+         * Patterns: {@code groupId:artifactId} or {@code groupId:*}.
+         */
+        public Builder annotationOnlyArtifacts(Set<String> patterns) {
+            this.annotationOnlyArtifacts = patterns;
+            return this;
+        }
+
+        /**
+         * Classes known to be loaded via reflection, mapped by their providing artifact.
+         * Keys must be exact {@code groupId:artifactId} coordinates; wildcard patterns
+         * like {@code groupId:*} are not supported. During classification the artifact's
+         * class index is checked to verify the class is actually present, so the allowlist
+         * stays valid even if a class moves.
+         */
+        public Builder reflectionLoadedClasses(Map<String, List<String>> classes) {
+            this.reflectionLoadedClasses = classes;
+            return this;
+        }
+
+        public DependencyUsageAnalyzer build() {
+            return new DependencyUsageAnalyzer(this);
         }
     }
 }
