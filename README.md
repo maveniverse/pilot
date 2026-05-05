@@ -17,6 +17,7 @@ Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI outp
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
 | `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies |
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
+| `pilot:analyze-dependencies` | CI-friendly dependency analysis: detect unused declared and used transitive dependencies, with check/report/fix actions |
 
 ## Quick Start
 
@@ -56,6 +57,11 @@ mvn pilot:audit
 
 # Align dependency conventions
 mvn pilot:align
+
+# Analyze dependencies (CI-friendly, non-interactive)
+mvn compile pilot:analyze-dependencies                    # check mode (fails on issues)
+mvn compile pilot:analyze-dependencies -Dpilot.action=report  # report mode (warns only)
+mvn compile pilot:analyze-dependencies -Dpilot.action=fix     # fix mode (edits POM)
 ```
 
 ### Standalone CLI
@@ -157,6 +163,31 @@ Detects the project's current dependency conventions (inline vs managed versions
 ![pilot:align](docs/images/align.svg)
 
 **Keys:** `jk` -- navigate options, `<>/Enter` -- cycle values, `p` -- preview diff, `w` -- apply, `h` -- help
+
+### Dependency Analyzer (`pilot:analyze-dependencies`)
+
+Non-interactive, CI-friendly dependency analysis. Detects two kinds of issues: unused declared dependencies (can be removed) and used transitive dependencies (should be declared explicitly). Three actions via `-Dpilot.action`:
+
+- **`check`** (default) — reports issues and fails the build
+- **`report`** — reports issues without failing
+- **`fix`** — removes unused declared and adds used transitive dependencies to the POM
+
+Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `reflectionLoadedClasses`) for false positives from bytecode analysis, and ignore lists (`ignoredUnusedDeclared`, `ignoredUsedTransitive`) for suppressing known findings. All pattern sets support `groupId:artifactId` exact match and `groupId:*` wildcards.
+
+```xml
+<plugin>
+  <groupId>eu.maveniverse.maven.plugins</groupId>
+  <artifactId>pilot-plugin</artifactId>
+  <configuration>
+    <runtimeArtifacts>
+      <runtimeArtifact>org.postgresql:postgresql</runtimeArtifact>
+    </runtimeArtifacts>
+    <ignoredUsedTransitive>
+      <ignoredUsedTransitive>org.slf4j:slf4j-api</ignoredUsedTransitive>
+    </ignoredUsedTransitive>
+  </configuration>
+</plugin>
+```
 
 ## How POM Editing Works
 
