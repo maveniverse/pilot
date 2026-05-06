@@ -664,7 +664,7 @@ public class UpdatesTui extends ToolPanel {
         }
 
         if (key.isKey(KeyCode.TAB) && !singleModule) {
-            view = View.values()[(view.ordinal() + 1) % View.values().length];
+            setActiveSubView((view.ordinal() + 1) % View.values().length);
             return true;
         }
 

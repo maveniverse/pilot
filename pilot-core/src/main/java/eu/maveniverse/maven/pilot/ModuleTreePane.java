@@ -234,6 +234,7 @@ class ModuleTreePane {
     }
 
     private boolean handleMouseClick(MouseEvent mouse, Rect area) {
+        if (mouse.x() >= area.x() + area.width() - 1) return false; // scrollbar gutter
         int row = mouse.y() - area.y() - 1 + tableState.offset(); // border + scroll
         var visible = visibleNodes();
         if (row < 0 || row >= visible.size()) return false;

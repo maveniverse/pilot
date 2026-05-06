@@ -23,6 +23,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.text.Span;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntFunction;
 import java.util.function.UnaryOperator;
 
 /**
@@ -68,7 +69,7 @@ class Theme {
     }
 
     /** Render tab indicators with per-tab active color. */
-    List<Span> inlineTabIndicators(int active, String[] labels, java.util.function.IntFunction<Color> activeColorFn) {
+    List<Span> inlineTabIndicators(int active, String[] labels, IntFunction<Color> activeColorFn) {
         List<Span> spans = new ArrayList<>();
         for (int i = 0; i < labels.length; i++) {
             spans.add(Span.raw("  "));

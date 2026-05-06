@@ -676,7 +676,7 @@ public class AuditTui extends ToolPanel {
 
         // Standalone: Tab switches views
         if (key.isKey(KeyCode.TAB)) {
-            view = View.values()[(view.ordinal() + 1) % View.values().length];
+            setActiveSubView((view.ordinal() + 1) % View.values().length);
             return true;
         }
 
