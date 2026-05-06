@@ -751,7 +751,7 @@ public class AlignTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row createConventionRow(String name, String detected, String selected, boolean changed) {

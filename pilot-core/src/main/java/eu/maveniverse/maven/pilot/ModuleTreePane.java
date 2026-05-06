@@ -240,7 +240,7 @@ class ModuleTreePane {
         tableState.select(row);
         var node = visible.get(row);
         if (node.hasChildren()) {
-            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+            int arrowX = area.x() + 2 + node.depth * 2; // highlight(2) + indent
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
             }
@@ -359,19 +359,18 @@ class ModuleTreePane {
             rows.add(row);
         }
 
-        Table.Builder builder = Table.builder()
+        Table table = Table.builder()
                 .rows(rows)
                 .highlightStyle(theme.highlightStyle())
                 .highlightSymbol(theme.highlightSymbol())
-                .block(block);
+                .block(block)
+                .widths(
+                        showGa
+                                ? new Constraint[] {Constraint.percentage(50), Constraint.percentage(50)}
+                                : new Constraint[] {Constraint.fill()})
+                .build();
 
-        if (showGa) {
-            builder.widths(Constraint.percentage(50), Constraint.percentage(50));
-        } else {
-            builder.widths(Constraint.fill());
-        }
-
-        frame.renderStatefulWidget(builder.build(), area, tableState);
+        ToolPanel.renderTableWithScrollbar(frame, area, table, tableState, visible.size());
     }
 
     private Row buildRow(ReactorModel.ModuleNode node, boolean showGa, int gaColWidth) {
@@ -380,7 +379,7 @@ class ModuleTreePane {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "▾ " : "▸ ");
+            sb.append(node.expanded ? "▼ " : "▶ ");
         } else {
             sb.append("  ");
         }

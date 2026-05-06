@@ -47,16 +47,36 @@ class Theme {
         return Style.create().fg(Color.DARK_GRAY);
     }
 
-    // ── Sub-view tabs (ToolPanel tab line) ──────────────────────────────────
+    // ── Sub-view tabs (ToolPanel tab bar — TamboUI Tabs widget) ──────────────
 
-    /** Active sub-view tab label with number prefix. */
-    Span activeTab(String label, boolean focused, int number) {
-        return Span.raw(" [▸" + number + ":" + label + "]").bold().fg(focused ? Color.CYAN : Color.WHITE);
+    /** Highlight style applied to the selected tab by the Tabs widget. */
+    Style tabsHighlightStyle(boolean focused) {
+        return Style.create().bold().fg(focused ? Color.CYAN : Color.WHITE);
     }
 
-    /** Inactive sub-view tab label with number prefix. */
-    Span inactiveTab(String label, boolean focused, int number) {
-        return Span.raw(" [" + number + ":" + label + "]").fg(focused ? Color.WHITE : Color.DARK_GRAY);
+    /** Title style for an individual tab (inactive enabled, inactive disabled). */
+    Style tabsTitleStyle(boolean focused, boolean enabled) {
+        if (!enabled) return Style.create().fg(Color.DARK_GRAY);
+        return Style.create().fg(focused ? Color.WHITE : Color.DARK_GRAY);
+    }
+
+    // ── Inline tab indicators (standalone headers) ─────────────────────────
+
+    /** Render tab indicators as inline spans (for standalone header lines). */
+    List<Span> inlineTabIndicators(int active, String[] labels) {
+        return inlineTabIndicators(active, labels, i -> activeViewTabColor());
+    }
+
+    /** Render tab indicators with per-tab active color. */
+    List<Span> inlineTabIndicators(int active, String[] labels, java.util.function.IntFunction<Color> activeColorFn) {
+        List<Span> spans = new ArrayList<>();
+        for (int i = 0; i < labels.length; i++) {
+            spans.add(Span.raw("  "));
+            boolean isActive = i == active;
+            Color fg = isActive ? activeColorFn.apply(i) : inactiveViewTabColor();
+            spans.add(Span.raw("[" + (isActive ? "▸ " : "  ") + labels[i] + "]").fg(fg));
+        }
+        return spans;
     }
 
     /** Dirty indicator shown next to tabs when there are unsaved changes. */

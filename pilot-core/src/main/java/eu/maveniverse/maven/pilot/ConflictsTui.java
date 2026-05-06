@@ -697,7 +697,7 @@ public class ConflictsTui extends ToolPanel {
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     /**

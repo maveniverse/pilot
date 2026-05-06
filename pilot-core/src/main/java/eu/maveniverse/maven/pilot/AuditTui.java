@@ -676,7 +676,7 @@ public class AuditTui extends ToolPanel {
 
         // Standalone: Tab switches views
         if (key.isKey(KeyCode.TAB)) {
-            view = TabBar.next(view, View.values());
+            view = View.values()[(view.ordinal() + 1) % View.values().length];
             return true;
         }
 
@@ -795,15 +795,15 @@ public class AuditTui extends ToolPanel {
     }
 
     @Override
-    protected Line buildSubViewTabLine() {
-        Line base = super.buildSubViewTabLine();
+    protected List<Span> buildTabBarSuffix() {
+        List<Span> suffix = super.buildTabBarSuffix();
         if (vulnsLoaded < entries.size()) {
-            List<Span> spans = new ArrayList<>(base.spans());
+            List<Span> spans = new ArrayList<>(suffix);
             spans.add(Span.raw("  checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size())
                     .fg(Color.DARK_GRAY));
-            return Line.from(spans);
+            return spans;
         }
-        return base;
+        return suffix;
     }
 
     // -- Rendering --
@@ -857,14 +857,16 @@ public class AuditTui extends ToolPanel {
         if (isDirty()) {
             spans.add(theme.dirtyIndicator());
         }
-        spans.addAll(TabBar.render(
-                view,
-                View.values(),
-                v -> switch (v) {
-                    case LICENSES -> licensesGrouped ? "Licenses (grouped)" : "Licenses";
-                    case VULNERABILITIES -> "Vulnerabilities" + (vulnCount > 0 ? " (" + vulnCount + ")" : "");
-                },
-                v -> v == View.VULNERABILITIES && vulnCount > 0 ? Color.RED : Color.YELLOW));
+        String[] labels = new String[] {
+            "Vulnerabilities" + (vulnCount > 0 ? " (" + vulnCount + ")" : ""),
+            licensesGrouped ? "Licenses (grouped)" : "Licenses"
+        };
+        spans.addAll(theme.inlineTabIndicators(
+                view.ordinal(),
+                labels,
+                i -> i == View.VULNERABILITIES.ordinal() && vulnCount > 0
+                        ? theme.vulnTabActiveColor()
+                        : theme.activeViewTabColor()));
         if (vulnsLoaded < entries.size()) {
             spans.add(Span.raw("  Checking vulnerabilities\u2026 " + vulnsLoaded + "/" + entries.size())
                     .fg(Color.DARK_GRAY));
@@ -915,7 +917,7 @@ public class AuditTui extends ToolPanel {
                 .build();
 
         setTableArea(zones.get(0), block);
-        frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderTableWithScrollbar(frame, zones.get(0), table, tableState, rows.size());
         renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
@@ -1243,7 +1245,7 @@ public class AuditTui extends ToolPanel {
                 .build();
 
         setTableArea(zones.get(0), block);
-        frame.renderStatefulWidget(table, zones.get(0), byLicenseTableState);
+        renderTableWithScrollbar(frame, zones.get(0), table, byLicenseTableState, rows.size());
         renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
@@ -1364,7 +1366,7 @@ public class AuditTui extends ToolPanel {
                 .build();
 
         setTableArea(zones.get(0), block);
-        frame.renderStatefulWidget(table, zones.get(0), vulnTableState);
+        renderTableWithScrollbar(frame, zones.get(0), table, vulnTableState, rows.size());
         renderDivider(frame, zones.get(1));
 
         // -- Detail pane --
