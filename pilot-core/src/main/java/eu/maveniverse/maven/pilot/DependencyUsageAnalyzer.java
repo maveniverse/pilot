@@ -224,7 +224,7 @@ public final class DependencyUsageAnalyzer {
      * For dependencies with a classifier ({@code groupId:artifactId:classifier}), the pattern
      * is also matched against the base {@code groupId:artifactId}.
      */
-    static boolean matchesArtifactPattern(String ga, Set<String> patterns) {
+    public static boolean matchesArtifactPattern(String ga, Set<String> patterns) {
         if (patterns.isEmpty()) {
             return false;
         }

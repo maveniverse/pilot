@@ -93,6 +93,37 @@ class DependencyUsageAnalyzerTest {
     }
 
     @Test
+    void unusedTransitiveDependency() {
+        var dep = new DependenciesTui.DepEntry("com.transitive", "lib", "", "1.0", "compile", false);
+
+        Map<String, String> classIndex = Map.of("com.transitive.Helper", "com.transitive:lib");
+        Map<String, File> gaToJar = Map.of();
+
+        var result = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(Set.of("com.other.Unrelated"), Set.of(), classIndex, gaToJar, List.of(), List.of(dep));
+
+        assertThat(result.transitiveUsage())
+                .containsEntry("com.transitive:lib", DependencyUsageAnalyzer.UsageStatus.UNUSED);
+    }
+
+    @Test
+    void transitiveRuntimeArtifactAllowlistMarksAsUsed() {
+        var dep = new DependenciesTui.DepEntry("org.postgresql", "postgresql", "", "42.7", "runtime", false);
+
+        Map<String, String> classIndex = Map.of("org.postgresql.Driver", "org.postgresql:postgresql");
+        Map<String, File> gaToJar = Map.of();
+
+        var result = DependencyUsageAnalyzer.builder()
+                .runtimeArtifacts(Set.of("org.postgresql:postgresql"))
+                .build()
+                .analyze(Set.of(), Set.of(), classIndex, gaToJar, List.of(), List.of(dep));
+
+        assertThat(result.transitiveUsage())
+                .containsEntry("org.postgresql:postgresql", DependencyUsageAnalyzer.UsageStatus.USED);
+    }
+
+    @Test
     void testScopedDepCheckedAgainstTestRefs() {
         var dep = new DependenciesTui.DepEntry("org.junit", "junit-api", "", "5.0", "test", true);
 
@@ -502,6 +533,15 @@ class DependencyUsageAnalyzerTest {
         assertThat(DependencyUsageAnalyzer.matchesArtifactPattern(
                         "com.oracle.database.jdbc:ojdbc11", Set.of("com.oracle.database.jdbc:*")))
                 .isTrue();
+    }
+
+    @Test
+    void classifiedDepGaMatchesClassifiedKey() {
+        var dep = new DependenciesTui.DepEntry("com.example", "lib", "tests", "1.0", "test", true);
+        assertThat(dep.ga()).isEqualTo("com.example:lib:tests");
+
+        Map<String, String> gaToVersion = Map.of("com.example:lib:tests", "1.0");
+        assertThat(gaToVersion.get(dep.ga())).isEqualTo("1.0");
     }
 
     @Test
