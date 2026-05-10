@@ -59,17 +59,17 @@ import java.util.function.Function;
 public class AuditTui extends ToolPanel {
 
     public static class AuditEntry {
-        final String groupId;
-        final String artifactId;
-        final String version;
-        final String scope;
+        public final String groupId;
+        public final String artifactId;
+        public final String version;
+        public final String scope;
         public final List<String> modules = new ArrayList<>();
-        String license;
-        String licenseUrl;
-        List<OsvClient.Vulnerability> vulnerabilities;
-        boolean licenseLoaded;
-        boolean vulnsLoaded;
-        boolean vulnFetchFailed;
+        public String license;
+        public String licenseUrl;
+        public List<OsvClient.Vulnerability> vulnerabilities;
+        public boolean licenseLoaded;
+        public boolean vulnsLoaded;
+        public boolean vulnFetchFailed;
 
         public AuditEntry(String groupId, String artifactId, String version, String scope) {
             this.groupId = groupId;

@@ -36,7 +36,15 @@ import org.eclipse.aether.resolution.VersionRangeResolutionException;
 import org.eclipse.aether.resolution.VersionRangeResult;
 
 /**
- * Interactive TUI showing which dependencies have newer versions available.
+ * Dependency updates checker.
+ *
+ * <p>Three actions via {@code -Dpilot.action}:</p>
+ * <ul>
+ *   <li><b>tui</b> (default) — interactive TUI showing which dependencies have newer versions</li>
+ *   <li><b>report</b> — prints a text report to the console</li>
+ *   <li><b>check</b> — prints a report and optionally fails the build if total libyears
+ *       exceed the configured threshold</li>
+ * </ul>
  *
  * <p>In a multi-module reactor, aggregates dependencies across all modules,
  * groups by shared version properties, and applies updates to the correct POM.</p>
@@ -44,6 +52,8 @@ import org.eclipse.aether.resolution.VersionRangeResult;
  * <p>Usage:</p>
  * <pre>
  * mvn pilot:updates
+ * mvn pilot:updates -Dpilot.action=report
+ * mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0
  * </pre>
  *
  * @since 0.1.0
@@ -60,6 +70,12 @@ public class UpdatesMojo extends AbstractMojo {
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
 
+    @Parameter(property = "pilot.action", defaultValue = "tui")
+    String action = "tui";
+
+    @Parameter(property = "pilot.updates.libyears", defaultValue = "-1")
+    float libyearsThreshold = -1;
+
     private final RepositorySystem repoSystem;
 
     @Inject
@@ -69,17 +85,43 @@ public class UpdatesMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        if (!"tui".equals(action) && !"report".equals(action) && !"check".equals(action)) {
+            throw new MojoExecutionException("Invalid action '" + action + "'. Use 'tui', 'report', or 'check'.");
+        }
         try {
             UpdatesTui.VersionResolver versionResolver = createVersionResolver();
             List<PilotProject> projects = MojoHelper.toPilotProjects(session.getProjects());
             ReactorCollector.CollectionResult result = ReactorCollector.collect(projects);
-            ReactorModel reactorModel = ReactorModel.build(projects);
 
-            UpdatesTui tui =
-                    new UpdatesTui(result, reactorModel, projects.get(0).gav(), versionResolver);
-            tui.runStandalone();
+            if ("tui".equals(action)) {
+                ReactorModel reactorModel = ReactorModel.build(projects);
+                UpdatesTui tui =
+                        new UpdatesTui(result, reactorModel, projects.get(0).gav(), versionResolver);
+                tui.runStandalone();
+            } else {
+                executeNonInteractive(result, versionResolver, projects.get(0).gav());
+            }
+        } catch (MojoFailureException e) {
+            throw e;
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to check updates: " + e.getMessage(), e);
+        }
+    }
+
+    void executeNonInteractive(
+            ReactorCollector.CollectionResult result, UpdatesTui.VersionResolver versionResolver, String projectGav)
+            throws MojoFailureException {
+        if ("report".equals(action)) {
+            String report = UpdatesReporter.resolveAndFormatReport(result, versionResolver, projectGav);
+            getLog().info("\n" + report);
+        } else {
+            UpdatesReporter.CheckResult check = UpdatesReporter.resolveAndCheck(result, versionResolver, projectGav);
+            getLog().info("\n" + check.report);
+            if (libyearsThreshold >= 0 && check.totalLibYears > libyearsThreshold) {
+                throw new MojoFailureException(check.formatFailure(libyearsThreshold));
+            }
+            getLog().info("Updates check passed: " + check.updateCount + " update(s), "
+                    + String.format(java.util.Locale.US, "%.1f", check.totalLibYears) + " libyear(s).");
         }
     }
 

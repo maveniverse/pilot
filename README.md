@@ -13,9 +13,9 @@ Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI outp
 | `pilot:tree` | Browse the resolved dependency tree with expand/collapse, conflict highlighting, scope filtering, and reverse path lookup |
 | `pilot:pom` | View raw and effective POM with syntax highlighting, collapsible XML nodes, and origin tracking |
 | `pilot:dependencies` | Bytecode-level analysis of declared vs used dependencies with ASM, SPI detection, and member-level references |
-| `pilot:updates` | Check for dependency updates with patch/minor/major classification and batch POM editing |
+| `pilot:updates` | Check for dependency updates with patch/minor/major classification and batch POM editing; supports `report` and `check` actions for CI |
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
-| `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies |
+| `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies; supports `report` and `check` actions for CI |
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
 | `pilot:analyze-dependencies` | CI-friendly dependency analysis: detect unused declared and used transitive dependencies, with check/report/fix actions |
 
@@ -57,6 +57,15 @@ mvn pilot:audit
 
 # Align dependency conventions
 mvn pilot:align
+
+# Audit report (CI-friendly, non-interactive)
+mvn pilot:audit -Dpilot.action=report                         # print CVE + license report
+mvn pilot:audit -Dpilot.action=check                          # fail build on HIGH+ CVEs
+mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL  # fail only on CRITICAL
+
+# Updates report (CI-friendly, non-interactive)
+mvn pilot:updates -Dpilot.action=report                       # print available updates
+mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0  # fail if too stale
 
 # Analyze dependencies (CI-friendly, non-interactive)
 mvn compile pilot:analyze-dependencies                    # check mode (fails on issues)
@@ -155,6 +164,40 @@ Three views: **Licenses** shows all transitive dependencies with their licenses 
 [![pilot:audit vulnerabilities](docs/images/audit-vulns.svg)](https://maveniverse.github.io/pilot/player/audit.html)
 
 **Keys:** `Tab` -- switch view, `s` -- cycle scope filter, `m` -- manage dependency, `d` -- show diff, `h` -- help
+
+#### Non-Interactive Audit Report (`-Dpilot.action=report`)
+
+Prints a structured text report covering vulnerabilities (sorted by severity) and licenses (grouped by type). Suitable for CI logs.
+
+```bash
+mvn pilot:audit -Dpilot.action=report
+```
+
+#### Audit CI Gate (`-Dpilot.action=check`)
+
+Fails the build when vulnerabilities at or above a severity threshold are found. Defaults to `HIGH`.
+
+```bash
+# Fail on HIGH or CRITICAL CVEs (default)
+mvn pilot:audit -Dpilot.action=check
+
+# Fail only on CRITICAL CVEs
+mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL
+```
+
+### Dependency Updates Report & CI Gate
+
+The `pilot:updates` goal also supports non-interactive modes:
+
+```bash
+# Print update report with libyear aging
+mvn pilot:updates -Dpilot.action=report
+
+# Fail the build if total libyears exceed threshold
+mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0
+```
+
+The report lists all dependencies with available updates (classified as patch/minor/major), property groups, and a total libyear score measuring how far behind the project is from latest releases.
 
 ### Convention Alignment (`pilot:align`)
 
