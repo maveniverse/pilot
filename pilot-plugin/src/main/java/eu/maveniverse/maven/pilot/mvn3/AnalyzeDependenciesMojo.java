@@ -18,11 +18,8 @@
  */
 package eu.maveniverse.maven.pilot.mvn3;
 
-import eu.maveniverse.domtrip.Document;
-import eu.maveniverse.domtrip.maven.AlignOptions;
-import eu.maveniverse.domtrip.maven.Coordinates;
-import eu.maveniverse.domtrip.maven.PomEditor;
 import eu.maveniverse.maven.pilot.ClassFileScanner;
+import eu.maveniverse.maven.pilot.DependenciesReporter;
 import eu.maveniverse.maven.pilot.DependenciesTui;
 import eu.maveniverse.maven.pilot.DependencyTreeModel;
 import eu.maveniverse.maven.pilot.DependencyUsageAnalyzer;
@@ -53,50 +50,12 @@ import org.eclipse.aether.resolution.DependencyResult;
 /**
  * Analyzes declared dependencies for usage and reports or removes unused ones.
  *
- * <p>Requires prior compilation ({@code target/classes} must exist). Three actions:</p>
- * <ul>
- *   <li><b>check</b> (default) — reports issues and fails the build</li>
- *   <li><b>report</b> — reports issues without failing the build</li>
- *   <li><b>fix</b> — removes unused declared and adds used transitive dependencies</li>
- * </ul>
- *
- * <p>Detects two kinds of dependency issues:</p>
- * <ul>
- *   <li>Unused declared dependencies (can be removed)</li>
- *   <li>Used transitive dependencies (should be declared explicitly)</li>
- * </ul>
- *
- * <p>Usage:</p>
- * <pre>
- * mvn compile pilot:analyze-dependencies
- * mvn compile pilot:analyze-dependencies -Dpilot.action=fix
- * </pre>
- *
- * <p>Allowlists can be configured to prevent false positives:</p>
- * <pre>{@code
- * <plugin>
- *   <groupId>eu.maveniverse.maven</groupId>
- *   <artifactId>pilot-plugin</artifactId>
- *   <configuration>
- *     <runtimeArtifacts>
- *       <runtimeArtifact>org.postgresql:postgresql</runtimeArtifact>
- *       <runtimeArtifact>com.oracle.database.jdbc:*</runtimeArtifact>
- *     </runtimeArtifacts>
- *     <annotationOnlyArtifacts>
- *       <annotationOnlyArtifact>org.projectlombok:lombok</annotationOnlyArtifact>
- *     </annotationOnlyArtifacts>
- *     <ignoredUnusedDeclared>
- *       <ignoredUnusedDeclared>com.example:kept-for-runtime</ignoredUnusedDeclared>
- *     </ignoredUnusedDeclared>
- *     <ignoredUsedTransitive>
- *       <ignoredUsedTransitive>org.slf4j:slf4j-api</ignoredUsedTransitive>
- *     </ignoredUsedTransitive>
- *   </configuration>
- * </plugin>
- * }</pre>
+ * @deprecated Use {@code pilot:dependencies -Dpilot.action=check} instead.
+ *     This goal will be removed in a future release.
  *
  * @since 0.2.3
  */
+@Deprecated
 @Mojo(name = "analyze-dependencies", requiresProject = true, aggregator = true, threadSafe = true)
 public class AnalyzeDependenciesMojo extends AbstractMojo {
 
@@ -136,6 +95,8 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        getLog().warn("pilot:analyze-dependencies is deprecated. Use pilot:dependencies -Dpilot.action=" + action
+                + " instead.");
         if (!"check".equals(action) && !"report".equals(action) && !"fix".equals(action)) {
             throw new MojoExecutionException("Invalid action '" + action + "'. Use 'check', 'report', or 'fix'.");
         }
@@ -240,9 +201,12 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         }
 
         switch (action) {
-            case "fix" -> fix(proj, unusedDeclared, usedTransitive, gaToVersion);
-            case "report" -> report(unusedDeclared, usedTransitive);
-            default -> check(unusedDeclared, usedTransitive);
+            case "fix" ->
+                DependenciesReporter.fix(
+                        proj.getFile().toPath(), unusedDeclared, usedTransitive, gaToVersion, getLog()::info);
+            case "report" -> getLog().warn(DependenciesReporter.formatFindings(unusedDeclared, usedTransitive));
+            default ->
+                throw new MojoFailureException(DependenciesReporter.formatCheckFailure(unusedDeclared, usedTransitive));
         }
     }
 
@@ -268,97 +232,22 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         return patterns != null && !patterns.isEmpty() ? new HashSet<>(patterns) : Set.of();
     }
 
+    // Kept for backwards-compatible test access; delegates to DependenciesReporter
     String formatFindings(
             List<DependenciesTui.DepEntry> unusedDeclared, List<DependenciesTui.DepEntry> usedTransitive) {
-        StringBuilder sb = new StringBuilder();
-        if (!unusedDeclared.isEmpty()) {
-            sb.append("Unused declared dependenc");
-            sb.append(unusedDeclared.size() == 1 ? "y" : "ies");
-            sb.append(" (can be removed):\n");
-            for (var dep : unusedDeclared) {
-                sb.append("  - ").append(dep.ga());
-                appendScope(sb, dep);
-                sb.append("\n");
-            }
-        }
-        if (!usedTransitive.isEmpty()) {
-            if (!unusedDeclared.isEmpty()) {
-                sb.append("\n");
-            }
-            sb.append("Used transitive dependenc");
-            sb.append(usedTransitive.size() == 1 ? "y" : "ies");
-            sb.append(" (should be declared):\n");
-            for (var dep : usedTransitive) {
-                sb.append("  - ").append(dep.ga());
-                appendScope(sb, dep);
-                sb.append("\n");
-            }
-        }
-        return sb.toString();
+        return DependenciesReporter.formatFindings(unusedDeclared, usedTransitive);
     }
 
     static void appendScope(StringBuilder sb, DependenciesTui.DepEntry dep) {
-        if (dep.scope != null && !dep.scope.isEmpty() && !"compile".equals(dep.scope)) {
-            sb.append(" (").append(dep.scope).append(")");
-        }
+        DependenciesReporter.appendScope(sb, dep);
     }
 
     void report(List<DependenciesTui.DepEntry> unusedDeclared, List<DependenciesTui.DepEntry> usedTransitive) {
-        getLog().warn(formatFindings(unusedDeclared, usedTransitive));
+        getLog().warn(DependenciesReporter.formatFindings(unusedDeclared, usedTransitive));
     }
 
     void check(List<DependenciesTui.DepEntry> unusedDeclared, List<DependenciesTui.DepEntry> usedTransitive)
             throws MojoFailureException {
-        throw new MojoFailureException(formatFindings(unusedDeclared, usedTransitive)
-                + "\nRun with -Dpilot.action=fix to apply changes, or configure allowlists for false positives.");
-    }
-
-    private void fix(
-            MavenProject proj,
-            List<DependenciesTui.DepEntry> unusedDeclared,
-            List<DependenciesTui.DepEntry> usedTransitive,
-            Map<String, String> gaToVersion)
-            throws Exception {
-        Path pomPath = proj.getFile().toPath();
-        String pomContent = Files.readString(pomPath);
-
-        for (var dep : unusedDeclared) {
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-            String[] parts = dep.ga().split(":");
-            Coordinates coords = parts.length > 2
-                    ? Coordinates.of(parts[0], parts[1], null, parts[2], "jar")
-                    : Coordinates.of(parts[0], parts[1], null);
-            editor.dependencies().deleteDependency(coords);
-            pomContent = editor.toXml();
-            getLog().info("Removed unused dependency: " + dep.ga());
-        }
-
-        for (var dep : usedTransitive) {
-            String[] parts = dep.ga().split(":");
-            String groupId = parts[0];
-            String artifactId = parts[1];
-            String classifier = parts.length > 2 ? parts[2] : null;
-            String version = gaToVersion.getOrDefault(dep.ga(), "");
-            String scope = dep.scope;
-
-            PomEditor editor = new PomEditor(Document.of(pomContent));
-            Coordinates coords = (classifier != null && !classifier.isEmpty())
-                    ? Coordinates.of(groupId, artifactId, version, classifier, "jar")
-                    : Coordinates.of(groupId, artifactId, version);
-            AlignOptions detected = editor.dependencies().detectConventions();
-            AlignOptions.Builder optBuilder = AlignOptions.builder()
-                    .versionStyle(detected.versionStyle())
-                    .versionSource(detected.versionSource())
-                    .namingConvention(detected.namingConvention());
-            if (scope != null && !scope.isEmpty() && !"compile".equals(scope)) {
-                optBuilder.scope(scope);
-            }
-            editor.dependencies().addAligned(coords, optBuilder.build());
-            pomContent = editor.toXml();
-            getLog().info("Added used transitive dependency: " + dep.ga());
-        }
-
-        Files.writeString(pomPath, pomContent);
-        getLog().info("Updated " + pomPath);
+        throw new MojoFailureException(DependenciesReporter.formatCheckFailure(unusedDeclared, usedTransitive));
     }
 }

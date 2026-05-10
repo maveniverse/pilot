@@ -18,11 +18,14 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import eu.maveniverse.domtrip.maven.Coordinates;
+import java.nio.file.Path;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Non-interactive report formatter for dependency update data.
@@ -124,6 +127,91 @@ public final class UpdatesReporter {
                         + "Run with -Dpilot.action=report to see full details, or -Dpilot.action=tui for interactive mode.",
                 total,
                 libyearsThreshold);
+    }
+
+    /**
+     * Apply all available updates to POM files and save.
+     *
+     * @param result the resolved collection result
+     * @param sessionProvider provides PomEditSession for a given POM path
+     * @param logger receives log messages for each applied update
+     * @return the number of updates applied
+     */
+    public static int applyAllUpdates(
+            ReactorCollector.CollectionResult result,
+            Function<Path, PomEditSession> sessionProvider,
+            FixLogger logger) {
+        int count = 0;
+        Set<String> appliedGroups = new LinkedHashSet<>();
+        Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
+
+        for (var group : result.propertyGroups) {
+            if (!group.hasUpdate() || group.applied || appliedGroups.contains(group.propertyName)) continue;
+            PomEditSession session = sessionProvider.apply(group.origin.pomPath);
+            session.beforeMutation();
+            session.editor().properties().updateProperty(true, group.propertyName, group.newestVersion);
+            session.recordChange(
+                    PomEditSession.ChangeType.MODIFY,
+                    "property",
+                    group.propertyName,
+                    group.resolvedVersion + " -> " + group.newestVersion,
+                    "updates");
+            mutatedSessions.add(session);
+            group.applied = true;
+            for (var dep : group.dependencies) {
+                dep.applied = true;
+            }
+            appliedGroups.add(group.propertyName);
+            logger.log(
+                    "Updated ${" + group.propertyName + "}: " + group.resolvedVersion + " -> " + group.newestVersion);
+            count++;
+        }
+
+        for (var dep : result.ungroupedDependencies) {
+            if (!dep.hasUpdate() || dep.applied) continue;
+            var loc = findUpdateLocation(dep);
+            PomEditSession session = sessionProvider.apply(loc.pomPath);
+            session.beforeMutation();
+            var coords = Coordinates.of(dep.groupId, dep.artifactId, dep.newestVersion);
+            if (loc.managed) {
+                session.editor().dependencies().updateManagedDependency(true, coords);
+            } else {
+                session.editor().dependencies().updateDependency(true, coords);
+            }
+            session.recordChange(
+                    PomEditSession.ChangeType.MODIFY,
+                    loc.managed ? "managed" : "dependency",
+                    dep.ga(),
+                    dep.primaryVersion + " -> " + dep.newestVersion,
+                    "updates");
+            mutatedSessions.add(session);
+            dep.applied = true;
+            logger.log("Updated " + dep.ga() + ": " + dep.primaryVersion + " -> " + dep.newestVersion);
+            count++;
+        }
+
+        for (PomEditSession session : mutatedSessions) {
+            if (session.isDirty()) {
+                session.save();
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Create a default session provider backed by a cache.
+     * Needed because PomEditSession's constructor is package-private.
+     */
+    public static Function<Path, PomEditSession> defaultSessionProvider() {
+        java.util.concurrent.ConcurrentHashMap<String, PomEditSession> cache =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        return path -> cache.computeIfAbsent(path.toString(), k -> new PomEditSession(path));
+    }
+
+    @FunctionalInterface
+    public interface FixLogger {
+        void log(String message);
     }
 
     /**
@@ -279,5 +367,15 @@ public final class UpdatesReporter {
     private static String pad(String s, int width) {
         if (s.length() >= width) return s;
         return s + " ".repeat(width - s.length());
+    }
+
+    record UpdateLocation(Path pomPath, boolean managed) {}
+
+    static UpdateLocation findUpdateLocation(ReactorCollector.AggregatedDependency dep) {
+        var managedUsage = dep.usages.stream().filter(u -> u.managed).findFirst();
+        if (managedUsage.isPresent()) {
+            return new UpdateLocation(managedUsage.orElseThrow().project.pomPath, true);
+        }
+        return new UpdateLocation(dep.usages.get(0).project.pomPath, false);
     }
 }

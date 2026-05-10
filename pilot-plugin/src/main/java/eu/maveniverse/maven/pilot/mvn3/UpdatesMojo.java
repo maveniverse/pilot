@@ -85,8 +85,9 @@ public class UpdatesMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
-        if (!"tui".equals(action) && !"report".equals(action) && !"check".equals(action)) {
-            throw new MojoExecutionException("Invalid action '" + action + "'. Use 'tui', 'report', or 'check'.");
+        if (!"tui".equals(action) && !"report".equals(action) && !"check".equals(action) && !"fix".equals(action)) {
+            throw new MojoExecutionException(
+                    "Invalid action '" + action + "'. Use 'tui', 'report', 'check', or 'fix'.");
         }
         try {
             UpdatesTui.VersionResolver versionResolver = createVersionResolver();
@@ -111,17 +112,23 @@ public class UpdatesMojo extends AbstractMojo {
     void executeNonInteractive(
             ReactorCollector.CollectionResult result, UpdatesTui.VersionResolver versionResolver, String projectGav)
             throws MojoFailureException {
-        if ("report".equals(action)) {
-            String report = UpdatesReporter.resolveAndFormatReport(result, versionResolver, projectGav);
-            getLog().info("\n" + report);
-        } else {
-            UpdatesReporter.CheckResult check = UpdatesReporter.resolveAndCheck(result, versionResolver, projectGav);
-            getLog().info("\n" + check.report);
-            if (libyearsThreshold >= 0 && check.totalLibYears > libyearsThreshold) {
-                throw new MojoFailureException(check.formatFailure(libyearsThreshold));
+        UpdatesReporter.CheckResult check = UpdatesReporter.resolveAndCheck(result, versionResolver, projectGav);
+        getLog().info("\n" + check.report);
+
+        switch (action) {
+            case "report" -> {}
+            case "fix" -> {
+                int applied = UpdatesReporter.applyAllUpdates(
+                        result, UpdatesReporter.defaultSessionProvider(), getLog()::info);
+                getLog().info(applied + " update(s) applied.");
             }
-            getLog().info("Updates check passed: " + check.updateCount + " update(s), "
-                    + String.format(java.util.Locale.US, "%.1f", check.totalLibYears) + " libyear(s).");
+            default -> {
+                if (libyearsThreshold >= 0 && check.totalLibYears > libyearsThreshold) {
+                    throw new MojoFailureException(check.formatFailure(libyearsThreshold));
+                }
+                getLog().info("Updates check passed: " + check.updateCount + " update(s), "
+                        + String.format(java.util.Locale.US, "%.1f", check.totalLibYears) + " libyear(s).");
+            }
         }
     }
 

@@ -12,12 +12,12 @@ Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI outp
 | `pilot:search` | Search Maven Central interactively with async results and version cycling |
 | `pilot:tree` | Browse the resolved dependency tree with expand/collapse, conflict highlighting, scope filtering, and reverse path lookup |
 | `pilot:pom` | View raw and effective POM with syntax highlighting, collapsible XML nodes, and origin tracking |
-| `pilot:dependencies` | Bytecode-level analysis of declared vs used dependencies with ASM, SPI detection, and member-level references |
-| `pilot:updates` | Check for dependency updates with patch/minor/major classification and batch POM editing; supports `report` and `check` actions for CI |
+| `pilot:dependencies` | Bytecode-level analysis of declared vs used dependencies; supports `tui`, `report`, `check`, and `fix` actions |
+| `pilot:updates` | Check for dependency updates with patch/minor/major classification; supports `tui`, `report`, `check`, and `fix` actions |
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
-| `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies; supports `report` and `check` actions for CI |
+| `pilot:audit` | License overview and CVE lookup (via OSV.dev); supports `tui`, `report`, and `check` actions |
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
-| `pilot:analyze-dependencies` | CI-friendly dependency analysis: detect unused declared and used transitive dependencies, with check/report/fix actions |
+| `pilot:analyze-dependencies` | *(deprecated)* Use `pilot:dependencies -Dpilot.action=check` instead |
 
 ## Quick Start
 
@@ -58,19 +58,17 @@ mvn pilot:audit
 # Align dependency conventions
 mvn pilot:align
 
-# Audit report (CI-friendly, non-interactive)
+# Non-interactive modes (CI-friendly) — all goals support -Dpilot.action=report|check|fix
+mvn compile pilot:dependencies -Dpilot.action=report          # report unused/transitive deps
+mvn compile pilot:dependencies -Dpilot.action=check           # fail build on dep issues
+mvn compile pilot:dependencies -Dpilot.action=fix             # auto-fix POM
+
 mvn pilot:audit -Dpilot.action=report                         # print CVE + license report
 mvn pilot:audit -Dpilot.action=check                          # fail build on HIGH+ CVEs
-mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL  # fail only on CRITICAL
 
-# Updates report (CI-friendly, non-interactive)
 mvn pilot:updates -Dpilot.action=report                       # print available updates
+mvn pilot:updates -Dpilot.action=fix                          # apply all updates to POM
 mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0  # fail if too stale
-
-# Analyze dependencies (CI-friendly, non-interactive)
-mvn compile pilot:analyze-dependencies                    # check mode (fails on issues)
-mvn compile pilot:analyze-dependencies -Dpilot.action=report  # report mode (warns only)
-mvn compile pilot:analyze-dependencies -Dpilot.action=fix     # fix mode (edits POM)
 ```
 
 ### Standalone CLI
@@ -185,19 +183,22 @@ mvn pilot:audit -Dpilot.action=check
 mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL
 ```
 
-### Dependency Updates Report & CI Gate
+### Updates Report, Check & Fix
 
-The `pilot:updates` goal also supports non-interactive modes:
+The `pilot:updates` goal supports non-interactive modes:
 
 ```bash
 # Print update report with libyear aging
 mvn pilot:updates -Dpilot.action=report
 
+# Apply all available updates to POM files
+mvn pilot:updates -Dpilot.action=fix
+
 # Fail the build if total libyears exceed threshold
 mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0
 ```
 
-The report lists all dependencies with available updates (classified as patch/minor/major), property groups, and a total libyear score measuring how far behind the project is from latest releases.
+The report lists all dependencies with available updates (classified as patch/minor/major), property groups, and a total libyear score measuring how far behind the project is from latest releases. The `fix` action applies all available updates directly to POM files — property-managed dependencies update the property, direct dependencies update the version inline.
 
 ### Convention Alignment (`pilot:align`)
 
@@ -207,13 +208,21 @@ Detects the project's current dependency conventions (inline vs managed versions
 
 **Keys:** `jk` -- navigate options, `<>/Enter` -- cycle values, `p` -- preview diff, `w` -- apply, `h` -- help
 
-### Dependency Analyzer (`pilot:analyze-dependencies`)
+### Dependencies Report, Check & Fix
 
-Non-interactive, CI-friendly dependency analysis. Detects two kinds of issues: unused declared dependencies (can be removed) and used transitive dependencies (should be declared explicitly). Three actions via `-Dpilot.action`:
+The `pilot:dependencies` goal supports non-interactive modes via `-Dpilot.action`:
 
-- **`check`** (default) — reports issues and fails the build
-- **`report`** — reports issues without failing
+- **`tui`** (default) — interactive TUI dashboard
+- **`report`** — reports unused declared and used transitive dependencies without failing
+- **`check`** — reports issues and fails the build
 - **`fix`** — removes unused declared and adds used transitive dependencies to the POM
+
+Requires prior compilation (`mvn compile`) for bytecode analysis.
+
+```bash
+mvn compile pilot:dependencies -Dpilot.action=check
+mvn compile pilot:dependencies -Dpilot.action=fix
+```
 
 Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `reflectionLoadedClasses`) for false positives from bytecode analysis, and ignore lists (`ignoredUnusedDeclared`, `ignoredUsedTransitive`) for suppressing known findings. All pattern sets support `groupId:artifactId` exact match and `groupId:*` wildcards.
 
@@ -231,6 +240,8 @@ Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `reflectionL
   </configuration>
 </plugin>
 ```
+
+> **Note:** `pilot:analyze-dependencies` is deprecated. Use `pilot:dependencies -Dpilot.action=check` instead.
 
 ## How POM Editing Works
 
