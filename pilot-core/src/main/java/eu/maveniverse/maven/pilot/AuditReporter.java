@@ -201,30 +201,12 @@ public final class AuditReporter {
         long noLicense = entries.stream()
                 .filter(e -> e.licenseLoaded && e.license == null)
                 .count();
-        long copyleft = entries.stream()
-                .filter(e -> {
-                    if (e.license == null) return false;
-                    String norm = AuditTui.normalizeLicense(e.license, e.licenseUrl);
-                    return norm.startsWith("GPL") || norm.startsWith("AGPL");
-                })
-                .count();
+        long copyleft = entries.stream().filter(AuditReporter::isCopyleft).count();
 
         sb.append("Summary: ");
         sb.append(entries.size()).append(" dependencies");
         sb.append(", ").append(vulns.size()).append(" vulnerabilities");
-        if (!vulns.isEmpty()) {
-            sb.append(" (");
-            boolean first = true;
-            for (String sev : SEVERITY_ORDER) {
-                long count = vulns.stream().filter(v -> sev.equals(v.severity)).count();
-                if (count > 0) {
-                    if (!first) sb.append(", ");
-                    sb.append(count).append(' ').append(sev.toLowerCase(Locale.ROOT));
-                    first = false;
-                }
-            }
-            sb.append(')');
-        }
+        appendSeverityBreakdown(sb, vulns);
         if (noLicense > 0) {
             sb.append(", ").append(noLicense).append(" with no license");
         }
@@ -232,6 +214,27 @@ public final class AuditReporter {
             sb.append(", ").append(copyleft).append(" copyleft");
         }
         sb.append('\n');
+    }
+
+    private static boolean isCopyleft(AuditTui.AuditEntry e) {
+        if (e.license == null) return false;
+        String norm = AuditTui.normalizeLicense(e.license, e.licenseUrl);
+        return norm.startsWith("GPL") || norm.startsWith("AGPL");
+    }
+
+    private static void appendSeverityBreakdown(StringBuilder sb, List<VulnLine> vulns) {
+        if (vulns.isEmpty()) return;
+        sb.append(" (");
+        boolean first = true;
+        for (String sev : SEVERITY_ORDER) {
+            long count = vulns.stream().filter(v -> sev.equals(v.severity)).count();
+            if (count > 0) {
+                if (!first) sb.append(", ");
+                sb.append(count).append(' ').append(sev.toLowerCase(Locale.ROOT));
+                first = false;
+            }
+        }
+        sb.append(')');
     }
 
     private static String pad(String s, int width) {

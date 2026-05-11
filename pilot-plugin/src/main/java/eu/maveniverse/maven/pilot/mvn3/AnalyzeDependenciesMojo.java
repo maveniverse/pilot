@@ -55,7 +55,7 @@ import org.eclipse.aether.resolution.DependencyResult;
  *
  * @since 0.2.3
  */
-@Deprecated
+@Deprecated(since = "0.3.0", forRemoval = true)
 @Mojo(name = "analyze-dependencies", requiresProject = true, aggregator = true, threadSafe = true)
 public class AnalyzeDependenciesMojo extends AbstractMojo {
 

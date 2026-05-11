@@ -195,7 +195,7 @@ class AuditReporterTest {
         e.vulnerabilities = List.of();
 
         assertThat(AuditReporter.countVulnerabilitiesAtOrAbove(List.of(e), "HIGH"))
-                .isEqualTo(0);
+                .isZero();
     }
 
     @Test
@@ -204,7 +204,7 @@ class AuditReporterTest {
         e.vulnerabilities = null;
 
         assertThat(AuditReporter.countVulnerabilitiesAtOrAbove(List.of(e), "HIGH"))
-                .isEqualTo(0);
+                .isZero();
     }
 
     @Test
@@ -292,11 +292,12 @@ class AuditReporterTest {
 
         String report = AuditReporter.formatReport(List.of(e1, e2));
 
-        assertThat(report).contains("Summary:");
-        assertThat(report).contains("3 vulnerabilities");
-        assertThat(report).contains("1 critical");
-        assertThat(report).contains("1 high");
-        assertThat(report).contains("1 low");
+        assertThat(report)
+                .contains("Summary:")
+                .contains("3 vulnerabilities")
+                .contains("1 critical")
+                .contains("1 high")
+                .contains("1 low");
     }
 
     @Test
@@ -425,11 +426,8 @@ class AuditReporterTest {
 
         String report = AuditReporter.formatReport(List.of(e1, e2));
 
-        assertThat(report).contains("1 found");
+        assertThat(report).contains("1 found").contains("CVE-SAME");
         // CVE-SAME should appear only once in the vulnerability listing
-        int first = report.indexOf("CVE-SAME");
-        int second = report.indexOf("CVE-SAME", first + 1);
-        // The second occurrence is in the summary, not the listing
-        assertThat(first).isPositive();
+        assertThat(report.indexOf("CVE-SAME")).isPositive();
     }
 }

@@ -31,6 +31,7 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("deprecation")
 class AnalyzeDependenciesMojoTest {
 
     private final AnalyzeDependenciesMojo mojo = new AnalyzeDependenciesMojo(null);

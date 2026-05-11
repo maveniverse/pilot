@@ -116,7 +116,7 @@ public class UpdatesMojo extends AbstractMojo {
         getLog().info("\n" + check.report);
 
         switch (action) {
-            case "report" -> {}
+            case "report" -> getLog().info("Report complete.");
             case "fix" -> {
                 int applied = UpdatesReporter.applyAllUpdates(
                         result, UpdatesReporter.defaultSessionProvider(), getLog()::info);

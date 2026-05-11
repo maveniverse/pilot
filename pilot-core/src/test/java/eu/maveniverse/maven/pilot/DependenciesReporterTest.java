@@ -112,7 +112,7 @@ class DependenciesReporterTest {
         StringBuilder sb = new StringBuilder();
         var dep = new DependenciesTui.DepEntry("g", "a", "", "1", "test", true);
         DependenciesReporter.appendScope(sb, dep);
-        assertThat(sb.toString()).isEqualTo(" (test)");
+        assertThat(sb).hasToString(" (test)");
     }
 
     @Test
@@ -158,8 +158,7 @@ class DependenciesReporterTest {
         DependenciesReporter.fix(pomPath, List.of(unused), List.of(), Map.of(), logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).doesNotContain("unused-lib");
-        assertThat(result).contains("kept-lib");
+        assertThat(result).doesNotContain("unused-lib").contains("kept-lib");
         assertThat(logs).anyMatch(l -> l.contains("Removed unused dependency: com.example:unused-lib"));
     }
 
@@ -185,8 +184,7 @@ class DependenciesReporterTest {
                 pomPath, List.of(), List.of(transitive), Map.of("org.needed:transitive-lib", "2.0"), logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).contains("transitive-lib");
-        assertThat(result).contains("existing-lib");
+        assertThat(result).contains("transitive-lib").contains("existing-lib");
         assertThat(logs).anyMatch(l -> l.contains("Added used transitive dependency: org.needed:transitive-lib"));
     }
 
@@ -212,8 +210,7 @@ class DependenciesReporterTest {
                 pomPath, List.of(), List.of(transitive), Map.of("org.test:test-lib", "1.0"), logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).contains("test-lib");
-        assertThat(result).contains("<scope>test</scope>");
+        assertThat(result).contains("test-lib").contains("<scope>test</scope>");
     }
 
     @Test
@@ -239,8 +236,7 @@ class DependenciesReporterTest {
                 pomPath, List.of(unused), List.of(transitive), Map.of("org.needed:needed", "2.0"), logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).doesNotContain("com.example");
-        assertThat(result).contains("needed");
+        assertThat(result).doesNotContain("com.example").contains("needed");
         assertThat(logs).hasSize(3); // remove + add + updated
     }
 }

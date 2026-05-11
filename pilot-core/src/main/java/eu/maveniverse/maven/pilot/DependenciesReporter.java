@@ -22,6 +22,7 @@ import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.AlignOptions;
 import eu.maveniverse.domtrip.maven.Coordinates;
 import eu.maveniverse.domtrip.maven.PomEditor;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -90,7 +91,7 @@ public final class DependenciesReporter {
             List<DependenciesTui.DepEntry> usedTransitive,
             Map<String, String> gaToVersion,
             FixLogger logger)
-            throws Exception {
+            throws IOException {
         String pomContent = Files.readString(pomPath);
 
         for (var dep : unusedDeclared) {

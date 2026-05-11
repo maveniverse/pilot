@@ -137,7 +137,7 @@ class UpdatesReporterTest {
 
     @Test
     void totalLibYearsEmpty() {
-        assertThat(UpdatesReporter.totalLibYears(List.of())).isEqualTo(0);
+        assertThat(UpdatesReporter.totalLibYears(List.of())).isZero();
     }
 
     @Test
@@ -184,7 +184,7 @@ class UpdatesReporterTest {
         var d = dep("org.example", "current", "2.0.0");
         d.libYears = 0.5f;
 
-        assertThat(UpdatesReporter.totalLibYears(List.of(d))).isEqualTo(0);
+        assertThat(UpdatesReporter.totalLibYears(List.of(d))).isZero();
     }
 
     // -- formatCheckFailure --
@@ -424,19 +424,15 @@ class UpdatesReporterTest {
 
         int count = UpdatesReporter.applyAllUpdates(res, UpdatesReporter.defaultSessionProvider(), logs::add);
 
-        assertThat(count).isEqualTo(0);
+        assertThat(count).isZero();
         assertThat(logs).isEmpty();
     }
 
     // -- defaultSessionProvider --
 
     @Test
-    void defaultSessionProviderCachesSameSession() {
-        var provider = UpdatesReporter.defaultSessionProvider();
-        var path = java.nio.file.Path.of("/nonexistent/pom.xml");
-
-        // Should not throw — just creates a session (file doesn't need to exist for the provider)
-        assertThat(provider).isNotNull();
+    void defaultSessionProviderReturnsNonNull() {
+        assertThat(UpdatesReporter.defaultSessionProvider()).isNotNull();
     }
 
     // -- CheckResult --

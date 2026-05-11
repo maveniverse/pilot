@@ -141,12 +141,22 @@ public final class UpdatesReporter {
             ReactorCollector.CollectionResult result,
             Function<Path, PomEditSession> sessionProvider,
             FixLogger logger) {
+        Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
+        int count = applyPropertyGroupUpdates(result, sessionProvider, logger, mutatedSessions);
+        count += applyUngroupedUpdates(result, sessionProvider, logger, mutatedSessions);
+        saveMutatedSessions(mutatedSessions);
+        return count;
+    }
+
+    private static int applyPropertyGroupUpdates(
+            ReactorCollector.CollectionResult result,
+            Function<Path, PomEditSession> sessionProvider,
+            FixLogger logger,
+            Set<PomEditSession> mutatedSessions) {
         int count = 0;
         Set<String> appliedGroups = new LinkedHashSet<>();
-        Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
-
         for (var group : result.propertyGroups) {
-            if (!group.hasUpdate() || group.applied || appliedGroups.contains(group.propertyName)) continue;
+            if (!group.hasUpdate() || group.applied || !appliedGroups.add(group.propertyName)) continue;
             PomEditSession session = sessionProvider.apply(group.origin.pomPath);
             session.beforeMutation();
             session.editor().properties().updateProperty(true, group.propertyName, group.newestVersion);
@@ -158,15 +168,20 @@ public final class UpdatesReporter {
                     "updates");
             mutatedSessions.add(session);
             group.applied = true;
-            for (var dep : group.dependencies) {
-                dep.applied = true;
-            }
-            appliedGroups.add(group.propertyName);
+            group.dependencies.forEach(dep -> dep.applied = true);
             logger.log(
                     "Updated ${" + group.propertyName + "}: " + group.resolvedVersion + " -> " + group.newestVersion);
             count++;
         }
+        return count;
+    }
 
+    private static int applyUngroupedUpdates(
+            ReactorCollector.CollectionResult result,
+            Function<Path, PomEditSession> sessionProvider,
+            FixLogger logger,
+            Set<PomEditSession> mutatedSessions) {
+        int count = 0;
         for (var dep : result.ungroupedDependencies) {
             if (!dep.hasUpdate() || dep.applied) continue;
             var loc = findUpdateLocation(dep);
@@ -189,14 +204,15 @@ public final class UpdatesReporter {
             logger.log("Updated " + dep.ga() + ": " + dep.primaryVersion + " -> " + dep.newestVersion);
             count++;
         }
+        return count;
+    }
 
-        for (PomEditSession session : mutatedSessions) {
+    private static void saveMutatedSessions(Set<PomEditSession> sessions) {
+        for (PomEditSession session : sessions) {
             if (session.isDirty()) {
                 session.save();
             }
         }
-
-        return count;
     }
 
     /**
