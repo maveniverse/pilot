@@ -20,8 +20,13 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class DependenciesReporterTest {
 
@@ -123,5 +128,119 @@ class DependenciesReporterTest {
     void formatFindingsEmpty() {
         String output = DependenciesReporter.formatFindings(List.of(), List.of());
         assertThat(output).isEmpty();
+    }
+
+    // -- fix --
+
+    @Test
+    void fixRemovesUnusedDependency(@TempDir Path tempDir) throws Exception {
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>unused-lib</artifactId>
+                      <version>1.0</version>
+                    </dependency>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>kept-lib</artifactId>
+                      <version>2.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+
+        var unused = new DependenciesTui.DepEntry("com.example", "unused-lib", "", "1.0", "compile", true);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(pomPath, List.of(unused), List.of(), Map.of(), logs::add);
+
+        String result = Files.readString(pomPath);
+        assertThat(result).doesNotContain("unused-lib");
+        assertThat(result).contains("kept-lib");
+        assertThat(logs).anyMatch(l -> l.contains("Removed unused dependency: com.example:unused-lib"));
+    }
+
+    @Test
+    void fixAddsUsedTransitiveDependency(@TempDir Path tempDir) throws Exception {
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>existing-lib</artifactId>
+                      <version>1.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+
+        var transitive = new DependenciesTui.DepEntry("org.needed", "transitive-lib", "", "2.0", "compile", false);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(
+                pomPath, List.of(), List.of(transitive), Map.of("org.needed:transitive-lib", "2.0"), logs::add);
+
+        String result = Files.readString(pomPath);
+        assertThat(result).contains("transitive-lib");
+        assertThat(result).contains("existing-lib");
+        assertThat(logs).anyMatch(l -> l.contains("Added used transitive dependency: org.needed:transitive-lib"));
+    }
+
+    @Test
+    void fixHandlesNonCompileScope(@TempDir Path tempDir) throws Exception {
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>existing</artifactId>
+                      <version>1.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+
+        var transitive = new DependenciesTui.DepEntry("org.test", "test-lib", "", "1.0", "test", false);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(
+                pomPath, List.of(), List.of(transitive), Map.of("org.test:test-lib", "1.0"), logs::add);
+
+        String result = Files.readString(pomPath);
+        assertThat(result).contains("test-lib");
+        assertThat(result).contains("<scope>test</scope>");
+    }
+
+    @Test
+    void fixBothRemovesAndAdds(@TempDir Path tempDir) throws Exception {
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>unused</artifactId>
+                      <version>1.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+
+        var unused = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
+        var transitive = new DependenciesTui.DepEntry("org.needed", "needed", "", "2.0", "compile", false);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(
+                pomPath, List.of(unused), List.of(transitive), Map.of("org.needed:needed", "2.0"), logs::add);
+
+        String result = Files.readString(pomPath);
+        assertThat(result).doesNotContain("com.example");
+        assertThat(result).contains("needed");
+        assertThat(logs).hasSize(3); // remove + add + updated
     }
 }

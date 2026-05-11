@@ -23,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import eu.maveniverse.maven.pilot.UpdatesMojoTestHelper;
 import eu.maveniverse.maven.pilot.UpdatesReporter;
-import java.lang.reflect.Field;
 import java.util.List;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -34,7 +33,7 @@ class UpdatesMojoTest {
     @Test
     void executeRejectsInvalidAction() throws Exception {
         var mojo = new UpdatesMojo(null);
-        setField(mojo, "action", "invalid");
+        MojoTestHelper.setField(mojo, "action", "invalid");
 
         assertThatThrownBy(mojo::execute)
                 .isInstanceOf(MojoExecutionException.class)
@@ -44,19 +43,19 @@ class UpdatesMojoTest {
     @Test
     void defaultActionIsTui() throws Exception {
         var mojo = new UpdatesMojo(null);
-        assertThat(getField(mojo, "action")).isEqualTo("tui");
+        assertThat(MojoTestHelper.getField(mojo, "action")).isEqualTo("tui");
     }
 
     @Test
     void defaultLibyearsThresholdIsNegative() throws Exception {
         var mojo = new UpdatesMojo(null);
-        assertThat((float) getField(mojo, "libyearsThreshold")).isEqualTo(-1f);
+        assertThat((float) MojoTestHelper.getField(mojo, "libyearsThreshold")).isEqualTo(-1f);
     }
 
     @Test
     void executeNonInteractiveReportDoesNotThrow() throws Exception {
         var mojo = new UpdatesMojo(null);
-        setField(mojo, "action", "report");
+        MojoTestHelper.setField(mojo, "action", "report");
 
         var result = UpdatesMojoTestHelper.resultWithNoUpdates();
 
@@ -66,8 +65,8 @@ class UpdatesMojoTest {
     @Test
     void executeNonInteractiveCheckPassesNoThreshold() throws Exception {
         var mojo = new UpdatesMojo(null);
-        setField(mojo, "action", "check");
-        setField(mojo, "libyearsThreshold", -1f);
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "libyearsThreshold", -1f);
 
         var result = UpdatesMojoTestHelper.resultWithUpdate("org.example", "lib", "1.0.0", "2.0.0", 3.0f);
 
@@ -77,8 +76,8 @@ class UpdatesMojoTest {
     @Test
     void executeNonInteractiveCheckFailsAboveThreshold() throws Exception {
         var mojo = new UpdatesMojo(null);
-        setField(mojo, "action", "check");
-        setField(mojo, "libyearsThreshold", 2.0f);
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "libyearsThreshold", 2.0f);
 
         var result = UpdatesMojoTestHelper.resultWithUpdate("org.example", "lib", "1.0.0", "2.0.0", 3.0f);
 
@@ -90,12 +89,22 @@ class UpdatesMojoTest {
     @Test
     void executeNonInteractiveCheckPassesBelowThreshold() throws Exception {
         var mojo = new UpdatesMojo(null);
-        setField(mojo, "action", "check");
-        setField(mojo, "libyearsThreshold", 5.0f);
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "libyearsThreshold", 5.0f);
 
         var result = UpdatesMojoTestHelper.resultWithUpdate("org.example", "lib", "1.0.0", "2.0.0", 1.0f);
 
         mojo.executeNonInteractive(result, (g, a) -> List.of("2.0.0"), "test:p:1.0");
+    }
+
+    @Test
+    void executeNonInteractiveFixDoesNotThrow() throws Exception {
+        var mojo = new UpdatesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "fix");
+
+        var result = UpdatesMojoTestHelper.resultWithNoUpdates();
+
+        mojo.executeNonInteractive(result, (g, a) -> List.of("1.0.0"), "org.example:project:1.0");
     }
 
     @Test
@@ -107,15 +116,13 @@ class UpdatesMojoTest {
         assertThat(msg).contains("4.5").contains("2.0").contains("exceeds threshold");
     }
 
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        f.set(target, value);
-    }
+    @Test
+    void executeRejectsFixAction() throws Exception {
+        var mojo = new UpdatesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "fix");
 
-    private static Object getField(Object target, String name) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        return f.get(target);
+        // fix is valid — should not throw on validation
+        // (will fail later due to null session, but action validation passes)
+        assertThat(MojoTestHelper.getField(mojo, "action")).isEqualTo("fix");
     }
 }

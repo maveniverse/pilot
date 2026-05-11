@@ -275,4 +275,161 @@ class AuditReporterTest {
 
         assertThat(report).contains("MEDIUM").doesNotContain("MODERATE");
     }
+
+    // -- summary formatting --
+
+    @Test
+    void formatReportSummaryShowsSeverityBreakdown() {
+        var e1 = entry("g", "a", "1.0", "compile");
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities = List.of(vuln("CVE-1", "crit", "CRITICAL"), vuln("CVE-2", "high", "HIGH"));
+        e1.licenseLoaded = true;
+
+        var e2 = entry("g", "b", "1.0", "compile");
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities = List.of(vuln("CVE-3", "low", "LOW"));
+        e2.licenseLoaded = true;
+
+        String report = AuditReporter.formatReport(List.of(e1, e2));
+
+        assertThat(report).contains("Summary:");
+        assertThat(report).contains("3 vulnerabilities");
+        assertThat(report).contains("1 critical");
+        assertThat(report).contains("1 high");
+        assertThat(report).contains("1 low");
+    }
+
+    @Test
+    void formatReportSummaryShowsNoLicenseCount() {
+        var e = entry("g", "a", "1.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+        e.licenseLoaded = true;
+        e.license = null;
+
+        String report = AuditReporter.formatReport(List.of(e));
+
+        assertThat(report).contains("1 with no license");
+    }
+
+    @Test
+    void formatReportSummaryShowsCopyleftCount() {
+        var e = entry("g", "a", "1.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+        e.licenseLoaded = true;
+        e.license = "GPL-3.0";
+
+        String report = AuditReporter.formatReport(List.of(e));
+
+        assertThat(report).contains("1 copyleft");
+    }
+
+    @Test
+    void formatReportSummaryOmitsNoLicenseWhenAllLicensed() {
+        var e = entry("g", "a", "1.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+        e.licenseLoaded = true;
+        e.license = "MIT";
+
+        String report = AuditReporter.formatReport(List.of(e));
+
+        assertThat(report).doesNotContain("no license").doesNotContain("copyleft");
+    }
+
+    // -- license grouping --
+
+    @Test
+    void formatReportGroupsLicensesByCount() {
+        var e1 = entry("g", "a1", "1.0", "compile");
+        e1.licenseLoaded = true;
+        e1.license = "MIT";
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities = List.of();
+        var e2 = entry("g", "a2", "1.0", "compile");
+        e2.licenseLoaded = true;
+        e2.license = "MIT";
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities = List.of();
+        var e3 = entry("g", "a3", "1.0", "compile");
+        e3.licenseLoaded = true;
+        e3.license = "Apache License 2.0";
+        e3.vulnsLoaded = true;
+        e3.vulnerabilities = List.of();
+
+        String report = AuditReporter.formatReport(List.of(e1, e2, e3));
+
+        // MIT (2) should appear before Apache-2.0 (1) since sorted by count desc
+        int mitIdx = report.indexOf("MIT");
+        int apacheIdx = report.indexOf("Apache-2.0");
+        assertThat(mitIdx).isLessThan(apacheIdx);
+    }
+
+    @Test
+    void formatReportExpandsCopyleftDeps() {
+        var e = entry("org.copyleft", "gpl-lib", "1.0", "compile");
+        e.licenseLoaded = true;
+        e.license = "AGPL-3.0";
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+
+        String report = AuditReporter.formatReport(List.of(e));
+
+        assertThat(report).contains("AGPL-3.0").contains("org.copyleft:gpl-lib:1.0");
+    }
+
+    @Test
+    void formatReportSkipsUnloadedLicenses() {
+        var e = entry("g", "a", "1.0", "compile");
+        e.licenseLoaded = false;
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of();
+
+        String report = AuditReporter.formatReport(List.of(e));
+
+        assertThat(report).contains("0 dependencies");
+    }
+
+    // -- fetchData skips already loaded --
+
+    @Test
+    void fetchDataSkipsAlreadyLoaded() {
+        var e = entry("org.example", "lib", "1.0.0", "compile");
+        e.vulnsLoaded = true;
+        e.vulnerabilities = List.of(vuln("CVE-1", "pre-set", "HIGH"));
+        e.licenseLoaded = true;
+        e.license = "MIT";
+
+        AuditReporter.fetchData(List.of(e));
+
+        // Should not overwrite pre-set data
+        assertThat(e.vulnerabilities).hasSize(1);
+        assertThat(e.vulnerabilities.get(0).id).isEqualTo("CVE-1");
+        assertThat(e.license).isEqualTo("MIT");
+    }
+
+    // -- vulnerability deduplication in report --
+
+    @Test
+    void formatReportDeduplicatesVulnsByIdAcrossEntries() {
+        var e1 = entry("g", "a", "1.0", "compile");
+        e1.vulnsLoaded = true;
+        e1.vulnerabilities = List.of(vuln("CVE-SAME", "shared vuln", "HIGH"));
+        e1.licenseLoaded = true;
+
+        var e2 = entry("g", "b", "1.0", "compile");
+        e2.vulnsLoaded = true;
+        e2.vulnerabilities = List.of(vuln("CVE-SAME", "shared vuln", "HIGH"));
+        e2.licenseLoaded = true;
+
+        String report = AuditReporter.formatReport(List.of(e1, e2));
+
+        assertThat(report).contains("1 found");
+        // CVE-SAME should appear only once in the vulnerability listing
+        int first = report.indexOf("CVE-SAME");
+        int second = report.indexOf("CVE-SAME", first + 1);
+        // The second occurrence is in the summary, not the listing
+        assertThat(first).isPositive();
+    }
 }

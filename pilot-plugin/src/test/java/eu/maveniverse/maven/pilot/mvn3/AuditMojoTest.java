@@ -23,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import eu.maveniverse.maven.pilot.AuditMojoTestHelper;
 import eu.maveniverse.maven.pilot.AuditTui;
-import java.lang.reflect.Field;
 import java.util.List;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -34,7 +33,7 @@ class AuditMojoTest {
     @Test
     void executeRejectsInvalidAction() throws Exception {
         var mojo = new AuditMojo();
-        setField(mojo, "action", "invalid");
+        MojoTestHelper.setField(mojo, "action", "invalid");
 
         assertThatThrownBy(mojo::execute)
                 .isInstanceOf(MojoExecutionException.class)
@@ -44,19 +43,19 @@ class AuditMojoTest {
     @Test
     void defaultActionIsTui() throws Exception {
         var mojo = new AuditMojo();
-        assertThat(getField(mojo, "action")).isEqualTo("tui");
+        assertThat(MojoTestHelper.getField(mojo, "action")).isEqualTo("tui");
     }
 
     @Test
     void defaultSeverityIsHigh() throws Exception {
         var mojo = new AuditMojo();
-        assertThat(getField(mojo, "severityThreshold")).isEqualTo("HIGH");
+        assertThat(MojoTestHelper.getField(mojo, "severityThreshold")).isEqualTo("HIGH");
     }
 
     @Test
     void executeNonInteractiveReportNoVulns() throws Exception {
         var mojo = new AuditMojo();
-        setField(mojo, "action", "report");
+        MojoTestHelper.setField(mojo, "action", "report");
 
         var entry = new AuditTui.AuditEntry("org.example", "safe-lib", "1.0.0", "compile");
         entry.vulnerabilities = List.of();
@@ -69,8 +68,8 @@ class AuditMojoTest {
     @Test
     void executeNonInteractiveCheckPassesNoVulns() throws Exception {
         var mojo = new AuditMojo();
-        setField(mojo, "action", "check");
-        setField(mojo, "severityThreshold", "HIGH");
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "severityThreshold", "HIGH");
 
         var entry = new AuditTui.AuditEntry("org.example", "safe-lib", "1.0.0", "compile");
         entry.vulnerabilities = List.of();
@@ -83,8 +82,8 @@ class AuditMojoTest {
     @Test
     void executeNonInteractiveCheckFailsAboveThreshold() throws Exception {
         var mojo = new AuditMojo();
-        setField(mojo, "action", "check");
-        setField(mojo, "severityThreshold", "HIGH");
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "severityThreshold", "HIGH");
 
         var entry = AuditMojoTestHelper.entryWithVuln(
                 "org.example", "vuln-lib", "1.0.0", "compile", "CVE-2024-0001", "Bad vuln", "HIGH");
@@ -98,8 +97,8 @@ class AuditMojoTest {
     @Test
     void executeNonInteractiveCheckPassesBelowThreshold() throws Exception {
         var mojo = new AuditMojo();
-        setField(mojo, "action", "check");
-        setField(mojo, "severityThreshold", "HIGH");
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "severityThreshold", "HIGH");
 
         var entry = AuditMojoTestHelper.entryWithVuln(
                 "org.example", "low-vuln-lib", "1.0.0", "compile", "CVE-2024-0002", "Low vuln", "LOW");
@@ -107,15 +106,29 @@ class AuditMojoTest {
         mojo.executeNonInteractive(List.of(entry));
     }
 
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        f.set(target, value);
+    @Test
+    void executeNonInteractiveCheckWithCriticalThreshold() throws Exception {
+        var mojo = new AuditMojo();
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "severityThreshold", "CRITICAL");
+
+        var entry = AuditMojoTestHelper.entryWithVuln(
+                "org.example", "high-lib", "1.0.0", "compile", "CVE-2024-0003", "High vuln", "HIGH");
+
+        mojo.executeNonInteractive(List.of(entry));
     }
 
-    private static Object getField(Object target, String name) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        return f.get(target);
+    @Test
+    void executeNonInteractiveReportWithLicenseData() throws Exception {
+        var mojo = new AuditMojo();
+        MojoTestHelper.setField(mojo, "action", "report");
+
+        var entry = new AuditTui.AuditEntry("org.example", "licensed-lib", "1.0.0", "compile");
+        entry.vulnerabilities = List.of();
+        entry.vulnsLoaded = true;
+        entry.licenseLoaded = true;
+        entry.license = "Apache License 2.0";
+
+        mojo.executeNonInteractive(List.of(entry));
     }
 }

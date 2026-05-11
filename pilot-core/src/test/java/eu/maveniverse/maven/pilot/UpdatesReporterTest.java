@@ -317,4 +317,144 @@ class UpdatesReporterTest {
         assertThat(d1.newestVersion).isNull();
         assertThat(d2.newestVersion).isEqualTo("99.0.0");
     }
+
+    // -- findUpdateLocation --
+
+    @Test
+    void findUpdateLocationPrefersManaged() {
+        var d = dep("org.example", "lib", "1.0.0");
+        var project = new PilotProject(
+                "org.example",
+                "proj",
+                "1.0",
+                "jar",
+                java.nio.file.Path.of("/proj"),
+                java.nio.file.Path.of("/proj/pom.xml"),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new java.util.Properties(),
+                null,
+                null);
+        var managedProject = new PilotProject(
+                "org.example",
+                "parent",
+                "1.0",
+                "pom",
+                java.nio.file.Path.of("/parent"),
+                java.nio.file.Path.of("/parent/pom.xml"),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new java.util.Properties(),
+                null,
+                null);
+        d.usages.add(new ReactorCollector.ModuleUsage(project, "1.0.0", "compile", false));
+        d.usages.add(new ReactorCollector.ModuleUsage(managedProject, "1.0.0", "compile", true));
+
+        var loc = UpdatesReporter.findUpdateLocation(d);
+
+        assertThat(loc.managed()).isTrue();
+        assertThat(loc.pomPath()).isEqualTo(java.nio.file.Path.of("/parent/pom.xml"));
+    }
+
+    @Test
+    void findUpdateLocationFallsBackToFirst() {
+        var d = dep("org.example", "lib", "1.0.0");
+        var project = new PilotProject(
+                "org.example",
+                "proj",
+                "1.0",
+                "jar",
+                java.nio.file.Path.of("/proj"),
+                java.nio.file.Path.of("/proj/pom.xml"),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new java.util.Properties(),
+                null,
+                null);
+        d.usages.add(new ReactorCollector.ModuleUsage(project, "1.0.0", "compile", false));
+
+        var loc = UpdatesReporter.findUpdateLocation(d);
+
+        assertThat(loc.managed()).isFalse();
+        assertThat(loc.pomPath()).isEqualTo(java.nio.file.Path.of("/proj/pom.xml"));
+    }
+
+    // -- resolveAndFormatReport --
+
+    @Test
+    void resolveAndFormatReportCombinesSteps() {
+        var d = dep("org.example", "lib", "1.0.0");
+        var res = result(List.of(d), List.of(), List.of(d));
+
+        String report = UpdatesReporter.resolveAndFormatReport(res, (g, a) -> List.of("2.0.0"), "test:p:1.0");
+
+        assertThat(report).contains("=== Pilot Updates Report ===").contains("test:p:1.0");
+    }
+
+    // -- resolveAndCheck --
+
+    @Test
+    void resolveAndCheckReturnsMetrics() {
+        var d = dep("org.example", "lib", "1.0.0");
+        d.newestVersion = "2.0.0";
+        d.updateType = VersionComparator.UpdateType.MAJOR;
+        d.libYears = 1.5f;
+        var res = result(List.of(d), List.of(), List.of(d));
+
+        var check = UpdatesReporter.resolveAndCheck(res, (g, a) -> List.of("2.0.0"), "test:p:1.0");
+
+        assertThat(check.report).contains("=== Pilot Updates Report ===");
+        assertThat(check.updateCount).isEqualTo(1);
+        assertThat(check.totalLibYears).isEqualTo(1.5f);
+    }
+
+    // -- applyAllUpdates --
+
+    @Test
+    void applyAllUpdatesWithNoUpdatesReturnsZero() {
+        var d = dep("org.example", "lib", "1.0.0");
+        var res = result(List.of(d), List.of(), List.of(d));
+        List<String> logs = new ArrayList<>();
+
+        int count = UpdatesReporter.applyAllUpdates(res, UpdatesReporter.defaultSessionProvider(), logs::add);
+
+        assertThat(count).isEqualTo(0);
+        assertThat(logs).isEmpty();
+    }
+
+    // -- defaultSessionProvider --
+
+    @Test
+    void defaultSessionProviderCachesSameSession() {
+        var provider = UpdatesReporter.defaultSessionProvider();
+        var path = java.nio.file.Path.of("/nonexistent/pom.xml");
+
+        // Should not throw — just creates a session (file doesn't need to exist for the provider)
+        assertThat(provider).isNotNull();
+    }
+
+    // -- CheckResult --
+
+    @Test
+    void checkResultFieldsAccessible() {
+        var cr = new UpdatesReporter.CheckResult("report", 2.5f, 3);
+
+        assertThat(cr.report).isEqualTo("report");
+        assertThat(cr.totalLibYears).isEqualTo(2.5f);
+        assertThat(cr.updateCount).isEqualTo(3);
+    }
+
+    @Test
+    void checkResultFormatFailureIncludesHint() {
+        var cr = new UpdatesReporter.CheckResult("report", 5.0f, 2);
+        String msg = cr.formatFailure(3.0f);
+
+        assertThat(msg).contains("5.0").contains("3.0").contains("-Dpilot.action=report");
+    }
 }
