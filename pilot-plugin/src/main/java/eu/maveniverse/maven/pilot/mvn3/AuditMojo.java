@@ -37,11 +37,22 @@ import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.DependencyNode;
 
 /**
- * Interactive license and security audit dashboard.
+ * License and security audit dashboard.
+ *
+ * <p>Three actions via {@code -Dpilot.action}:</p>
+ * <ul>
+ *   <li><b>tui</b> (default) — interactive TUI dashboard</li>
+ *   <li><b>report</b> — prints a text report to the console</li>
+ *   <li><b>check</b> — prints a report and fails the build if vulnerabilities
+ *       at or above the configured severity threshold are found</li>
+ * </ul>
  *
  * <p>Usage:</p>
  * <pre>
  * mvn pilot:audit
+ * mvn pilot:audit -Dpilot.action=report
+ * mvn pilot:audit -Dpilot.action=check
+ * mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL
  * </pre>
  *
  * @since 0.1.0
@@ -58,51 +69,77 @@ public class AuditMojo extends AbstractMojo {
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repoSession;
 
+    @Parameter(property = "pilot.action", defaultValue = "tui")
+    String action = "tui";
+
+    @Parameter(property = "pilot.audit.severity", defaultValue = "HIGH")
+    String severityThreshold = "HIGH";
+
     @Inject
     private RepositorySystem repoSystem;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        if (!"tui".equals(action) && !"report".equals(action) && !"check".equals(action)) {
+            throw new MojoExecutionException("Invalid action '" + action + "'. Use 'tui', 'report', or 'check'.");
+        }
         try {
             List<MavenProject> projects = session.getProjects();
+            Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
+            DependencyTreeModel treeModel = null;
+
             if (projects.size() > 1) {
-                executeReactor(projects);
+                MavenProject root = projects.get(0);
+                CollectResult rootResult =
+                        repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
+                treeModel = MojoHelper.fromDependencyNode(rootResult.getRoot());
+                for (MavenProject proj : projects) {
+                    CollectResult result =
+                            repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+                    collectEntries(result.getRoot(), entryMap, proj.getArtifactId(), true);
+                }
             } else {
-                executeSingleProject(project);
+                CollectResult result =
+                        repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
+                treeModel = MojoHelper.fromDependencyNode(result.getRoot());
+                collectEntries(result.getRoot(), entryMap, null, true);
             }
+
+            List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
+            String gav = project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
+            if (projects.size() > 1) {
+                gav += " (reactor: " + projects.size() + " modules)";
+            }
+
+            if ("tui".equals(action)) {
+                String pomPath = project.getFile().getAbsolutePath();
+                AuditTui tui = new AuditTui(entries, gav, treeModel, pomPath);
+                tui.runStandalone();
+            } else {
+                executeNonInteractive(entries);
+            }
+        } catch (MojoFailureException e) {
+            throw e;
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to run audit: " + e.getMessage(), e);
         }
     }
 
-    private void executeSingleProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-        DependencyTreeModel treeModel = MojoHelper.fromDependencyNode(result.getRoot());
-        Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-        collectEntries(result.getRoot(), entryMap, null, true);
-        List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-        String gav = proj.getGroupId() + ":" + proj.getArtifactId() + ":" + proj.getVersion();
-        String pomPath = proj.getFile().getAbsolutePath();
-        AuditTui tui = new AuditTui(entries, gav, treeModel, pomPath);
-        tui.runStandalone();
-    }
+    void executeNonInteractive(List<AuditTui.AuditEntry> entries) throws MojoFailureException {
+        AuditReporter.fetchData(entries);
 
-    private void executeReactor(List<MavenProject> projects) throws Exception {
-        MavenProject root = projects.get(0);
-        CollectResult rootResult = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
-        DependencyTreeModel treeModel = MojoHelper.fromDependencyNode(rootResult.getRoot());
+        String report = AuditReporter.formatReport(entries);
 
-        Map<String, AuditTui.AuditEntry> entryMap = new LinkedHashMap<>();
-        for (MavenProject proj : projects) {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
-            collectEntries(result.getRoot(), entryMap, proj.getArtifactId(), true);
+        if ("report".equals(action)) {
+            getLog().info("\n" + report);
+        } else {
+            getLog().info("\n" + report);
+            int count = AuditReporter.countVulnerabilitiesAtOrAbove(entries, severityThreshold);
+            if (count > 0) {
+                throw new MojoFailureException(AuditReporter.formatCheckFailure(entries, severityThreshold));
+            }
+            getLog().info("Audit check passed: no vulnerabilities at severity " + severityThreshold + " or above.");
         }
-        List<AuditTui.AuditEntry> entries = new ArrayList<>(entryMap.values());
-
-        String gav = root.getGroupId() + ":" + root.getArtifactId() + ":" + root.getVersion();
-        String pomPath = root.getFile().getAbsolutePath();
-        AuditTui tui = new AuditTui(entries, gav + " (reactor: " + projects.size() + " modules)", treeModel, pomPath);
-        tui.runStandalone();
     }
 
     private static void collectEntries(
@@ -113,8 +150,10 @@ public class AuditMojo extends AbstractMojo {
             AuditTui.AuditEntry entry = entryMap.computeIfAbsent(
                     ga,
                     k -> new AuditTui.AuditEntry(
-                            art.getGroupId(), art.getArtifactId(),
-                            art.getVersion(), node.getDependency().getScope()));
+                            art.getGroupId(),
+                            art.getArtifactId(),
+                            art.getVersion(),
+                            node.getDependency().getScope()));
             if (moduleName != null && !entry.modules.contains(moduleName)) {
                 entry.modules.add(moduleName);
             }

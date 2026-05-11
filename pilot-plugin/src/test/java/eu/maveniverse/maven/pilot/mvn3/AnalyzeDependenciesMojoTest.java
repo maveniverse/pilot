@@ -23,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import eu.maveniverse.maven.pilot.DependenciesTui;
 import eu.maveniverse.maven.pilot.DependencyUsageAnalyzer;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -32,94 +31,58 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("deprecation")
 class AnalyzeDependenciesMojoTest {
 
     private final AnalyzeDependenciesMojo mojo = new AnalyzeDependenciesMojo(null);
 
+    // --- Delegation to DependenciesReporter (backwards compat) ---
+
     @Test
-    void formatFindingsUnusedDeclaredOnly() {
+    void formatFindingsDelegatesToReporter() {
         var dep = new DependenciesTui.DepEntry("com.example", "unused-lib", "", "1.0", "compile", true);
-
         String output = mojo.formatFindings(List.of(dep), List.of());
-
-        assertThat(output)
-                .contains("Unused declared dependency (can be removed):")
-                .contains("com.example:unused-lib")
-                .doesNotContain("transitive");
+        assertThat(output).contains("com.example:unused-lib");
     }
 
     @Test
-    void formatFindingsUsedTransitiveOnly() {
-        var dep = new DependenciesTui.DepEntry("com.transitive", "lib", "", "2.0", "compile", false);
-
-        String output = mojo.formatFindings(List.of(), List.of(dep));
-
-        assertThat(output)
-                .contains("Used transitive dependency (should be declared):")
-                .contains("com.transitive:lib")
-                .doesNotContain("Unused");
-    }
-
-    @Test
-    void formatFindingsBothSections() {
-        var unused = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
-        var transitive = new DependenciesTui.DepEntry("com.transitive", "needed", "", "2.0", "runtime", false);
-
-        String output = mojo.formatFindings(List.of(unused), List.of(transitive));
-
-        assertThat(output)
-                .contains("Unused declared dependency (can be removed):")
-                .contains("com.example:unused")
-                .contains("Used transitive dependency (should be declared):")
-                .contains("com.transitive:needed (runtime)");
-    }
-
-    @Test
-    void formatFindingsMultipleDeps() {
-        var unused1 = new DependenciesTui.DepEntry("com.a", "one", "", "1.0", "compile", true);
-        var unused2 = new DependenciesTui.DepEntry("com.b", "two", "", "1.0", "test", true);
-
-        String output = mojo.formatFindings(List.of(unused1, unused2), List.of());
-
-        assertThat(output)
-                .contains("Unused declared dependencies (can be removed):")
-                .contains("com.a:one")
-                .contains("com.b:two (test)");
-    }
-
-    @Test
-    void formatFindingsCompileScopeOmitted() {
-        var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", true);
-
-        String output = mojo.formatFindings(List.of(dep), List.of());
-
-        assertThat(output).contains("com.example:lib\n").doesNotContain("(compile)");
-    }
-
-    @Test
-    void formatFindingsNonCompileScopeShown() {
-        var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "provided", true);
-
-        String output = mojo.formatFindings(List.of(dep), List.of());
-
-        assertThat(output).contains("com.example:lib (provided)");
-    }
-
-    @Test
-    void appendScopeSkipsCompile() {
-        StringBuilder sb = new StringBuilder();
-        var dep = new DependenciesTui.DepEntry("g", "a", "", "1", "compile", true);
-        AnalyzeDependenciesMojo.appendScope(sb, dep);
-        assertThat(sb).isEmpty();
-    }
-
-    @Test
-    void appendScopeIncludesNonCompile() {
+    void appendScopeDelegatesToReporter() {
         StringBuilder sb = new StringBuilder();
         var dep = new DependenciesTui.DepEntry("g", "a", "", "1", "test", true);
         AnalyzeDependenciesMojo.appendScope(sb, dep);
         assertThat(sb.toString()).isEqualTo(" (test)");
     }
+
+    // --- check/report action tests ---
+
+    @Test
+    void checkThrowsMojoFailureException() {
+        var dep = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
+
+        assertThatThrownBy(() -> mojo.check(List.of(dep), List.of()))
+                .isInstanceOf(MojoFailureException.class)
+                .hasMessageContaining("com.example:unused")
+                .hasMessageContaining("pilot.action=fix");
+    }
+
+    @Test
+    void checkIncludesUsedTransitiveInMessage() {
+        var transitive = new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0", "compile", false);
+
+        assertThatThrownBy(() -> mojo.check(List.of(), List.of(transitive)))
+                .isInstanceOf(MojoFailureException.class)
+                .hasMessageContaining("org.slf4j:slf4j-api")
+                .hasMessageContaining("should be declared");
+    }
+
+    @Test
+    void reportDoesNotThrow() {
+        var dep = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
+        var transitive = new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0", "compile", false);
+        mojo.report(List.of(dep), List.of(transitive));
+    }
+
+    // --- ignore list tests ---
 
     @Test
     void ignoreListFiltersUnusedDeclared() {
@@ -161,36 +124,6 @@ class AnalyzeDependenciesMojoTest {
         assertThat(deps.get(0).ga()).isEqualTo("com.other:lib");
     }
 
-    // --- check/report action tests ---
-
-    @Test
-    void checkThrowsMojoFailureException() {
-        var dep = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
-
-        assertThatThrownBy(() -> mojo.check(List.of(dep), List.of()))
-                .isInstanceOf(MojoFailureException.class)
-                .hasMessageContaining("com.example:unused")
-                .hasMessageContaining("pilot.action=fix");
-    }
-
-    @Test
-    void checkIncludesUsedTransitiveInMessage() {
-        var transitive = new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0", "compile", false);
-
-        assertThatThrownBy(() -> mojo.check(List.of(), List.of(transitive)))
-                .isInstanceOf(MojoFailureException.class)
-                .hasMessageContaining("org.slf4j:slf4j-api")
-                .hasMessageContaining("should be declared");
-    }
-
-    @Test
-    void reportDoesNotThrow() {
-        var dep = new DependenciesTui.DepEntry("com.example", "unused", "", "1.0", "compile", true);
-        var transitive = new DependenciesTui.DepEntry("org.slf4j", "slf4j-api", "", "2.0", "compile", false);
-
-        mojo.report(List.of(dep), List.of(transitive));
-    }
-
     // --- buildIgnoreSet tests ---
 
     @Test
@@ -220,9 +153,9 @@ class AnalyzeDependenciesMojoTest {
     @Test
     void buildAnalyzerWithConfig() throws Exception {
         var configuredMojo = new AnalyzeDependenciesMojo(null);
-        setField(configuredMojo, "runtimeArtifacts", List.of("org.postgresql:postgresql"));
-        setField(configuredMojo, "annotationOnlyArtifacts", List.of("org.projectlombok:lombok"));
-        setField(
+        MojoTestHelper.setField(configuredMojo, "runtimeArtifacts", List.of("org.postgresql:postgresql"));
+        MojoTestHelper.setField(configuredMojo, "annotationOnlyArtifacts", List.of("org.projectlombok:lombok"));
+        MojoTestHelper.setField(
                 configuredMojo,
                 "reflectionLoadedClasses",
                 Map.of("org.postgresql:postgresql", "org.postgresql.Driver"));
@@ -236,16 +169,10 @@ class AnalyzeDependenciesMojoTest {
     @Test
     void executeRejectsInvalidAction() throws Exception {
         var invalidMojo = new AnalyzeDependenciesMojo(null);
-        setField(invalidMojo, "action", "invalid");
+        MojoTestHelper.setField(invalidMojo, "action", "invalid");
 
         assertThatThrownBy(invalidMojo::execute)
                 .isInstanceOf(MojoExecutionException.class)
                 .hasMessageContaining("Invalid action 'invalid'");
-    }
-
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field f = AnalyzeDependenciesMojo.class.getDeclaredField(name);
-        f.setAccessible(true);
-        f.set(target, value);
     }
 }
