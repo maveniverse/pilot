@@ -23,6 +23,7 @@ import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -189,7 +190,7 @@ public class TreeTui extends ToolPanel {
         tableState.select(row);
         var node = displayNodes.get(row);
         if (node.hasChildren()) {
-            int arrowX = area.x() + 2 + node.depth * 2; // highlight(2) + indent
+            int arrowX = area.x() + CharWidth.of(theme.highlightSymbol()) + node.depth * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
                 refreshDisplay();

@@ -595,7 +595,7 @@ public class SearchTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(45), Constraint.percentage(30), Constraint.percentage(25))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ") // triangular bullet
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 

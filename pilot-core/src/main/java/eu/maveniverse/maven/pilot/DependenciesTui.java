@@ -63,7 +63,6 @@ public class DependenciesTui extends ToolPanel {
     private static final String SECTION_DEPENDENCIES = "dependencies";
     private static final String HINT_REMOVE = ":Remove  ";
     private static final String TARGET_DEPENDENCY = "dependency";
-    private static final String HIGHLIGHT_SYMBOL = "▸ ";
 
     // Maven 3 scopes (modelVersion 4.0.0)
     private static final List<String> SCOPES_3X = List.of(COMPILE_SCOPE, "provided", "runtime", "test");

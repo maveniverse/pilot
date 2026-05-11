@@ -91,7 +91,6 @@ public class AuditTui extends ToolPanel {
         }
     }
 
-    private static final String HIGHLIGHT_SYMBOL = "\u25B8 ";
     private static final String SEVERITY_CRITICAL = "CRITICAL";
     private static final String SEVERITY_HIGH = "HIGH";
     private static final String SEVERITY_MEDIUM = "MEDIUM";
@@ -912,7 +911,7 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(40), Constraint.percentage(15),
                         Constraint.percentage(30), Constraint.percentage(15))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol(HIGHLIGHT_SYMBOL)
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
@@ -1214,7 +1213,7 @@ public class AuditTui extends ToolPanel {
             var row = byLicenseRows.get(i);
             boolean highlight = isSearchMatch(i);
             if (row.isGroup()) {
-                String arrow = row.expanded ? "▾ " : HIGHLIGHT_SYMBOL;
+                String arrow = row.expanded ? "▼ " : "▶ ";
                 String label = arrow + row.licenseName + " (" + row.deps.size() + ")";
                 Style style = getLicenseStyle("(not specified)".equals(row.licenseName) ? null : row.licenseName)
                         .bold();
@@ -1240,7 +1239,7 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(55), Constraint.percentage(20),
                         Constraint.percentage(15), Constraint.percentage(10))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol(HIGHLIGHT_SYMBOL)
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
@@ -1361,7 +1360,7 @@ public class AuditTui extends ToolPanel {
                         Constraint.percentage(11),
                         Constraint.percentage(35))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol(HIGHLIGHT_SYMBOL)
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
@@ -1381,7 +1380,7 @@ public class AuditTui extends ToolPanel {
         boolean allManaged = editSession != null
                 && group.rows.stream()
                         .allMatch(r -> editSession.isChanged(r.entry().ga()));
-        String arrow = group.expanded ? "▾ " : "▸ ";
+        String arrow = group.expanded ? "▼ " : "▶ ";
         String severity = normalizeSeverity(group.severity);
         String published = formatPublished(group.published);
         int affected = group.rows.size();

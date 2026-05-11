@@ -23,6 +23,7 @@ import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -513,7 +514,7 @@ public abstract class ToolPanel {
      * This offset is needed because the Table widget shifts all columns
      * right by this amount to reserve space for the selection indicator.
      */
-    protected int lastHighlightWidth = 2; // default for "▸ "
+    protected int lastHighlightWidth = CharWidth.of(theme.highlightSymbol());
 
     /**
      * Set the table area and compute the inner area from the block.
@@ -549,8 +550,7 @@ public abstract class ToolPanel {
         if (sortState == null || lastTableInner == null || !mouse.isClick()) return false;
         int headerY = lastTableInner.y();
         if (mouse.y() != headerY) return false;
-        // Account for highlight symbol: the Table widget shifts all columns
-        // right by the highlight symbol width (e.g. 2 for "▸ ")
+        // Account for highlight symbol width (0 when no symbol is set)
         int hlw = lastHighlightWidth;
         Rect colArea = new Rect(
                 lastTableInner.x() + hlw,

@@ -212,7 +212,7 @@ class Theme {
 
     /** Symbol shown next to the selected row. */
     String highlightSymbol() {
-        return "▸ ";
+        return "";
     }
 
     // ── Search ─────────────────────────────────────────────────────────────

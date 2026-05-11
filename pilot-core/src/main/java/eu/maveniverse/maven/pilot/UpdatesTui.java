@@ -1109,7 +1109,7 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(depsTableWidths())
                 .highlightStyle(displayRows.isEmpty() ? Style.create() : theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS)
                 .block(block)
                 .build();
@@ -1125,7 +1125,7 @@ public class UpdatesTui extends ToolPanel {
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
         String check = group.applied ? "[·]" : "[ ]";
-        String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
+        String name = (group.expanded ? "▼ " : "▶ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
         }
@@ -1359,7 +1359,7 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(75), Constraint.percentage(25))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
@@ -1373,7 +1373,7 @@ public class UpdatesTui extends ToolPanel {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "▾ " : "▸ ");
+            sb.append(node.expanded ? "▼ " : "▶ ");
         } else {
             sb.append("  ");
         }

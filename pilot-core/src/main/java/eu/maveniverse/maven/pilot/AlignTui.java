@@ -747,7 +747,7 @@ public class AlignTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(30), Constraint.percentage(35), Constraint.percentage(35))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
