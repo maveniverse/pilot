@@ -747,11 +747,11 @@ public class AlignTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(30), Constraint.percentage(35), Constraint.percentage(35))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row createConventionRow(String name, String detected, String selected, boolean changed) {

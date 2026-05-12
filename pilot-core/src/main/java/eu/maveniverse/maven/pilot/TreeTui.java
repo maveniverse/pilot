@@ -23,6 +23,7 @@ import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -184,12 +185,12 @@ public class TreeTui extends ToolPanel {
     }
 
     private boolean handleTreeMouseClick(MouseEvent mouse, Rect area) {
-        int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
+        int row = mouse.y() - area.y() - 2 + tableState.offset(); // header + highlight + scroll
         if (row < 0 || row >= displayNodes.size()) return false;
         tableState.select(row);
         var node = displayNodes.get(row);
         if (node.hasChildren()) {
-            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+            int arrowX = area.x() + CharWidth.of(theme.highlightSymbol()) + node.depth * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
                 refreshDisplay();
@@ -545,7 +546,7 @@ public class TreeTui extends ToolPanel {
 
         lastContentHeight = zones.get(0).height();
         setTableArea(zones.get(0), null);
-        frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderTableWithScrollbar(frame, zones.get(0), table, tableState, displayNodes.size());
         renderDivider(frame, zones.get(1));
         renderDetails(frame, zones.get(2));
     }
@@ -556,7 +557,7 @@ public class TreeTui extends ToolPanel {
         String indent = "  ".repeat(node.depth);
         gaSpans.add(Span.raw(indent));
         if (node.hasChildren()) {
-            gaSpans.add(Span.raw(node.expanded ? "▾ " : "▸ ").bold());
+            gaSpans.add(Span.raw(node.expanded ? "▼ " : "▶ ").bold());
         } else {
             gaSpans.add(Span.raw("  "));
         }

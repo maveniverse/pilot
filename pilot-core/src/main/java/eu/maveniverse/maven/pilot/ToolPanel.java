@@ -23,6 +23,7 @@ import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -34,7 +35,12 @@ import dev.tamboui.tui.event.MouseEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.scrollbar.Scrollbar;
+import dev.tamboui.widgets.scrollbar.ScrollbarState;
+import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import dev.tamboui.widgets.tabs.Tabs;
+import dev.tamboui.widgets.tabs.TabsState;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -508,7 +514,7 @@ public abstract class ToolPanel {
      * This offset is needed because the Table widget shifts all columns
      * right by this amount to reserve space for the selection indicator.
      */
-    protected int lastHighlightWidth = 2; // default for "▸ "
+    protected int lastHighlightWidth = CharWidth.of(theme.highlightSymbol());
 
     /**
      * Set the table area and compute the inner area from the block.
@@ -544,8 +550,7 @@ public abstract class ToolPanel {
         if (sortState == null || lastTableInner == null || !mouse.isClick()) return false;
         int headerY = lastTableInner.y();
         if (mouse.y() != headerY) return false;
-        // Account for highlight symbol: the Table widget shifts all columns
-        // right by the highlight symbol width (e.g. 2 for "▸ ")
+        // Account for highlight symbol width (0 when no symbol is set)
         int hlw = lastHighlightWidth;
         Rect colArea = new Rect(
                 lastTableInner.x() + hlw,
@@ -763,18 +768,49 @@ public abstract class ToolPanel {
         return searchMatches.contains(rowIndex);
     }
 
-    // ── Sub-view tab bar mouse support ──────────────────────────────────────
+    // ── Table + scrollbar helper ──────────────────────────────────────────────
+
+    /**
+     * Renders a table with a vertical scrollbar when the content overflows.
+     * When all rows fit in the viewport, the full area is used for the table.
+     */
+    static void renderTableWithScrollbar(Frame frame, Rect area, Table table, TableState state, int totalRows) {
+        int viewportRows = Math.max(0, area.height() - 1);
+        if (totalRows <= viewportRows || area.width() < 3) {
+            frame.renderStatefulWidget(table, area, state);
+            return;
+        }
+        Rect tableArea = new Rect(area.x(), area.y(), area.width() - 1, area.height());
+        frame.renderStatefulWidget(table, tableArea, state);
+
+        Rect scrollArea = new Rect(area.right() - 1, area.y() + 1, 1, area.height() - 1);
+        ScrollbarState scrollState = new ScrollbarState()
+                .contentLength(totalRows)
+                .viewportContentLength(viewportRows)
+                .position(state.selected() != null ? state.selected() : 0);
+        frame.renderStatefulWidget(
+                Scrollbar.builder()
+                        .trackSymbol("│")
+                        .thumbSymbol("█")
+                        .beginSymbol(null)
+                        .endSymbol(null)
+                        .build(),
+                scrollArea,
+                scrollState);
+    }
+
+    // ── Sub-view tab bar (TamboUI Tabs widget + mouse support) ───────────────
 
     private Rect lastTabBarArea;
-    private int[] tabStarts;
-    private int[] tabEnds;
+    private final TabsState tabsState = new TabsState();
+    private List<Rect> tabHitAreas;
 
     /**
      * Renders the sub-view tab bar (if this panel has multiple sub-views) and returns the
      * remaining content area. When {@link #subViewCount()} is 1, returns the full area unchanged.
      *
-     * <p>Call this in {@link #render(Frame, Rect)} after handling any full-area overlays
-     * (diff, help) to avoid duplicating the tab-bar split in every per-view render method.</p>
+     * <p>Uses the TamboUI {@link Tabs} widget with per-title styling. Each title includes
+     * a number prefix (e.g. "1:Raw") and the active tab gets a "▸" indicator.</p>
      *
      * @return the {@link Rect} below the tab bar, or the original area if there is only one view
      */
@@ -788,28 +824,61 @@ public abstract class ToolPanel {
                 .split(area);
         lastTabBarArea = zones.get(0);
 
-        // Compute tab hit-test positions
         List<String> names = subViewNames();
         int active = activeSubView();
-        tabStarts = new int[names.size()];
-        tabEnds = new int[names.size()];
-        int xPos = 0;
+        tabsState.select(active);
+
+        List<Line> titles = new ArrayList<>();
+        tabHitAreas = new ArrayList<>();
+        int xPos = zones.get(0).x();
         for (int i = 0; i < names.size(); i++) {
-            tabStarts[i] = xPos;
-            // Active: " [▸N:Label]", Inactive: " [N:Label]"
-            String numPrefix = (i + 1) + ":";
-            int width = 1
-                    + 1
-                    + numPrefix.length()
-                    + names.get(i).length()
-                    + 1
-                    + (i == active ? 1 : 0); // space + [ + N: + label + ] + (▸ if active)
-            xPos += width;
-            tabEnds[i] = xPos;
+            String indicator = (i == active) ? "▸" : " ";
+            String title = indicator + (i + 1) + ":" + names.get(i);
+            Style titleStyle = theme.tabsTitleStyle(focused, isSubViewEnabled(i));
+            titles.add(Line.from(Span.styled(title, titleStyle)));
+
+            // "[" + title + "]" + divider(" ") — compute hit areas for mouse
+            int tabWidth = 1 + title.length() + 1; // padding [ + title + padding ]
+            tabHitAreas.add(new Rect(xPos, zones.get(0).y(), tabWidth, 1));
+            xPos += tabWidth + 1; // + divider
         }
 
-        frame.renderWidget(Paragraph.from(buildSubViewTabLine()), zones.get(0));
+        Tabs tabs = Tabs.builder()
+                .titles(titles)
+                .highlightStyle(theme.tabsHighlightStyle(focused))
+                .style(Style.EMPTY)
+                .divider(" ")
+                .padding("[", "]")
+                .build();
+        frame.renderStatefulWidget(tabs, zones.get(0), tabsState);
+
+        // Render suffix (dirty indicator, progress text) after tabs
+        List<Span> suffix = buildTabBarSuffix();
+        if (!suffix.isEmpty()) {
+            int suffixX = xPos - 1; // back up over last divider
+            int remaining = zones.get(0).right() - suffixX;
+            if (remaining > 0) {
+                Rect suffixArea = new Rect(suffixX, zones.get(0).y(), remaining, 1);
+                frame.renderWidget(Paragraph.from(Line.from(suffix)), suffixArea);
+            }
+        }
+
         return zones.get(1);
+    }
+
+    /**
+     * Additional spans rendered after the tab bar (dirty indicator, progress text).
+     * Override to append custom status (e.g. AuditTui's vulnerability progress).
+     */
+    protected List<Span> buildTabBarSuffix() {
+        List<Span> spans = new ArrayList<>();
+        if (editSession != null && editSession.isDirty()) {
+            spans.addAll(theme.changesSummary(
+                    (int) editSession.addCount(), (int) editSession.modifyCount(), (int) editSession.removeCount()));
+        } else if (isDirty()) {
+            spans.add(theme.dirtyIndicator());
+        }
+        return spans;
     }
 
     /**
@@ -819,11 +888,11 @@ public abstract class ToolPanel {
      * @return {@code true} if a tab was clicked and the view was switched
      */
     protected boolean handleMouseTabBar(MouseEvent mouse) {
-        if (!mouse.isClick() || lastTabBarArea == null || tabStarts == null) return false;
+        if (!mouse.isClick() || lastTabBarArea == null || tabHitAreas == null) return false;
         if (mouse.y() != lastTabBarArea.y()) return false;
-        int mx = mouse.x() - lastTabBarArea.x();
-        for (int i = 0; i < tabStarts.length; i++) {
-            if (mx >= tabStarts[i] && mx < tabEnds[i]) {
+        for (int i = 0; i < tabHitAreas.size(); i++) {
+            Rect hit = tabHitAreas.get(i);
+            if (mouse.x() >= hit.x() && mouse.x() < hit.x() + hit.width()) {
                 if (i != activeSubView() && isSubViewEnabled(i)) {
                     setActiveSubView(i);
                 }
@@ -840,34 +909,5 @@ public abstract class ToolPanel {
     @SuppressWarnings("unused")
     boolean isSubViewEnabled(int index) {
         return true;
-    }
-
-    /**
-     * Builds a styled tab line from {@link #subViewNames()}, highlighting the active sub-view.
-     * Active tab is cyan+bold when focused, white+bold when not.
-     * Inactive tabs are white when focused, dark gray when not.
-     * Disabled tabs are always dark gray.
-     * Appends a {@code [modified]} indicator if {@link #isDirty()} returns true.
-     */
-    protected Line buildSubViewTabLine() {
-        List<String> names = subViewNames();
-        int active = activeSubView();
-        List<Span> spans = new ArrayList<>();
-        for (int i = 0; i < names.size(); i++) {
-            if (i == active) {
-                spans.add(theme.activeTab(names.get(i), focused, i + 1));
-            } else if (!isSubViewEnabled(i)) {
-                spans.add(theme.inactiveTab(names.get(i), false, i + 1));
-            } else {
-                spans.add(theme.inactiveTab(names.get(i), focused, i + 1));
-            }
-        }
-        if (editSession != null && editSession.isDirty()) {
-            spans.addAll(theme.changesSummary(
-                    (int) editSession.addCount(), (int) editSession.modifyCount(), (int) editSession.removeCount()));
-        } else if (isDirty()) {
-            spans.add(theme.dirtyIndicator());
-        }
-        return Line.from(spans);
     }
 }
