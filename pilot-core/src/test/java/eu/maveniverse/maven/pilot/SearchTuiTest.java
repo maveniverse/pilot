@@ -20,12 +20,30 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.tui.event.KeyEvent;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class SearchTuiTest {
+
+    private static final SearchTui.SearchClient NOOP_CLIENT =
+            (q, rows, start) -> Json.createObjectBuilder().add("numFound", 0).build();
+
+    @Test
+    void handleCharKeyInSearchMode() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+        assertThat(tui.handleKeyEvent(KeyEvent.ofChar('a'))).isTrue();
+    }
+
+    @Test
+    void handleCharKeyInTableMode() {
+        var results = List.<String[]>of(new String[] {"org.example", "lib", "1.0", "jar", "1", ""});
+        var tui = new SearchTui(NOOP_CLIENT, "test", results, 1);
+        tui.handleKeyEvent(KeyEvent.ofKey(dev.tamboui.tui.event.KeyCode.DOWN));
+        assertThat(tui.handleKeyEvent(KeyEvent.ofChar('x'))).isTrue();
+    }
 
     @Test
     void extractArtifactsFromDocs() {
