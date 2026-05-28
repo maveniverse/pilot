@@ -107,10 +107,9 @@ class RecordingDemoTest {
             StringWriter writer = new StringWriter();
 
             long timestamp = System.currentTimeMillis() / 1000;
-            writer.write(String.format(
-                    "{\"version\": 2, \"width\": %d, \"height\": %d, \"timestamp\": %d, "
-                            + "\"title\": \"%s\", \"env\": {\"TERM\": \"xterm-256color\"}}%n",
-                    WIDTH, HEIGHT, timestamp, escapeJson(title)));
+            writer.write(("{\"version\": 2, \"width\": %d, \"height\": %d, \"timestamp\": %d, "
+                            + "\"title\": \"%s\", \"env\": {\"TERM\": \"xterm-256color\"}}%n")
+                    .formatted(WIDTH, HEIGHT, timestamp, escapeJson(title)));
 
             double currentTime = 0.0;
             for (Scene scene : scenes) {
@@ -131,7 +130,7 @@ class RecordingDemoTest {
         void writeSvgFrames(Path dir) throws IOException {
             Files.createDirectories(dir);
             for (int i = 0; i < scenes.size(); i++) {
-                Files.writeString(dir.resolve(String.format("frame-%02d.svg", i)), scenes.get(i).svg);
+                Files.writeString(dir.resolve("frame-%02d.svg".formatted(i)), scenes.get(i).svg);
             }
         }
 
@@ -180,7 +179,7 @@ class RecordingDemoTest {
                     case '\t' -> sb.append("\\t");
                     default -> {
                         if (c < 0x20) {
-                            sb.append(String.format("\\u%04x", (int) c));
+                            sb.append("\\u%04x".formatted((int) c));
                         } else {
                             sb.append(c);
                         }

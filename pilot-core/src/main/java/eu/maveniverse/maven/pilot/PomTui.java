@@ -762,7 +762,7 @@ public class PomTui extends ToolPanel {
         int end = Math.min(lines.length - 1, matchLine + 2);
         for (int i = start; i <= end; i++) {
             String prefix = (i == matchLine) ? "→ " : "  ";
-            String lineNum = String.format("%4d", i + 1);
+            String lineNum = "%4d".formatted(i + 1);
             snippet.add(prefix + lineNum + " │ " + lines[i]);
         }
         return snippet;

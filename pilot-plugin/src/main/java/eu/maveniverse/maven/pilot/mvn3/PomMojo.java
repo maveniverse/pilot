@@ -222,7 +222,7 @@ public class PomMojo extends AbstractMojo {
         int end = Math.min(lines.length - 1, targetLine + 1);
         for (int i = start; i <= end; i++) {
             String prefix = (i == targetLine - 1) ? "→ " : "  ";
-            String lineNum = String.format("%4d", i + 1);
+            String lineNum = "%4d".formatted(i + 1);
             snippet.add(prefix + lineNum + " │ " + lines[i]);
         }
         return snippet;

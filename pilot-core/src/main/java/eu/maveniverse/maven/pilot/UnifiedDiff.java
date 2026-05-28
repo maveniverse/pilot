@@ -150,7 +150,7 @@ class UnifiedDiff {
                     style = Style.create().dim();
                 }
             }
-            String lineNum = dl.lineNumber() > 0 ? String.format("%4d ", dl.lineNumber()) : "     ";
+            String lineNum = dl.lineNumber() > 0 ? "%4d ".formatted(dl.lineNumber()) : "     ";
             visibleLines.add(Line.from(
                     Span.raw(lineNum).dim(), Span.raw(prefix + " " + dl.text()).style(style)));
         }
