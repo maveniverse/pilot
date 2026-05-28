@@ -364,7 +364,7 @@ public class SearchTui extends ToolPanel {
             return true;
         }
         if (key.code() == KeyCode.CHAR) {
-            searchBuffer.insert(cursorPos, key.character());
+            searchBuffer.insert(cursorPos, key.string());
             cursorPos++;
             onQueryChanged();
             return true;
@@ -425,7 +425,7 @@ public class SearchTui extends ToolPanel {
         // Typing in table mode jumps back to search
         if (key.code() == KeyCode.CHAR) {
             focus = Focus.SEARCH;
-            searchBuffer.insert(cursorPos, key.character());
+            searchBuffer.insert(cursorPos, key.string());
             cursorPos++;
             onQueryChanged();
             return true;
