@@ -46,6 +46,16 @@ class SearchTuiTest {
     }
 
     @Test
+    void versionsOrDefaultReturnsPlaceholderWhenEmpty() {
+        assertThat(SearchTui.versionsOrDefault(List.of())).containsExactly("");
+    }
+
+    @Test
+    void versionsOrDefaultReturnsVersionsWhenNonEmpty() {
+        assertThat(SearchTui.versionsOrDefault(List.of("1.0", "2.0"))).containsExactly("1.0", "2.0");
+    }
+
+    @Test
     void extractArtifactsFromDocs() {
         JsonObject response = Json.createObjectBuilder()
                 .add("numFound", 2)

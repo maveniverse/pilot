@@ -125,6 +125,10 @@ public class SearchTui extends ToolPanel {
         pomInfoCache.put(groupId + ":" + artifactId + ":" + version, info);
     }
 
+    static List<String> versionsOrDefault(List<String> vers) {
+        return vers.isEmpty() ? List.of("") : vers;
+    }
+
     // Status
     private String status;
     private boolean loading;
@@ -826,7 +830,7 @@ public class SearchTui extends ToolPanel {
                         }
                         String k = g + ":" + artId;
                         if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, vers.isEmpty() ? List.of("") : vers);
+                            versionCache.put(k, versionsOrDefault(vers));
                         }
                     }));
         }
