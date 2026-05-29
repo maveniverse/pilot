@@ -102,7 +102,7 @@ class SearchInput {
         }
 
         if (key.code() == KeyCode.CHAR) {
-            buffer.insert(cursorPos, key.character());
+            buffer.insert(cursorPos, key.string());
             cursorPos++;
             onChange.accept(buffer.toString());
             return true;
