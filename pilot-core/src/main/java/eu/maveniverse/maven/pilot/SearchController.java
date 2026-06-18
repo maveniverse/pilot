@@ -73,7 +73,7 @@ class SearchController {
             searchBuffer.deleteCharAt(searchBuffer.length() - 1);
             updateMatches();
         } else if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            searchBuffer.append(key.character());
+            searchBuffer.append(key.string());
             updateMatches();
         }
     }

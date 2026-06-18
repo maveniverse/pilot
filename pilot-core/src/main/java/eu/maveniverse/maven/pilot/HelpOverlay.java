@@ -110,7 +110,7 @@ class HelpOverlay {
             lines.add(Line.from(Span.raw("  " + section.title).bold().cyan()));
             lines.add(Line.from(Span.raw("")));
             for (Entry entry : section.entries) {
-                String paddedKey = String.format("  %-" + pad + "s", entry.key);
+                String paddedKey = ("  %-" + pad + "s").formatted(entry.key);
                 lines.add(Line.from(Span.raw(paddedKey).bold().yellow(), Span.raw(entry.description)));
             }
         }

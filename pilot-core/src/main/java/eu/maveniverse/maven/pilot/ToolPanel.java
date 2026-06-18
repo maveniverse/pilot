@@ -672,7 +672,7 @@ public abstract class ToolPanel {
                 return true;
             }
             if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-                searchBuffer.append(key.character());
+                searchBuffer.append(key.string());
                 updateSearchMatches();
                 return true;
             }

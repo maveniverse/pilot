@@ -17,13 +17,13 @@ jobs:
     steps:
       - name: Run release drafter
         id: drafter
-        uses: release-drafter/release-drafter@c2e2804cc59f45f57076a99af580d0fedb697927 # v7
+        uses: release-drafter/release-drafter@693d20e7c1ce1a81d3a41962f85914253b518449 # v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout
         if: github.event_name == 'push'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 

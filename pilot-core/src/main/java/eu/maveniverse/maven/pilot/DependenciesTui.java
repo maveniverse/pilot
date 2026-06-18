@@ -509,8 +509,10 @@ public class DependenciesTui extends ToolPanel {
         }
 
         // Number keys switch sub-views
-        if (key.code() == KeyCode.CHAR && key.character() >= '1' && key.character() <= '9') {
-            int idx = key.character() - '1';
+        if (key.code() == KeyCode.CHAR
+                && key.string().charAt(0) >= '1'
+                && key.string().charAt(0) <= '9') {
+            int idx = key.string().charAt(0) - '1';
             if (idx < views.length && views[idx] != view) {
                 view = views[idx];
                 if (view != View.TREE) {
