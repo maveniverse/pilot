@@ -23,7 +23,7 @@ under the License.
   <parent>
     <groupId>eu.maveniverse.maven.parent</groupId>
     <artifactId>parent</artifactId>
-    <version>52</version>
+    <version>55</version>
   </parent>
 
   <groupId>eu.maveniverse.maven.pilot</groupId>
@@ -61,6 +61,7 @@ under the License.
     <maven4Version>4.0.0-rc-5</maven4Version>
     <tamboui.version>0.3.0</tamboui.version>
     <domtrip.version>1.5.2</domtrip.version>
+    <jline.version>3.30.13</jline.version>
 
     <!-- SonarCloud -->
     <sonar.projectKey>maveniverse_pilot</sonar.projectKey>
@@ -175,6 +176,16 @@ under the License.
         <groupId>org.apache.maven</groupId>
         <artifactId>maven-embedder</artifactId>
         <version>${maven4Version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-console-ui</artifactId>
+        <version>${jline.version}</version>
       </dependency>
 
       <!-- Test -->

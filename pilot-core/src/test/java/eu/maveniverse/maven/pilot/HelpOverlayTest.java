@@ -119,6 +119,17 @@ class HelpOverlayTest {
     }
 
     @Test
+    void openBuildsPaddedLines() {
+        var overlay = new HelpOverlay();
+        List<HelpOverlay.Section> sections = HelpOverlay.parse("""
+                ## Keys
+                a / b           Do something
+                """);
+        overlay.open(sections);
+        assertThat(overlay.isActive()).isTrue();
+    }
+
+    @Test
     void parseSplitsOnTwoOrMoreSpaces() {
         List<HelpOverlay.Section> sections = HelpOverlay.parse("""
                 ## Keys
