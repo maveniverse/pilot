@@ -290,7 +290,7 @@ public class PilotShell {
         // Alt+letter: switch tool (checked before delegation because
         // isCharIgnoreCase does not check modifiers)
         if (key.modifiers().alt() && key.code() == KeyCode.CHAR) {
-            char c = Character.toLowerCase(key.character());
+            char c = Character.toLowerCase(key.string().charAt(0));
             for (int i = 0; i < TOOLS.size(); i++) {
                 if (c == TOOLS.get(i).mnemonic) {
                     switchTool(i);
@@ -373,8 +373,8 @@ public class PilotShell {
         if (key.code() == KeyCode.CHAR
                 && !key.hasCtrl()
                 && !key.hasAlt()
-                && key.character() >= '0'
-                && key.character() <= '9') {
+                && key.string().charAt(0) >= '0'
+                && key.string().charAt(0) <= '9') {
             return handleNumberKey(key);
         }
         if (key.isKey(KeyCode.ENTER) && focus == Focus.TREE) {
@@ -398,13 +398,13 @@ public class PilotShell {
 
     /** Handles digit keys: 0 focuses the module tree, 1-9 selects sub-view tabs. */
     private boolean handleNumberKey(KeyEvent key) {
-        if (key.character() == '0') {
+        if (key.string().charAt(0) == '0') {
             if (treePane != null) {
                 setFocus(Focus.TREE);
             }
             return true;
         }
-        int index = key.character() - '1';
+        int index = key.string().charAt(0) - '1';
         if (activePanel != null && index < activePanel.subViewCount()) {
             activePanel.setActiveSubView(index);
             if (focus != Focus.CONTENT) setFocus(Focus.CONTENT);
