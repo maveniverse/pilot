@@ -22,7 +22,6 @@ import eu.maveniverse.maven.pilot.*;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -92,7 +91,7 @@ public final class MojoHelper {
      */
     static List<Dependency> convertDependencies(List<org.apache.maven.model.Dependency> deps) {
         if (deps == null) {
-            return Collections.emptyList();
+            return List.of();
         }
         return deps.stream().map(MojoHelper::convertDependency).toList();
     }

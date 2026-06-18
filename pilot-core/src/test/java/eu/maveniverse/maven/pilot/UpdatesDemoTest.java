@@ -28,6 +28,7 @@ import dev.tamboui.terminal.TestBackend;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.pilot.Pilot;
 import dev.tamboui.tui.pilot.TuiTestRunner;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -45,7 +46,7 @@ class UpdatesDemoTest {
     }
 
     @Test
-    void browseAndSwitchViews(@TempDir java.nio.file.Path tempDir) throws Exception {
+    void browseAndSwitchViews(@TempDir Path tempDir) throws Exception {
         var root = createProject("parent", tempDir);
         var child = createProject("child", TestProjects.subdir(tempDir, "child"));
         child.parent = root;

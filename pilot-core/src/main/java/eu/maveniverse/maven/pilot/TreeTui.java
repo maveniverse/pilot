@@ -40,11 +40,13 @@ import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
 
 /**
  * Interactive TUI for browsing the dependency tree.
@@ -695,15 +697,15 @@ public class TreeTui extends ToolPanel {
         if (col < 0) {
             model = fullModel.filterByScope(scope);
         } else {
-            java.util.function.Function<DependencyTreeModel.TreeNode, String> extractor =
+            Function<DependencyTreeModel.TreeNode, String> extractor =
                     switch (col) {
                         case COL_GA -> n -> n.groupId + ":" + n.artifactId;
                         case COL_VERSION -> n -> n.version;
                         case COL_SCOPE -> n -> n.scope;
                         default -> n -> "";
                     };
-            java.util.Comparator<DependencyTreeModel.TreeNode> cmp =
-                    java.util.Comparator.comparing(extractor, String.CASE_INSENSITIVE_ORDER);
+            Comparator<DependencyTreeModel.TreeNode> cmp =
+                    Comparator.comparing(extractor, String.CASE_INSENSITIVE_ORDER);
             if (!sortState.ascending()) {
                 cmp = cmp.reversed();
             }
@@ -714,7 +716,7 @@ public class TreeTui extends ToolPanel {
     }
 
     private void sortChildrenRecursive(
-            DependencyTreeModel.TreeNode node, java.util.Comparator<DependencyTreeModel.TreeNode> cmp) {
+            DependencyTreeModel.TreeNode node, Comparator<DependencyTreeModel.TreeNode> cmp) {
         node.children.sort(cmp);
         for (var child : node.children) {
             sortChildrenRecursive(child, cmp);

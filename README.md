@@ -12,12 +12,13 @@ Pilot is a Maven plugin (and standalone CLI) that replaces hard-to-read CLI outp
 | `pilot:search` | Search Maven Central interactively with async results and version cycling |
 | `pilot:tree` | Browse the resolved dependency tree with expand/collapse, conflict highlighting, scope filtering, and reverse path lookup |
 | `pilot:pom` | View raw and effective POM with syntax highlighting, collapsible XML nodes, and origin tracking |
-| `pilot:dependencies` | Bytecode-level analysis of declared vs used dependencies with ASM, SPI detection, and member-level references |
-| `pilot:updates` | Check for dependency updates with patch/minor/major classification and batch POM editing |
+| `pilot:dependencies` | Bytecode-level analysis of declared vs used dependencies; supports `tui`, `report`, `check`, and `fix` actions |
+| `pilot:updates` | Check for dependency updates with patch/minor/major classification; supports `tui`, `report`, `check`, and `fix` actions |
 | `pilot:conflicts` | Detect version conflicts across the dependency tree and pin versions via `dependencyManagement` |
-| `pilot:audit` | License overview and CVE lookup (via OSV.dev) for all transitive dependencies |
+| `pilot:audit` | License overview and CVE lookup (via OSV.dev); supports `tui`, `report`, and `check` actions |
 | `pilot:align` | Detect and align dependency conventions (version style, property naming) across POMs |
 | `pilot:plugins` | Browse declared and managed plugins, check for version updates with libyear scoring |
+| `pilot:analyze-dependencies` | *(deprecated)* Use `pilot:dependencies -Dpilot.action=check` instead |
 
 ## Quick Start
 
@@ -60,6 +61,18 @@ mvn pilot:align
 
 # Browse plugins and check for plugin updates
 mvn pilot:plugins
+
+# Non-interactive modes (CI-friendly) — all goals support -Dpilot.action=report|check|fix
+mvn compile pilot:dependencies -Dpilot.action=report          # report unused/transitive deps
+mvn compile pilot:dependencies -Dpilot.action=check           # fail build on dep issues
+mvn compile pilot:dependencies -Dpilot.action=fix             # auto-fix POM
+
+mvn pilot:audit -Dpilot.action=report                         # print CVE + license report
+mvn pilot:audit -Dpilot.action=check                          # fail build on HIGH+ CVEs
+
+mvn pilot:updates -Dpilot.action=report                       # print available updates
+mvn pilot:updates -Dpilot.action=fix                          # apply all updates to POM
+mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0  # fail if too stale
 ```
 
 ### Standalone CLI
@@ -154,6 +167,43 @@ Three views: **Licenses** shows all transitive dependencies with their licenses 
 
 **Keys:** `Tab` -- switch view, `s` -- cycle scope filter, `m` -- manage dependency, `d` -- show diff, `h` -- help
 
+#### Non-Interactive Audit Report (`-Dpilot.action=report`)
+
+Prints a structured text report covering vulnerabilities (sorted by severity) and licenses (grouped by type). Suitable for CI logs.
+
+```bash
+mvn pilot:audit -Dpilot.action=report
+```
+
+#### Audit CI Gate (`-Dpilot.action=check`)
+
+Fails the build when vulnerabilities at or above a severity threshold are found. Defaults to `HIGH`.
+
+```bash
+# Fail on HIGH or CRITICAL CVEs (default)
+mvn pilot:audit -Dpilot.action=check
+
+# Fail only on CRITICAL CVEs
+mvn pilot:audit -Dpilot.action=check -Dpilot.audit.severity=CRITICAL
+```
+
+### Updates Report, Check & Fix
+
+The `pilot:updates` goal supports non-interactive modes:
+
+```bash
+# Print update report with libyear aging
+mvn pilot:updates -Dpilot.action=report
+
+# Apply all available updates to POM files
+mvn pilot:updates -Dpilot.action=fix
+
+# Fail the build if total libyears exceed threshold
+mvn pilot:updates -Dpilot.action=check -Dpilot.updates.libyears=5.0
+```
+
+The report lists all dependencies with available updates (classified as patch/minor/major), property groups, and a total libyear score measuring how far behind the project is from latest releases. The `fix` action applies all available updates directly to POM files — property-managed dependencies update the property, direct dependencies update the version inline.
+
 ### Convention Alignment (`pilot:align`)
 
 Detects the project's current dependency conventions (inline vs managed versions, literal vs property references, property naming patterns) and lets you choose a target convention. Preview the diff before applying. In reactor builds, understands the parent POM hierarchy -- managed dependencies are written to the correct parent POM while child modules get version-less references. Selecting a parent module automatically applies alignment across all child modules in one go.
@@ -161,6 +211,41 @@ Detects the project's current dependency conventions (inline vs managed versions
 ![pilot:align](docs/images/align.svg)
 
 **Keys:** `jk` -- navigate options, `<>/Enter` -- cycle values, `p` -- preview diff, `w` -- apply, `h` -- help
+
+### Dependencies Report, Check & Fix
+
+The `pilot:dependencies` goal supports non-interactive modes via `-Dpilot.action`:
+
+- **`tui`** (default) — interactive TUI dashboard
+- **`report`** — reports unused declared and used transitive dependencies without failing
+- **`check`** — reports issues and fails the build
+- **`fix`** — removes unused declared and adds used transitive dependencies to the POM
+
+Requires prior compilation (`mvn compile`) for bytecode analysis.
+
+```bash
+mvn compile pilot:dependencies -Dpilot.action=check
+mvn compile pilot:dependencies -Dpilot.action=fix
+```
+
+Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `reflectionLoadedClasses`) for false positives from bytecode analysis, and ignore lists (`ignoredUnusedDeclared`, `ignoredUsedTransitive`) for suppressing known findings. All pattern sets support `groupId:artifactId` exact match and `groupId:*` wildcards.
+
+```xml
+<plugin>
+  <groupId>eu.maveniverse.maven.plugins</groupId>
+  <artifactId>pilot-plugin</artifactId>
+  <configuration>
+    <runtimeArtifacts>
+      <runtimeArtifact>org.postgresql:postgresql</runtimeArtifact>
+    </runtimeArtifacts>
+    <ignoredUsedTransitive>
+      <ignoredUsedTransitive>org.slf4j:slf4j-api</ignoredUsedTransitive>
+    </ignoredUsedTransitive>
+  </configuration>
+</plugin>
+```
+
+> **Note:** `pilot:analyze-dependencies` is deprecated. Use `pilot:dependencies -Dpilot.action=check` instead.
 
 ## How POM Editing Works
 

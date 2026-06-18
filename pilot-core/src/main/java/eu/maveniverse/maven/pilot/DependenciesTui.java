@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Interactive TUI showing declared vs transitive dependency overview.
@@ -232,7 +233,7 @@ public class DependenciesTui extends ToolPanel {
     private final boolean bytecodeAnalyzed;
     private final boolean reactorMode;
     private final PomEditSession managementSession;
-    private final java.util.function.Function<Path, PomEditSession> sessionProvider;
+    private final Function<Path, PomEditSession> sessionProvider;
     private final TableState tableState = new TableState();
 
     private View view = View.DECLARED;
@@ -360,7 +361,7 @@ public class DependenciesTui extends ToolPanel {
             String projectGav,
             int modulesScanned,
             int modulesSkipped,
-            java.util.function.Function<Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             PomEditSession managementSession) {
         this.editSession = null;
         this.managementSession = managementSession;
@@ -387,7 +388,7 @@ public class DependenciesTui extends ToolPanel {
     @Override
     boolean onSessionChanged() {
         if (editSession == null) return true;
-        Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(java.util.stream.Collectors.toSet());
+        Set<String> existingGAs = managed.stream().map(ManagedEntry::ga).collect(Collectors.toSet());
         for (PomEditSession.Change change : editSession.changes()) {
             if (change.type() == PomEditSession.ChangeType.REMOVE) {
                 return false;
@@ -536,8 +537,10 @@ public class DependenciesTui extends ToolPanel {
         }
 
         // Number keys switch sub-views
-        if (key.code() == KeyCode.CHAR && key.character() >= '1' && key.character() <= '9') {
-            int idx = key.character() - '1';
+        if (key.code() == KeyCode.CHAR
+                && key.string().charAt(0) >= '1'
+                && key.string().charAt(0) <= '9') {
+            int idx = key.string().charAt(0) - '1';
             if (idx < views.length && views[idx] != view) {
                 view = views[idx];
                 if (view != View.TREE && view != View.DM_TREE) {
@@ -1008,16 +1011,7 @@ public class DependenciesTui extends ToolPanel {
         session.beforeMutation();
         PomEditor editor = session.editor();
         AlignOptions detected = editor.dependencies().detectConventions();
-        // TODO: replace with editor.dependencies().findManagedVersion(coords) != null
-        //  when DomTrip exposes it (https://github.com/maveniverse/domtrip/issues/215)
-        boolean hadManagedEntry = editor.document()
-                .root()
-                .childElement("dependencyManagement")
-                .flatMap(dm -> dm.childElement(SECTION_DEPENDENCIES))
-                .flatMap(deps -> deps.childElements(TARGET_DEPENDENCY)
-                        .filter(coords.predicateGATC())
-                        .findFirst())
-                .isPresent();
+        boolean hadManagedEntry = editor.dependencies().findManagedVersion(coords) != null;
         AlignOptions.Builder builder = AlignOptions.builder()
                 .versionStyle(detected.versionStyle())
                 .versionSource(detected.versionSource())

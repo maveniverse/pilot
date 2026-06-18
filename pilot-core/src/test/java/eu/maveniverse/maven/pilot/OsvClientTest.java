@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
+import java.io.StringReader;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -32,7 +33,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 class OsvClientTest {
 
     private JsonObject buildResponse(String json) {
-        try (var reader = Json.createReader(new java.io.StringReader(json))) {
+        try (var reader = Json.createReader(new StringReader(json))) {
             return reader.readObject();
         }
     }

@@ -21,7 +21,7 @@ under the License.
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>eu.maveniverse.maven.plugins</groupId>
+    <groupId>eu.maveniverse.maven.pilot</groupId>
     <artifactId>pilot</artifactId>
     <version>${nisse.jgit.dynamicVersion}</version>
   </parent>
@@ -33,7 +33,7 @@ under the License.
 
   <dependencies>
     <dependency>
-      <groupId>eu.maveniverse.maven.plugins</groupId>
+      <groupId>eu.maveniverse.maven.pilot</groupId>
       <artifactId>pilot-core</artifactId>
     </dependency>
 
@@ -49,11 +49,25 @@ under the License.
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-embedder</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.jline</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-core</artifactId>
       <version>${maven4Version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline-console-ui</artifactId>
     </dependency>
 
     <dependency>
@@ -76,6 +90,7 @@ under the License.
             </goals>
             <phase>package</phase>
             <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>eu.maveniverse.maven.pilot.mvn4.PilotMain</mainClass>
@@ -91,6 +106,7 @@ under the License.
                 <filter>
                   <artifact>*:*</artifact>
                   <excludes>
+                    <exclude>module-info.class</exclude>
                     <exclude>META-INF/*.SF</exclude>
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>

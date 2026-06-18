@@ -21,11 +21,12 @@ under the License.
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>eu.maveniverse.maven.plugins</groupId>
+    <groupId>eu.maveniverse.maven.pilot</groupId>
     <artifactId>pilot</artifactId>
     <version>${nisse.jgit.dynamicVersion}</version>
   </parent>
 
+  <groupId>eu.maveniverse.maven.plugins</groupId>
   <artifactId>pilot-plugin</artifactId>
   <packaging>maven-plugin</packaging>
 
@@ -38,7 +39,7 @@ under the License.
 
   <dependencies>
     <dependency>
-      <groupId>eu.maveniverse.maven.plugins</groupId>
+      <groupId>eu.maveniverse.maven.pilot</groupId>
       <artifactId>pilot-core</artifactId>
     </dependency>
 

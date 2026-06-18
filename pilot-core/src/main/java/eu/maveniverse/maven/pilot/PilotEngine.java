@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import eu.maveniverse.domtrip.Document;
 import eu.maveniverse.domtrip.maven.PomEditor;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -30,8 +31,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.logging.Logger;
 
 /**
@@ -46,8 +49,8 @@ public class PilotEngine {
     private final PilotResolver resolver;
     private final List<PilotProject> allProjects;
     private final String scope;
-    private final Map<String, DependencyTreeModel> treeCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final Map<String, AuditTui.AuditEntry> auditEntryCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, DependencyTreeModel> treeCache = new ConcurrentHashMap<>();
+    private final Map<String, AuditTui.AuditEntry> auditEntryCache = new ConcurrentHashMap<>();
     private static final Set<String> TEST_SCOPES = Set.of("test", "test-only", "test-runtime");
 
     public PilotEngine(PilotResolver resolver, List<PilotProject> allProjects, String scope) {
@@ -79,7 +82,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession session,
-            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress)
             throws Exception {
         return switch (toolId) {
@@ -99,7 +102,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession session,
-            java.util.function.Function<Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress)
             throws Exception {
         if (projects.size() > 1) {
@@ -113,7 +116,7 @@ public class PilotEngine {
             PilotProject proj,
             PomEditSession session,
             List<PilotProject> projects,
-            java.util.function.Function<Path, PomEditSession> sessionProvider)
+            Function<Path, PomEditSession> sessionProvider)
             throws Exception {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
@@ -147,13 +150,15 @@ public class PilotEngine {
                     ? ClassFileScanner.scanDirectory(testClassesDir)
                     : new ClassFileScanner.ScanResult(Set.of(), Map.of());
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                    mainScan.referencedClasses(),
-                    testScan.referencedClasses(),
-                    classIndex,
-                    gaToJar,
-                    declared,
-                    transitive);
+            DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                    .build()
+                    .analyze(
+                            mainScan.referencedClasses(),
+                            testScan.referencedClasses(),
+                            classIndex,
+                            gaToJar,
+                            declared,
+                            transitive);
             for (var dep : declared) {
                 dep.usageStatus =
                         usage.declaredUsage().getOrDefault(dep.ga(), DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
@@ -180,9 +185,7 @@ public class PilotEngine {
     }
 
     private ToolPanel createReactorDependenciesPanel(
-            List<PilotProject> projects,
-            java.util.function.Function<Path, PomEditSession> sessionProvider,
-            Consumer<String> progress)
+            List<PilotProject> projects, Function<Path, PomEditSession> sessionProvider, Consumer<String> progress)
             throws Exception {
         Map<String, DependenciesTui.DepEntry> unusedMap = new LinkedHashMap<>();
         Map<String, DependenciesTui.DepEntry> usedTransMap = new LinkedHashMap<>();
@@ -234,14 +237,21 @@ public class PilotEngine {
         List<DependenciesTui.DepEntry> transitive = new ArrayList<>();
         DependenciesTui.collectTransitive(resolved.tree().root, declaredGAs, transitiveGAs, transitive);
 
-        Map<String, java.io.File> gaToJar = resolved.gaToJar();
+        Map<String, File> gaToJar = resolved.gaToJar();
         ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(p.outputDirectory);
         ClassFileScanner.ScanResult testScan = p.testOutputDirectory != null && Files.isDirectory(p.testOutputDirectory)
                 ? ClassFileScanner.scanDirectory(p.testOutputDirectory)
                 : new ClassFileScanner.ScanResult(Set.of(), Map.of());
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.analyze(
-                mainScan.referencedClasses(), testScan.referencedClasses(), classIndex, gaToJar, declared, transitive);
+        DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(
+                        mainScan.referencedClasses(),
+                        testScan.referencedClasses(),
+                        classIndex,
+                        gaToJar,
+                        declared,
+                        transitive);
         populateDepDetails(declared, transitive, classIndex, gaToJar, mainScan, testScan);
 
         accumulateEntries(
@@ -368,7 +378,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession session,
-            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress) {
         UpdatesTui.VersionResolver versionResolver = resolver::resolveVersions;
         UpdatesTui.TreeImpactResolver treeImpactResolver = (g, a, oldV, newV) -> {
@@ -392,7 +402,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession session,
-            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress) {
         List<PilotProject> targetProjects = projects.size() > 1 ? projects : List.of(proj);
         resolveAllDependencies(targetProjects, progress);
@@ -428,7 +438,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession session,
-            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider,
+            Function<Path, PomEditSession> sessionProvider,
             Consumer<String> progress) {
         if (projects.size() > 1) {
             resolveAllDependencies(projects, progress);
@@ -466,7 +476,7 @@ public class PilotEngine {
         }
     }
 
-    private ToolPanel createPomPanel(PilotProject proj, PomEditSession session) throws java.io.IOException {
+    private ToolPanel createPomPanel(PilotProject proj, PomEditSession session) throws IOException {
         String rawPom = (session != null && session.isDirty()) ? session.currentXml() : Files.readString(proj.pomPath);
         String effectivePom = resolver.effectivePom(proj);
         XmlTreeModel effectiveTree = XmlTreeModel.parse(effectivePom);
@@ -542,7 +552,7 @@ public class PilotEngine {
             PilotProject proj,
             List<PilotProject> projects,
             PomEditSession currentSession,
-            java.util.function.Function<java.nio.file.Path, PomEditSession> sessionProvider) {
+            Function<Path, PomEditSession> sessionProvider) {
         if (sessionProvider == null) {
             return currentSession;
         }

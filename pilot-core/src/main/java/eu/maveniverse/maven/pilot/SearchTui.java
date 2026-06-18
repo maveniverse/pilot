@@ -43,7 +43,6 @@ import jakarta.json.JsonObject;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,6 +123,10 @@ public class SearchTui extends ToolPanel {
     // Package-private for testing
     void cachePomInfo(String groupId, String artifactId, String version, PomInfo info) {
         pomInfoCache.put(groupId + ":" + artifactId + ":" + version, info);
+    }
+
+    static List<String> versionsOrDefault(List<String> vers) {
+        return vers.isEmpty() ? List.of("") : vers;
     }
 
     // Status
@@ -365,7 +368,7 @@ public class SearchTui extends ToolPanel {
             return true;
         }
         if (key.code() == KeyCode.CHAR) {
-            searchBuffer.insert(cursorPos, key.character());
+            searchBuffer.insert(cursorPos, key.string());
             cursorPos++;
             onQueryChanged();
             return true;
@@ -426,7 +429,7 @@ public class SearchTui extends ToolPanel {
         // Typing in table mode jumps back to search
         if (key.code() == KeyCode.CHAR) {
             focus = Focus.SEARCH;
-            searchBuffer.insert(cursorPos, key.character());
+            searchBuffer.insert(cursorPos, key.string());
             cursorPos++;
             onQueryChanged();
             return true;
@@ -827,7 +830,7 @@ public class SearchTui extends ToolPanel {
                         }
                         String k = g + ":" + artId;
                         if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, vers.isEmpty() ? Collections.singletonList("") : vers);
+                            versionCache.put(k, versionsOrDefault(vers));
                         }
                     }));
         }
