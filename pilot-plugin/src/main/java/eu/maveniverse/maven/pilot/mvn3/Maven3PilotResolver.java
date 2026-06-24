@@ -31,6 +31,7 @@ import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
@@ -116,6 +117,53 @@ class Maven3PilotResolver implements PilotResolver {
             return result.getArtifact().getFile().toPath();
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    @Override
+    public DependencyTreeModel collectManagedDependencyTree(PilotProject project) {
+        try {
+            MavenProject mp = requireMaven(project);
+            if (mp.getDependencyManagement() == null
+                    || mp.getDependencyManagement().getDependencies().isEmpty()) {
+                return emptyTree(mp);
+            }
+            List<org.apache.maven.model.Dependency> managed = mp.getDependencyManagement().getDependencies().stream()
+                    .filter(d -> !("pom".equals(d.getType()) && "import".equals(d.getScope())))
+                    .toList();
+            if (managed.isEmpty()) {
+                return emptyTree(mp);
+            }
+            CollectRequest collectRequest = new CollectRequest();
+            collectRequest.setRootArtifact(
+                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()));
+            collectRequest.setDependencies(MojoHelper.convertDependencies(managed));
+            collectRequest.setRepositories(mp.getRemoteProjectRepositories());
+            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            return MojoHelper.fromDependencyNode(result.getRoot());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to collect managed dependency tree for " + project.gav(), e);
+        }
+    }
+
+    private static DependencyTreeModel emptyTree(MavenProject mp) {
+        DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
+                mp.getGroupId(), mp.getArtifactId(), "", mp.getVersion(), "", false, 0);
+        return new DependencyTreeModel(root, List.of(), 1);
+    }
+
+    @Override
+    public DependencyTreeModel collectArtifactDependencies(String groupId, String artifactId, String version) {
+        try {
+            CollectRequest collectRequest = new CollectRequest();
+            collectRequest.setRootArtifact(new DefaultArtifact(groupId, artifactId, "jar", version));
+            collectRequest.setRepositories(rootProject.getRemoteProjectRepositories());
+            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            return MojoHelper.fromDependencyNode(result.getRoot());
+        } catch (Exception e) {
+            DependencyTreeModel.TreeNode root =
+                    new DependencyTreeModel.TreeNode(groupId, artifactId, "", version, "", false, 0);
+            return new DependencyTreeModel(root, List.of(), 1);
         }
     }
 

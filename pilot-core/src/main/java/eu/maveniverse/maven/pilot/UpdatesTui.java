@@ -73,6 +73,11 @@ public class UpdatesTui extends ToolPanel {
         List<String> resolveVersions(String groupId, String artifactId);
     }
 
+    @FunctionalInterface
+    public interface TreeImpactResolver {
+        List<TreeDiff.DiffEntry> computeImpact(String groupId, String artifactId, String oldVersion, String newVersion);
+    }
+
     /**
      * Convert a list of version objects to strings ordered newest-first.
      */
@@ -126,6 +131,7 @@ public class UpdatesTui extends ToolPanel {
     private final String projectGav;
     private final boolean singleModule;
     private final VersionResolver versionResolver;
+    private final TreeImpactResolver treeImpactResolver;
     private final Function<Path, PomEditSession> sessionProvider;
     private final TableState tableState = new TableState();
     private final TableState moduleTableState = new TableState();
@@ -135,6 +141,7 @@ public class UpdatesTui extends ToolPanel {
     List<ReactorRow> displayRows = new ArrayList<>();
     Set<String> duplicatePropertyNames = Set.of();
     private Filter filter = Filter.ALL;
+    private final DiffOverlay treeImpactOverlay = new DiffOverlay();
     private final Set<PomEditSession> mutatedSessions = new LinkedHashSet<>();
     private final TableState detailTableState = new TableState();
     boolean showDetails = true;
@@ -153,7 +160,7 @@ public class UpdatesTui extends ToolPanel {
             ReactorModel reactorModel,
             String projectGav,
             VersionResolver versionResolver) {
-        this(result, reactorModel, projectGav, versionResolver, null);
+        this(result, reactorModel, projectGav, versionResolver, null, null);
     }
 
     /**
@@ -165,11 +172,22 @@ public class UpdatesTui extends ToolPanel {
             String projectGav,
             VersionResolver versionResolver,
             Function<Path, PomEditSession> sessionProvider) {
+        this(result, reactorModel, projectGav, versionResolver, null, sessionProvider);
+    }
+
+    public UpdatesTui(
+            ReactorCollector.CollectionResult result,
+            ReactorModel reactorModel,
+            String projectGav,
+            VersionResolver versionResolver,
+            TreeImpactResolver treeImpactResolver,
+            Function<Path, PomEditSession> sessionProvider) {
         this.reactorResult = result;
         this.reactorModel = reactorModel;
         this.projectGav = projectGav;
         this.singleModule = reactorModel.allModules.size() <= 1;
         this.versionResolver = versionResolver;
+        this.treeImpactResolver = treeImpactResolver;
         this.sessionProvider = sessionProvider != null ? sessionProvider : defaultSessionProvider();
         this.sortState = new SortState(7);
         if (!reactorModel.allModules.isEmpty()) {
@@ -342,8 +360,7 @@ public class UpdatesTui extends ToolPanel {
         if (!datesLoading) {
             float total = totalLibYears();
             if (total > 0) {
-                int tenths = Math.round(total * 10);
-                msg += " \u2014 " + (tenths / 10) + "." + (tenths % 10) + " libyear(s) behind";
+                msg += " \u2014 " + VersionComparator.formatLibYears(total) + " libyear(s) behind";
             }
         }
         return msg;
@@ -363,8 +380,7 @@ public class UpdatesTui extends ToolPanel {
     private String formatAge(float libYears, boolean hasUpdate) {
         if (!hasUpdate) return "";
         if (libYears < 0) return datesLoading ? "\u2026" : "";
-        int tenths = Math.round(libYears * 10);
-        return (tenths / 10) + "." + (tenths % 10) + "y";
+        return VersionComparator.formatLibYears(libYears) + "y";
     }
 
     private void computePropertyGroupVersions() {
@@ -536,21 +552,11 @@ public class UpdatesTui extends ToolPanel {
     }
 
     private static String updateTypeLabel(VersionComparator.UpdateType type) {
-        if (type == null) return "";
-        return switch (type) {
-            case PATCH -> "patch";
-            case MINOR -> "minor";
-            case MAJOR -> "major";
-        };
+        return VersionComparator.updateTypeLabel(type);
     }
 
     private Style updateTypeStyle(VersionComparator.UpdateType type) {
-        if (type == null) return Style.create().dim();
-        return switch (type) {
-            case PATCH -> Style.create().dim();
-            case MINOR -> Style.create();
-            case MAJOR -> Style.create().fg(Color.YELLOW);
-        };
+        return VersionComparator.updateTypeStyle(type);
     }
 
     private static List<Constraint> depsTableWidths() {
@@ -634,6 +640,15 @@ public class UpdatesTui extends ToolPanel {
         // Pending quit confirmation
         if (handlePendingQuit(key)) return true;
 
+        // Tree impact overlay in standalone
+        if (treeImpactOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('t')) {
+                treeImpactOverlay.close();
+                return true;
+            }
+            treeImpactOverlay.handleScrollKey(key, lastContentHeight);
+            return true;
+        }
         // Diff overlay in standalone
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
@@ -690,6 +705,15 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     public boolean handleKeyEvent(KeyEvent key) {
+        // Tree impact overlay mode — consume all keys
+        if (treeImpactOverlay.isActive()) {
+            if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('t')) {
+                treeImpactOverlay.close();
+                return true;
+            }
+            treeImpactOverlay.handleScrollKey(key, lastContentHeight);
+            return true;
+        }
         // Diff overlay mode — consume all keys
         if (diffOverlay.isActive()) {
             if (key.isKey(KeyCode.ESCAPE) || key.isCharIgnoreCase('q') || key.isCharIgnoreCase('d')) {
@@ -732,6 +756,10 @@ public class UpdatesTui extends ToolPanel {
         }
         if (key.isCharIgnoreCase('d')) {
             toggleDiffView();
+            return true;
+        }
+        if (key.isCharIgnoreCase('t')) {
+            showTreeImpact();
             return true;
         }
         if (key.isChar('f')) {
@@ -983,6 +1011,29 @@ public class UpdatesTui extends ToolPanel {
         status = changes == 0 ? "No changes to show" : changes + " line(s) changed across " + diffs.size() + " file(s)";
     }
 
+    private void showTreeImpact() {
+        if (treeImpactResolver == null) {
+            status = "Tree impact not available";
+            return;
+        }
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= displayRows.size()) return;
+        ReactorRow row = displayRows.get(sel);
+        if (row.dependency == null || row.dependency.newestVersion == null) {
+            status = "No update available for tree impact";
+            return;
+        }
+        var dep = row.dependency;
+        List<TreeDiff.DiffEntry> entries =
+                treeImpactResolver.computeImpact(dep.groupId, dep.artifactId, dep.primaryVersion, dep.newestVersion);
+        if (entries.isEmpty() || entries.stream().allMatch(e -> e.side() == TreeDiff.Side.SAME)) {
+            status = "No transitive changes for " + dep.ga() + " " + dep.primaryVersion + " → " + dep.newestVersion;
+            return;
+        }
+        treeImpactOverlay.openTreeImpact(entries);
+        status = "Tree impact: " + dep.ga() + " " + dep.primaryVersion + " → " + dep.newestVersion;
+    }
+
     // -- Apply --
 
     private record UpdateLocation(Path pomPath, boolean managed) {}
@@ -1010,7 +1061,9 @@ public class UpdatesTui extends ToolPanel {
     @Override
     public void render(Frame frame, Rect area) {
         lastContentHeight = area.height();
-        if (diffOverlay.isActive()) {
+        if (treeImpactOverlay.isActive()) {
+            treeImpactOverlay.render(frame, area, " Tree Impact ");
+        } else if (diffOverlay.isActive()) {
             diffOverlay.render(frame, area, " POM Changes ");
         } else {
             Rect contentArea = renderTabBar(frame, area);
@@ -1033,8 +1086,11 @@ public class UpdatesTui extends ToolPanel {
     }
 
     void renderStandalone(Frame frame) {
-        boolean detailsVisible =
-                showDetails && view == View.DEPENDENCIES && !diffOverlay.isActive() && !helpOverlay.isActive();
+        boolean detailsVisible = showDetails
+                && view == View.DEPENDENCIES
+                && !diffOverlay.isActive()
+                && !treeImpactOverlay.isActive()
+                && !helpOverlay.isActive();
         var zones = Layout.vertical()
                 .constraints(
                         Constraint.length(3),
@@ -1047,6 +1103,8 @@ public class UpdatesTui extends ToolPanel {
         lastContentHeight = zones.get(1).height();
         if (helpOverlay.isActive()) {
             helpOverlay.render(frame, zones.get(1));
+        } else if (treeImpactOverlay.isActive()) {
+            treeImpactOverlay.render(frame, zones.get(1), " Tree Impact ");
         } else if (diffOverlay.isActive()) {
             diffOverlay.render(frame, zones.get(1), " POM Changes ");
         } else if (view == View.DEPENDENCIES) {
@@ -1415,7 +1473,7 @@ public class UpdatesTui extends ToolPanel {
         // Key bindings
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
-        if (diffOverlay.isActive()) {
+        if (treeImpactOverlay.isActive() || diffOverlay.isActive()) {
             buildDiffKeyHints(spans);
         } else {
             if (view == View.DEPENDENCIES) {
@@ -1510,6 +1568,10 @@ public class UpdatesTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (treeImpactOverlay.isActive()) {
+            treeImpactOverlay.handleMouseScroll(mouse, lastContentHeight);
+            return true;
+        }
         if (diffOverlay.isActive()) {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
@@ -1584,7 +1646,7 @@ public class UpdatesTui extends ToolPanel {
             return searchHints;
         }
         List<Span> spans = new ArrayList<>();
-        if (diffOverlay.isActive()) {
+        if (treeImpactOverlay.isActive() || diffOverlay.isActive()) {
             spans.add(Span.raw("↑↓").bold());
             spans.add(Span.raw(":Scroll  "));
             spans.add(Span.raw("Esc").bold());
@@ -1599,6 +1661,8 @@ public class UpdatesTui extends ToolPanel {
             spans.add(Span.raw(":Search  "));
             spans.add(Span.raw("d").bold());
             spans.add(Span.raw(":Diff  "));
+            spans.add(Span.raw("t").bold());
+            spans.add(Span.raw(":TreeImpact  "));
             spans.add(Span.raw("f").bold());
             spans.add(Span.raw(":Filter"));
         }
@@ -1651,6 +1715,7 @@ public class UpdatesTui extends ToolPanel {
                                 new HelpOverlay.Entry("Ctrl+Z", "Undo last change"),
                                 new HelpOverlay.Entry("f / F", "Cycle filter: all → patch → minor → major"),
                                 new HelpOverlay.Entry("d", "Show POM changes as a multi-file diff"),
+                                new HelpOverlay.Entry("t", "Tree impact — preview transitive changes from upgrade"),
                                 new HelpOverlay.Entry("i", "Toggle detail pane for selected row"))));
     }
 

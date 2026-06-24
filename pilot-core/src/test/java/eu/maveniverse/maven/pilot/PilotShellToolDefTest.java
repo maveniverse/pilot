@@ -46,7 +46,8 @@ class PilotShellToolDefTest {
                 .filter(PilotShell.ToolDef::aggregatable)
                 .map(PilotShell.ToolDef::id)
                 .toList();
-        assertThat(aggregatable).containsExactlyInAnyOrder("align", "updates", "conflicts", "audit", "dependencies");
+        assertThat(aggregatable)
+                .containsExactlyInAnyOrder("align", "updates", "conflicts", "audit", "dependencies", "plugins");
     }
 
     @Test
