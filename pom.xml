@@ -23,7 +23,7 @@ under the License.
   <parent>
     <groupId>eu.maveniverse.maven.parent</groupId>
     <artifactId>parent</artifactId>
-    <version>55</version>
+    <version>56</version>
   </parent>
 
   <groupId>eu.maveniverse.maven.pilot</groupId>
