@@ -692,12 +692,12 @@ public class ConflictsTui extends ToolPanel {
                         Constraint.length(6), Constraint.percentage(40),
                         Constraint.percentage(15), Constraint.fill())
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     /**

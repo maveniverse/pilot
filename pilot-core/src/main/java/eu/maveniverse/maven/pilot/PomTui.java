@@ -526,10 +526,7 @@ public class PomTui extends ToolPanel {
 
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
-            case RAW -> "Raw POM";
-            case EFFECTIVE -> "Effective POM";
-        }));
+        spans.addAll(theme.inlineTabIndicators(view.ordinal(), new String[] {"Raw POM", "Effective POM"}));
 
         if (searchMode) {
             spans.add(Span.raw("   Search: ").fg(theme.searchBarLabelColor()));
@@ -600,7 +597,7 @@ public class PomTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private void renderOriginDetail(Frame frame, Rect area, SnippetInfo snippet) {

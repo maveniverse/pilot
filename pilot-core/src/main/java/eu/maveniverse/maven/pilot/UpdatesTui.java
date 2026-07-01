@@ -664,7 +664,7 @@ public class UpdatesTui extends ToolPanel {
         }
 
         if (key.isKey(KeyCode.TAB) && !singleModule) {
-            view = TabBar.next(view, View.values());
+            setActiveSubView((view.ordinal() + 1) % View.values().length);
             return true;
         }
 
@@ -1064,10 +1064,9 @@ public class UpdatesTui extends ToolPanel {
         String title = loading ? "Checking Updates…" : "Dependency Updates";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
-            case DEPENDENCIES -> loading ? "Dependencies" : "Dependencies (" + updateCount() + ")";
-            case MODULES -> "Modules";
-        }));
+        spans.addAll(theme.inlineTabIndicators(
+                view.ordinal(),
+                new String[] {loading ? "Dependencies" : "Dependencies (" + updateCount() + ")", "Modules"}));
         if (!singleModule) {
             spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)")
                     .dim());
@@ -1110,13 +1109,13 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(depsTableWidths())
                 .highlightStyle(displayRows.isEmpty() ? Style.create() : theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS)
                 .block(block)
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row createReactorRow(ReactorRow row, boolean highlight) {
@@ -1126,7 +1125,7 @@ public class UpdatesTui extends ToolPanel {
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
         String check = group.applied ? "[·]" : "[ ]";
-        String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
+        String name = (group.expanded ? "▼ " : "▶ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
         }
@@ -1360,12 +1359,12 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(75), Constraint.percentage(25))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, moduleTableState);
+        renderTableWithScrollbar(frame, area, table, moduleTableState, rows.size());
     }
 
     private Row createModuleRow(ReactorModel.ModuleNode node) {
@@ -1374,7 +1373,7 @@ public class UpdatesTui extends ToolPanel {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "▾ " : "▸ ");
+            sb.append(node.expanded ? "▼ " : "▶ ");
         } else {
             sb.append("  ");
         }
