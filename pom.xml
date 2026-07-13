@@ -60,7 +60,7 @@ under the License.
     <mavenVersion>3.9.16</mavenVersion>
     <maven4Version>4.0.0-rc-5</maven4Version>
     <tamboui.version>0.4.0</tamboui.version>
-    <domtrip.version>1.5.2</domtrip.version>
+    <domtrip.version>1.6.0</domtrip.version>
     <jline.version>3.30.13</jline.version>
 
     <!-- SonarCloud -->
