@@ -218,11 +218,13 @@ public class DependenciesTui extends ToolPanel {
         DECLARED,
         TRANSITIVE,
         MANAGED,
+        DM_TREE,
         UNUSED_DECLARED,
         USED_TRANSITIVE
     }
 
     private final TreeTui treeTui;
+    private final TreeTui dmTreeTui;
     private final View[] views;
     private final List<DepEntry> declared;
     private final List<DepEntry> transitive;
@@ -311,6 +313,21 @@ public class DependenciesTui extends ToolPanel {
             String projectGav,
             boolean bytecodeAnalyzed,
             TreeTui treeTui) {
+        this(declared, transitive, managed, session, managementSession, projectGav, bytecodeAnalyzed, treeTui, null);
+    }
+
+    /** Panel-mode constructor with embedded tree view, DM tree view, and management session. */
+    @SuppressWarnings("squid:S107") // delegation target for simpler constructors
+    public DependenciesTui(
+            List<DepEntry> declared,
+            List<DepEntry> transitive,
+            List<ManagedEntry> managed,
+            PomEditSession session,
+            PomEditSession managementSession,
+            String projectGav,
+            boolean bytecodeAnalyzed,
+            TreeTui treeTui,
+            TreeTui dmTreeTui) {
         this.editSession = session;
         this.managementSession = managementSession;
         this.sessionProvider = null;
@@ -321,9 +338,14 @@ public class DependenciesTui extends ToolPanel {
         this.bytecodeAnalyzed = bytecodeAnalyzed;
         this.reactorMode = false;
         this.treeTui = treeTui;
-        this.views = treeTui != null
-                ? new View[] {View.TREE, View.DECLARED, View.TRANSITIVE, View.MANAGED}
-                : new View[] {View.DECLARED, View.TRANSITIVE, View.MANAGED};
+        this.dmTreeTui = dmTreeTui;
+        List<View> v = new ArrayList<>();
+        if (treeTui != null) v.add(View.TREE);
+        v.add(View.DECLARED);
+        v.add(View.TRANSITIVE);
+        v.add(View.MANAGED);
+        if (dmTreeTui != null) v.add(View.DM_TREE);
+        this.views = v.toArray(new View[0]);
         this.view = views[0];
         this.sortState = view != View.TREE ? new SortState(sortColumnCount()) : null;
         updateStatus();
@@ -351,6 +373,7 @@ public class DependenciesTui extends ToolPanel {
         this.bytecodeAnalyzed = true;
         this.reactorMode = true;
         this.treeTui = null;
+        this.dmTreeTui = null;
         this.views = new View[] {View.UNUSED_DECLARED, View.USED_TRANSITIVE};
         this.view = views[0];
         this.sortState = new SortState(sortColumnCount());
@@ -483,6 +506,10 @@ public class DependenciesTui extends ToolPanel {
             treeTui.render(frame, contentArea);
             return;
         }
+        if (view == View.DM_TREE && dmTreeTui != null) {
+            dmTreeTui.render(frame, contentArea);
+            return;
+        }
         if (view == View.MANAGED) {
             lastContentHeight = contentArea.height();
             renderManagedTable(frame, contentArea);
@@ -516,7 +543,7 @@ public class DependenciesTui extends ToolPanel {
             int idx = key.string().charAt(0) - '1';
             if (idx < views.length && views[idx] != view) {
                 view = views[idx];
-                if (view != View.TREE) {
+                if (view != View.TREE && view != View.DM_TREE) {
                     tableState.select(0);
                     clearSearch();
                     sortState = new SortState(sortColumnCount());
@@ -528,6 +555,9 @@ public class DependenciesTui extends ToolPanel {
         // Tree view: delegate to TreeTui
         if (view == View.TREE && treeTui != null) {
             return treeTui.handleKeyEvent(key);
+        }
+        if (view == View.DM_TREE && dmTreeTui != null) {
+            return dmTreeTui.handleKeyEvent(key);
         }
 
         if (handleSearchInput(key)) return true;
@@ -595,6 +625,9 @@ public class DependenciesTui extends ToolPanel {
         if (view == View.TREE && treeTui != null) {
             return treeTui.handleMouseEvent(mouse, area);
         }
+        if (view == View.DM_TREE && dmTreeTui != null) {
+            return dmTreeTui.handleMouseEvent(mouse, area);
+        }
         if (view != View.MANAGED && handleMouseSortHeader(mouse, List.of(getTableWidths()))) return true;
         return handleMouseTableInteraction(mouse, currentListSize(), tableState);
     }
@@ -615,7 +648,7 @@ public class DependenciesTui extends ToolPanel {
     @Override
     void setActiveSubView(int index) {
         view = views[index];
-        if (view != View.TREE) {
+        if (view != View.TREE && view != View.DM_TREE) {
             tableState.select(0);
             clearSearch();
             sortState = new SortState(sortColumnCount());
@@ -632,6 +665,7 @@ public class DependenciesTui extends ToolPanel {
                         case DECLARED -> "Declared: " + declared.size();
                         case TRANSITIVE -> "Transitive: " + transitive.size();
                         case MANAGED -> "Managed: " + managed.size();
+                        case DM_TREE -> "DM Tree: " + (dmTreeTui != null ? dmTreeTui.nodeCount() : 0);
                         case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
                         case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
                     });
@@ -644,6 +678,9 @@ public class DependenciesTui extends ToolPanel {
         if (view == View.TREE && treeTui != null) {
             return treeTui.status();
         }
+        if (view == View.DM_TREE && dmTreeTui != null) {
+            return dmTreeTui.status();
+        }
         String search = searchStatus();
         if (search != null) {
             return searchMode ? search : status + " — " + search;
@@ -655,6 +692,9 @@ public class DependenciesTui extends ToolPanel {
     public List<Span> keyHints() {
         if (view == View.TREE && treeTui != null) {
             return treeTui.keyHints();
+        }
+        if (view == View.DM_TREE && dmTreeTui != null) {
+            return dmTreeTui.keyHints();
         }
         List<Span> searchHints = searchKeyHints();
         if (!searchHints.isEmpty()) {
@@ -766,7 +806,7 @@ public class DependenciesTui extends ToolPanel {
 
     private int currentListSize() {
         return switch (view) {
-            case TREE -> 0;
+            case TREE, DM_TREE -> 0;
             case DECLARED, UNUSED_DECLARED -> declared.size();
             case TRANSITIVE, USED_TRANSITIVE -> transitive.size();
             case MANAGED -> managed.size();
@@ -1236,6 +1276,7 @@ public class DependenciesTui extends ToolPanel {
             case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
             case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
             case MANAGED -> managedLabel;
+            case DM_TREE -> "DM Tree: " + (dmTreeTui != null ? dmTreeTui.nodeCount() : 0);
         }));
 
         if (isDirty()) {

@@ -127,4 +127,35 @@ class VersionComparatorTest {
         assertThat(VersionComparator.classify("1.0", "1.1")).isEqualTo(VersionComparator.UpdateType.MINOR);
         assertThat(VersionComparator.classify("1.0", "2.0")).isEqualTo(VersionComparator.UpdateType.MAJOR);
     }
+
+    @Test
+    void updateTypeLabelReturnsCorrectStrings() {
+        assertThat(VersionComparator.updateTypeLabel(VersionComparator.UpdateType.PATCH))
+                .isEqualTo("patch");
+        assertThat(VersionComparator.updateTypeLabel(VersionComparator.UpdateType.MINOR))
+                .isEqualTo("minor");
+        assertThat(VersionComparator.updateTypeLabel(VersionComparator.UpdateType.MAJOR))
+                .isEqualTo("major");
+        assertThat(VersionComparator.updateTypeLabel(null)).isEmpty();
+    }
+
+    @Test
+    void updateTypeStyleReturnsNonNull() {
+        assertThat(VersionComparator.updateTypeStyle(VersionComparator.UpdateType.PATCH))
+                .isNotNull();
+        assertThat(VersionComparator.updateTypeStyle(VersionComparator.UpdateType.MINOR))
+                .isNotNull();
+        assertThat(VersionComparator.updateTypeStyle(VersionComparator.UpdateType.MAJOR))
+                .isNotNull();
+        assertThat(VersionComparator.updateTypeStyle(null)).isNotNull();
+    }
+
+    @Test
+    void formatLibYearsFormatsCorrectly() {
+        assertThat(VersionComparator.formatLibYears(0.0f)).isEqualTo("0.0");
+        assertThat(VersionComparator.formatLibYears(1.5f)).isEqualTo("1.5");
+        assertThat(VersionComparator.formatLibYears(2.34f)).isEqualTo("2.3");
+        assertThat(VersionComparator.formatLibYears(0.07f)).isEqualTo("0.1");
+        assertThat(VersionComparator.formatLibYears(10.9f)).isEqualTo("10.9");
+    }
 }

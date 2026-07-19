@@ -99,6 +99,23 @@ class DiffOverlay {
         return totalChanges;
     }
 
+    void openTreeImpact(List<TreeDiff.DiffEntry> entries) {
+        List<UnifiedDiff.DiffLine> result = new ArrayList<>();
+        for (TreeDiff.DiffEntry entry : entries) {
+            String indent = "  ".repeat(entry.depth());
+            String line = indent + entry.gav();
+            UnifiedDiff.Type type =
+                    switch (entry.side()) {
+                        case LEFT -> UnifiedDiff.Type.REMOVED;
+                        case RIGHT -> UnifiedDiff.Type.ADDED;
+                        case SAME -> UnifiedDiff.Type.CONTEXT;
+                    };
+            result.add(new UnifiedDiff.DiffLine(type, line));
+        }
+        lines = result;
+        scroll = 0;
+    }
+
     void close() {
         lines = null;
         scroll = 0;
