@@ -23,8 +23,8 @@ import org.apache.maven.api.di.Provides;
 import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.spi.connector.transport.http.ChecksumExtractor;
 import org.eclipse.aether.spi.io.PathProcessor;
+import org.eclipse.aether.transport.apache.ApacheTransporterFactory;
 import org.eclipse.aether.transport.file.FileTransporterFactory;
-import org.eclipse.aether.transport.jdk.JdkTransporterFactory;
 
 /**
  * Bridges Aether transporter factories (annotated with {@code javax.inject.Named})
@@ -40,8 +40,8 @@ class TransporterBindings {
     }
 
     @Provides
-    @Named("jdk")
-    TransporterFactory jdkTransporterFactory(ChecksumExtractor checksumExtractor, PathProcessor pathProcessor) {
-        return new JdkTransporterFactory(checksumExtractor, pathProcessor);
+    @Named("apache")
+    TransporterFactory httpTransporterFactory(ChecksumExtractor checksumExtractor, PathProcessor pathProcessor) {
+        return new ApacheTransporterFactory(checksumExtractor, pathProcessor);
     }
 }
