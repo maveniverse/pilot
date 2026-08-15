@@ -28,7 +28,7 @@ jobs:
         run: |
           ./mvnw -B verify
           mkdir -p target/classes
-          ./mvnw -B sonar:sonar
+          ./mvnw -B org.sonarsource.scanner.maven:sonar-scanner-maven:sonar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
