@@ -621,6 +621,7 @@ public class AlignTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (isScrollbarGutter(mouse, area)) return false;
         if (mouse.isClick()) {
             int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header
             if (row >= 0 && row < ROW_COUNT) {

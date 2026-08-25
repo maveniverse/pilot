@@ -125,10 +125,6 @@ public class SearchTui extends ToolPanel {
         pomInfoCache.put(groupId + ":" + artifactId + ":" + version, info);
     }
 
-    static List<String> versionsOrDefault(List<String> vers) {
-        return vers.isEmpty() ? List.of("") : vers;
-    }
-
     // Status
     private String status;
     private boolean loading;
@@ -280,6 +276,7 @@ public class SearchTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseSortHeader(
                 mouse, List.of(Constraint.percentage(45), Constraint.percentage(30), Constraint.percentage(25)))) {
             return true;
@@ -369,7 +366,7 @@ public class SearchTui extends ToolPanel {
         }
         if (key.code() == KeyCode.CHAR) {
             searchBuffer.insert(cursorPos, key.string());
-            cursorPos++;
+            cursorPos += key.string().length();
             onQueryChanged();
             return true;
         }
@@ -430,7 +427,7 @@ public class SearchTui extends ToolPanel {
         if (key.code() == KeyCode.CHAR) {
             focus = Focus.SEARCH;
             searchBuffer.insert(cursorPos, key.string());
-            cursorPos++;
+            cursorPos += key.string().length();
             onQueryChanged();
             return true;
         }
@@ -818,22 +815,23 @@ public class SearchTui extends ToolPanel {
         for (int i = 0; i < artifacts.size(); i++) {
             String[] a = artifacts.get(i);
             String key = a[0] + ":" + a[1];
-            if (versionCache.containsKey(key)) {
-                continue;
+            if (!versionCache.containsKey(key)) {
+                prefetchVersionForArtifact(a[0], a[1], a[2], gen);
             }
-            final String g = a[0];
-            final String artId = a[1];
-            CompletableFuture.supplyAsync(() -> fetchVersionsFromMetadata(g, artId), httpPool)
-                    .thenAccept(vers -> runner.runOnRenderThread(() -> {
-                        if (gen != searchGeneration) {
-                            return; // stale
-                        }
-                        String k = g + ":" + artId;
-                        if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, versionsOrDefault(vers));
-                        }
-                    }));
         }
+    }
+
+    private void prefetchVersionForArtifact(String g, String artId, String version, int gen) {
+        CompletableFuture.supplyAsync(() -> fetchVersionsFromMetadata(g, artId), httpPool)
+                .thenAccept(vers -> runner.runOnRenderThread(() -> {
+                    if (gen != searchGeneration) {
+                        return; // stale
+                    }
+                    String k = g + ":" + artId;
+                    if (!versionCache.containsKey(k)) {
+                        versionCache.put(k, vers.isEmpty() ? List.of(version) : vers);
+                    }
+                }));
     }
 
     /**

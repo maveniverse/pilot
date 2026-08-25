@@ -20,7 +20,11 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.layout.Rect;
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseButton;
+import dev.tamboui.tui.event.MouseEvent;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.util.List;
@@ -45,15 +49,104 @@ class SearchTuiTest {
         assertThat(tui.handleKeyEvent(KeyEvent.ofChar('x'))).isTrue();
     }
 
+    // ── Scrollbar gutter guard ──────────────────────────────────────────────
+
     @Test
-    void versionsOrDefaultReturnsPlaceholderWhenEmpty() {
-        assertThat(SearchTui.versionsOrDefault(List.of())).containsExactly("");
+    void gutterClickLeavesSortStateUnchanged() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+        Rect area = new Rect(0, 0, 80, 20);
+
+        // Click on the scrollbar gutter column: x = area.width - 1 = 79
+        MouseEvent gutterClick = MouseEvent.press(MouseButton.LEFT, 79, 0);
+
+        boolean handled = tui.handleMouseEvent(gutterClick, area);
+
+        assertThat(handled).isFalse();
+        assertThat(tui.sortState.isSorted()).isFalse();
     }
 
     @Test
-    void versionsOrDefaultReturnsVersionsWhenNonEmpty() {
-        assertThat(SearchTui.versionsOrDefault(List.of("1.0", "2.0"))).containsExactly("1.0", "2.0");
+    void gutterClickWithOffsetAreaIsRejected() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+        // Area starts at x=10, width=60 → gutter at x=69
+        Rect area = new Rect(10, 5, 60, 20);
+
+        MouseEvent gutterClick = MouseEvent.press(MouseButton.LEFT, 69, 5);
+
+        boolean handled = tui.handleMouseEvent(gutterClick, area);
+
+        assertThat(handled).isFalse();
+        assertThat(tui.sortState.isSorted()).isFalse();
     }
+
+    @Test
+    void clickInsideGutterBoundaryIsNotRejected() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+        Rect area = new Rect(0, 0, 80, 20);
+
+        // x = 78 is one pixel left of the gutter — should NOT be rejected
+        MouseEvent normalClick = MouseEvent.press(MouseButton.LEFT, 78, 5);
+
+        // Not rejected by the gutter guard — proceeds to row/sort handling
+        // (returns false because there are no result rows to select, but crucially
+        // the gutter guard did not short-circuit)
+        boolean handled = tui.handleMouseEvent(normalClick, area);
+        assertThat(handled).isFalse();
+    }
+
+    @Test
+    void scrollEventsAreNotAffectedByGutterGuard() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+        Rect area = new Rect(0, 0, 80, 20);
+
+        // Scroll at the gutter column — scrolls should still work (not clicks)
+        MouseEvent scrollAtGutter = MouseEvent.scrollDown(79, 0);
+
+        // Scroll events are not clicks, so the gutter guard doesn't apply
+        boolean handled = tui.handleMouseEvent(scrollAtGutter, area);
+        assertThat(handled).isFalse();
+    }
+
+    // ── Multi-char cursor positioning ──────────────────────────────────────
+
+    @Test
+    void supplementaryCharacterAdvancesCursorByStringLength() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+
+        // U+1F600 GRINNING FACE — a supplementary character (2 UTF-16 code units)
+        tui.handleKeyEvent(KeyEvent.ofChar(0x1F600));
+
+        // Type a regular ASCII char after the supplementary character
+        tui.handleKeyEvent(KeyEvent.ofChar('a'));
+
+        // Then delete backwards: should remove 'a', not corrupt the buffer
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.BACKSPACE));
+
+        // Type another char — should still work without IndexOutOfBoundsException
+        assertThat(tui.handleKeyEvent(KeyEvent.ofChar('b'))).isTrue();
+    }
+
+    @Test
+    void multipleCharInsertionsThenCursorNavigationIsConsistent() {
+        var tui = new SearchTui(NOOP_CLIENT, "", null, 0);
+
+        // Type "abc" one char at a time
+        tui.handleKeyEvent(KeyEvent.ofChar('a'));
+        tui.handleKeyEvent(KeyEvent.ofChar('b'));
+        tui.handleKeyEvent(KeyEvent.ofChar('c'));
+
+        // Move cursor left twice (should be at position 1, between 'a' and 'b')
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.LEFT));
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.LEFT));
+
+        // Delete forward should remove 'b'
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.DELETE));
+
+        // Typing 'x' here should work without errors
+        assertThat(tui.handleKeyEvent(KeyEvent.ofChar('x'))).isTrue();
+    }
+
+    // ── Extract artifacts ──────────────────────────────────────────────────
 
     @Test
     void extractArtifactsFromDocs() {

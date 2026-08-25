@@ -298,6 +298,7 @@ public class PomTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
         if (mouse.isClick()) {
             return handlePomMouseClick(mouse, area);

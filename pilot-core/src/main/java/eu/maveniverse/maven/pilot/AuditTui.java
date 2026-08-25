@@ -1824,6 +1824,7 @@ public class AuditTui extends ToolPanel {
         if (diffOverlay.isActive()) {
             return diffOverlay.handleMouseScroll(mouse, lastContentHeight);
         }
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
         if (handleMouseSortHeader(mouse, currentTableWidths())) return true;
         if (mouse.isClick()) {

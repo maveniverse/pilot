@@ -1514,6 +1514,7 @@ public class UpdatesTui extends ToolPanel {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
         }
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
         List<Constraint> widths = view == View.DEPENDENCIES
                 ? depsTableWidths()

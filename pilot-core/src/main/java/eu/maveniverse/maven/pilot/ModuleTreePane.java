@@ -224,6 +224,7 @@ class ModuleTreePane {
     }
 
     boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (mouse.isClick() && mouse.x() >= area.x() + area.width() - 1) return false; // scrollbar gutter
         if (mouse.isClick()) {
             return handleMouseClick(mouse, area);
         }

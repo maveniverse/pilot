@@ -532,6 +532,21 @@ public abstract class ToolPanel {
     }
 
     /**
+     * Test whether a mouse click lands on the scrollbar gutter column — the
+     * rightmost column of a panel area reserved for the scrollbar track.
+     * Panels that render scrollbars should call this early in
+     * {@link #handleMouseEvent(MouseEvent, Rect)} to avoid selecting a data
+     * row or toggling a sort header when the user clicks the scrollbar.
+     *
+     * @param mouse the mouse event (only clicks are meaningful)
+     * @param area  the outer area of the panel
+     * @return {@code true} if the click is on the scrollbar gutter
+     */
+    protected static boolean isScrollbarGutter(MouseEvent mouse, Rect area) {
+        return mouse.isClick() && mouse.x() >= area.x() + area.width() - 1;
+    }
+
+    /**
      * Handle mouse click on a table header row to toggle column sort.
      * Panels should call this in {@link #handleMouseEvent} and call
      * {@link #setTableArea(Rect, Block)} during rendering.
