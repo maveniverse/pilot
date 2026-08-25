@@ -591,6 +591,7 @@ public class DependenciesTui extends ToolPanel {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
         }
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
         if (view == View.TREE && treeTui != null) {
             return treeTui.handleMouseEvent(mouse, area);

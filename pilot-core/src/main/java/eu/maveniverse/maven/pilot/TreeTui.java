@@ -173,6 +173,7 @@ public class TreeTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseSortHeader(mouse, List.of(TREE_WIDTHS))) return true;
         if (mouse.isClick()) {
             return handleTreeMouseClick(mouse, area);

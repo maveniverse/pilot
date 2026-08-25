@@ -335,6 +335,7 @@ public class ConflictsTui extends ToolPanel {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
         }
+        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseSortHeader(
                 mouse,
                 List.of(
