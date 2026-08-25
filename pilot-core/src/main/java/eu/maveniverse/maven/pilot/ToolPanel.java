@@ -390,6 +390,8 @@ public abstract class ToolPanel {
      * ioctl() calls fail and corrupt stdin — we must use the JLine backend instead.
      * For direct Maven (including Maven 4 which bundles JLine), Panama avoids
      * classloader conflicts with Maven's own JLine.
+     * The Panama backend requires Java 22+ (the tamboui-panama-backend classes are
+     * compiled for Java 22); on earlier runtimes we fall back to the JLine backend.
      */
     static void configureBackend() {
         if (System.getProperty("tamboui.backend") != null) {
@@ -397,8 +399,10 @@ public abstract class ToolPanel {
         }
         if (System.getProperty("mvnd.home") != null) {
             System.setProperty("tamboui.backend", "jline3");
-        } else {
+        } else if (Runtime.version().feature() >= 22) {
             System.setProperty("tamboui.backend", "panama,jline3");
+        } else {
+            System.setProperty("tamboui.backend", "jline3");
         }
     }
 
