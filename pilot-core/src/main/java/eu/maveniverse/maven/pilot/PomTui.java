@@ -212,10 +212,12 @@ public class PomTui extends ToolPanel {
             var zones = Layout.vertical()
                     .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(detailHeight))
                     .split(contentArea);
+            lastContentHeight = zones.get(0).height();
             renderXmlTree(frame, zones.get(0), snippet);
             renderDivider(frame, zones.get(1));
             renderOriginDetail(frame, zones.get(2), snippet);
         } else {
+            lastContentHeight = contentArea.height();
             renderXmlTree(frame, contentArea, null);
         }
     }
@@ -298,10 +300,10 @@ public class PomTui extends ToolPanel {
 
     @Override
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
-        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
+        if (isScrollbarGutter(mouse, area)) return false;
         if (mouse.isClick()) {
-            return handlePomMouseClick(mouse, area);
+            return handlePomMouseClick(mouse);
         }
         if (mouse.isScroll()) {
             return handlePomMouseScroll(mouse);
@@ -309,14 +311,19 @@ public class PomTui extends ToolPanel {
         return false;
     }
 
-    private boolean handlePomMouseClick(MouseEvent mouse, Rect area) {
+    private boolean handlePomMouseClick(MouseEvent mouse) {
+        if (lastTableInner == null) return false;
         var visible = currentModel().visibleNodes();
-        int row = mouse.y() - area.y() - 2 + tableState.offset(); // tab bar + border
+        int dataStartY = lastTableInner.y(); // no header row
+        int visibleRows = lastTableInner.height();
+        if (mouse.y() < dataStartY || mouse.y() >= dataStartY + visibleRows) return false;
+        int row = mouse.y() - dataStartY + tableState.offset();
         if (row < 0 || row >= visible.size()) return false;
         tableState.select(row);
         var node = visible.get(row);
         if (node instanceof Element e && XmlTreeModel.hasTreeChildren(e)) {
-            int arrowX = area.x() + 1 + 2 + currentModel().relativeDepth(e) * 2; // border(1) + highlight(2) + indent
+            int arrowX =
+                    lastTableInner.x() + lastHighlightWidth + currentModel().relativeDepth(e) * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 currentModel().setExpanded(e, !currentModel().isExpanded(e));
             }
@@ -404,6 +411,7 @@ public class PomTui extends ToolPanel {
     void setActiveSubView(int index) {
         view = View.values()[index];
         tableState.select(0);
+        clearSearch();
     }
 
     @Override
@@ -527,10 +535,7 @@ public class PomTui extends ToolPanel {
 
     private void renderHeader(Frame frame, Rect area) {
         List<Span> spans = new ArrayList<>();
-        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
-            case RAW -> "Raw POM";
-            case EFFECTIVE -> "Effective POM";
-        }));
+        spans.addAll(theme.inlineTabIndicators(view.ordinal(), new String[] {"Raw POM", "Effective POM"}));
 
         if (searchMode) {
             spans.add(Span.raw("   Search: ").fg(theme.searchBarLabelColor()));
@@ -572,11 +577,14 @@ public class PomTui extends ToolPanel {
 
         var visible = model.visibleNodes();
         if (visible.isEmpty()) {
+            clearTableArea();
             Paragraph empty =
                     Paragraph.builder().text("Empty").block(block).centered().build();
             frame.renderWidget(empty, area);
             return;
         }
+
+        setTableArea(area, block);
 
         String searchQuery = currentSearchQuery();
 
@@ -601,7 +609,7 @@ public class PomTui extends ToolPanel {
                 .block(block)
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private void renderOriginDetail(Frame frame, Rect area, SnippetInfo snippet) {

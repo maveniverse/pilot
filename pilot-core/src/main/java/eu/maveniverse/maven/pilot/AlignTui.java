@@ -623,8 +623,8 @@ public class AlignTui extends ToolPanel {
     public boolean handleMouseEvent(MouseEvent mouse, Rect area) {
         if (isScrollbarGutter(mouse, area)) return false;
         if (mouse.isClick()) {
-            int row = mouse.y() - area.y() - 2 + tableState.offset(); // border + header
-            if (row >= 0 && row < ROW_COUNT) {
+            int row = mouseToTableRow(mouse, ROW_COUNT, tableState);
+            if (row >= 0) {
                 tableState.select(row);
                 return true;
             }
@@ -748,11 +748,12 @@ public class AlignTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(30), Constraint.percentage(35), Constraint.percentage(35))
                 .highlightStyle(Style.create().reversed().bold())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
-        frame.renderStatefulWidget(table, area, tableState);
+        setTableArea(area, block);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row createConventionRow(String name, String detected, String selected, boolean changed) {

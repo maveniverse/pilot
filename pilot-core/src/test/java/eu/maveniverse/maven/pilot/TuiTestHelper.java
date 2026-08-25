@@ -73,6 +73,44 @@ final class TuiTestHelper {
     }
 
     /**
+     * Find the (x, y) buffer coordinate of the first occurrence of a target string.
+     * Searches the buffer cell-by-cell so the returned coordinates are valid for MouseEvent.
+     */
+    static int[] findInBuffer(Buffer buffer, String target) {
+        for (int y = 0; y < buffer.height(); y++) {
+            for (int x = 0; x <= buffer.width() - target.length(); x++) {
+                if (bufferMatchesAt(buffer, x, y, target)) {
+                    return new int[] {x, y};
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean bufferMatchesAt(Buffer buffer, int startX, int y, String target) {
+        int ti = 0;
+        for (int x = startX; x < buffer.width() && ti < target.length(); x++) {
+            Cell cell = buffer.get(x, y);
+            if (cell.isContinuation()) continue;
+            String sym = cell.symbol();
+            if (sym.isEmpty()) sym = " ";
+            for (int si = 0; si < sym.length() && ti < target.length(); si++, ti++) {
+                if (sym.charAt(si) != target.charAt(ti)) return false;
+            }
+        }
+        return ti == target.length();
+    }
+
+    /**
+     * Render and return the buffer (not text) for direct coordinate lookup.
+     */
+    static Buffer renderToBuffer(int width, int height, Consumer<Frame> renderer) {
+        var terminal = new Terminal<>(new TestBackend(width, height));
+        var frame = terminal.draw(renderer);
+        return frame.buffer();
+    }
+
+    /**
      * Count non-overlapping occurrences of a substring in a string.
      */
     static int countOccurrences(String text, String target) {

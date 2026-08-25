@@ -63,7 +63,6 @@ public class DependenciesTui extends ToolPanel {
     private static final String SECTION_DEPENDENCIES = "dependencies";
     private static final String HINT_REMOVE = ":Remove  ";
     private static final String TARGET_DEPENDENCY = "dependency";
-    private static final String HIGHLIGHT_SYMBOL = "▸ ";
 
     // Maven 3 scopes (modelVersion 4.0.0)
     private static final List<String> SCOPES_3X = List.of(COMPILE_SCOPE, "provided", "runtime", "test");
@@ -591,8 +590,8 @@ public class DependenciesTui extends ToolPanel {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
         }
-        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
+        if (isScrollbarGutter(mouse, area)) return false;
         if (view == View.TREE && treeTui != null) {
             return treeTui.handleMouseEvent(mouse, area);
         }
@@ -1230,14 +1229,25 @@ public class DependenciesTui extends ToolPanel {
         String declaredLabel = "Declared: " + declared.size() + (unused > 0 ? " (" + unused + " unused)" : "");
         String transitiveLabel = "Transitive: " + transitive.size() + (used > 0 ? " (" + used + " used)" : "");
         String managedLabel = "Managed: " + managed.size();
-        spans.addAll(TabBar.render(view, views, v -> switch (v) {
-            case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
-            case DECLARED -> declaredLabel;
-            case TRANSITIVE -> transitiveLabel;
-            case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
-            case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
-            case MANAGED -> managedLabel;
-        }));
+        String[] labels = new String[views.length];
+        for (int i = 0; i < views.length; i++) {
+            labels[i] = switch (views[i]) {
+                case TREE -> "Tree: " + (treeTui != null ? treeTui.nodeCount() : 0);
+                case DECLARED -> declaredLabel;
+                case TRANSITIVE -> transitiveLabel;
+                case UNUSED_DECLARED -> "Unused Declared: " + declared.size();
+                case USED_TRANSITIVE -> "Used Transitive: " + transitive.size();
+                case MANAGED -> managedLabel;
+            };
+        }
+        int activeIdx = 0;
+        for (int i = 0; i < views.length; i++) {
+            if (views[i] == view) {
+                activeIdx = i;
+                break;
+            }
+        }
+        spans.addAll(theme.inlineTabIndicators(activeIdx, labels));
 
         if (isDirty()) {
             spans.add(theme.dirtyIndicator());
@@ -1304,7 +1314,7 @@ public class DependenciesTui extends ToolPanel {
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private void renderTable(Frame frame, Rect area) {
@@ -1354,7 +1364,7 @@ public class DependenciesTui extends ToolPanel {
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row buildTableHeader() {
