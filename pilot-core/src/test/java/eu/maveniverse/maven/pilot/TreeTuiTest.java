@@ -79,8 +79,11 @@ class TreeTuiTest {
         // One pixel inside the gutter boundary: x = 78 (not the gutter)
         MouseEvent normalClick = MouseEvent.press(MouseButton.LEFT, 78, 5);
 
-        // Not rejected by the gutter guard — proceeds to row/sort handling
-        tui.handleMouseEvent(normalClick, area);
+        // Not rejected by the gutter guard — proceeds past the guard into
+        // row/sort handling (returns false because row 4 > visible node count,
+        // but the gutter guard did not short-circuit)
+        boolean handled = tui.handleMouseEvent(normalClick, area);
+        assertThat(handled).isFalse();
     }
 
     @Test

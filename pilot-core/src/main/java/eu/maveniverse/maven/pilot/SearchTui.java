@@ -815,23 +815,23 @@ public class SearchTui extends ToolPanel {
         for (int i = 0; i < artifacts.size(); i++) {
             String[] a = artifacts.get(i);
             String key = a[0] + ":" + a[1];
-            if (versionCache.containsKey(key)) {
-                continue;
+            if (!versionCache.containsKey(key)) {
+                prefetchVersionForArtifact(a[0], a[1], a[2], gen);
             }
-            final String g = a[0];
-            final String artId = a[1];
-            final String version = a[2];
-            CompletableFuture.supplyAsync(() -> fetchVersionsFromMetadata(g, artId), httpPool)
-                    .thenAccept(vers -> runner.runOnRenderThread(() -> {
-                        if (gen != searchGeneration) {
-                            return; // stale
-                        }
-                        String k = g + ":" + artId;
-                        if (!versionCache.containsKey(k)) {
-                            versionCache.put(k, vers.isEmpty() ? List.of(version) : vers);
-                        }
-                    }));
         }
+    }
+
+    private void prefetchVersionForArtifact(String g, String artId, String version, int gen) {
+        CompletableFuture.supplyAsync(() -> fetchVersionsFromMetadata(g, artId), httpPool)
+                .thenAccept(vers -> runner.runOnRenderThread(() -> {
+                    if (gen != searchGeneration) {
+                        return; // stale
+                    }
+                    String k = g + ":" + artId;
+                    if (!versionCache.containsKey(k)) {
+                        versionCache.put(k, vers.isEmpty() ? List.of(version) : vers);
+                    }
+                }));
     }
 
     /**

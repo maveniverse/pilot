@@ -88,7 +88,10 @@ class SearchTuiTest {
         MouseEvent normalClick = MouseEvent.press(MouseButton.LEFT, 78, 5);
 
         // Not rejected by the gutter guard — proceeds to row/sort handling
-        tui.handleMouseEvent(normalClick, area);
+        // (returns false because there are no result rows to select, but crucially
+        // the gutter guard did not short-circuit)
+        boolean handled = tui.handleMouseEvent(normalClick, area);
+        assertThat(handled).isFalse();
     }
 
     @Test
@@ -100,7 +103,8 @@ class SearchTuiTest {
         MouseEvent scrollAtGutter = MouseEvent.scrollDown(79, 0);
 
         // Scroll events are not clicks, so the gutter guard doesn't apply
-        tui.handleMouseEvent(scrollAtGutter, area);
+        boolean handled = tui.handleMouseEvent(scrollAtGutter, area);
+        assertThat(handled).isFalse();
     }
 
     // ── Multi-char cursor positioning ──────────────────────────────────────
