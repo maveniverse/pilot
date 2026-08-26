@@ -22,6 +22,7 @@ import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Span;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -51,6 +52,7 @@ class ModuleTreePane {
     private final TableState tableState = new TableState();
     private final Consumer<PilotProject> onSelectionChanged;
     private boolean focused;
+    private Rect lastTableInner;
 
     private final SearchController searchController;
 
@@ -235,13 +237,18 @@ class ModuleTreePane {
     }
 
     private boolean handleMouseClick(MouseEvent mouse, Rect area) {
-        int row = mouse.y() - area.y() - 1 + tableState.offset(); // border + scroll
+        if (lastTableInner == null) return false;
+        if (mouse.x() >= area.x() + area.width() - 1) return false; // scrollbar gutter
+        int dataStartY = lastTableInner.y(); // no header row
+        int visibleRows = lastTableInner.height();
+        if (mouse.y() < dataStartY || mouse.y() >= dataStartY + visibleRows) return false;
+        int row = mouse.y() - dataStartY + tableState.offset();
         var visible = visibleNodes();
         if (row < 0 || row >= visible.size()) return false;
         tableState.select(row);
         var node = visible.get(row);
         if (node.hasChildren()) {
-            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+            int arrowX = lastTableInner.x() + CharWidth.of(theme.highlightSymbol()) + node.depth * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
             }
@@ -308,6 +315,7 @@ class ModuleTreePane {
         List<ReactorModel.ModuleNode> visible = visibleNodes();
 
         if (visible.isEmpty()) {
+            lastTableInner = null;
             Paragraph empty = Paragraph.builder()
                     .text("No modules")
                     .block(block)
@@ -334,6 +342,7 @@ class ModuleTreePane {
         List<ReactorModel.ModuleNode> visible = visibleNodes();
 
         if (visible.isEmpty()) {
+            lastTableInner = null;
             Paragraph empty = Paragraph.builder()
                     .text("No modules")
                     .block(block)
@@ -348,8 +357,8 @@ class ModuleTreePane {
 
     private void renderTable(
             Frame frame, Rect area, Block block, List<ReactorModel.ModuleNode> visible, boolean showGa) {
-        // GA column width = half the area minus borders (2) and highlight symbol (2)
-        int gaColWidth = showGa ? (area.width() - 4) / 2 : 0;
+        int hlw = CharWidth.of(theme.highlightSymbol());
+        int gaColWidth = showGa ? (area.width() - 2 - hlw) / 2 : 0;
 
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < visible.size(); i++) {
@@ -360,19 +369,19 @@ class ModuleTreePane {
             rows.add(row);
         }
 
-        Table.Builder builder = Table.builder()
+        Table table = Table.builder()
                 .rows(rows)
                 .highlightStyle(theme.highlightStyle())
                 .highlightSymbol(theme.highlightSymbol())
-                .block(block);
+                .block(block)
+                .widths(
+                        showGa
+                                ? new Constraint[] {Constraint.percentage(50), Constraint.percentage(50)}
+                                : new Constraint[] {Constraint.fill()})
+                .build();
 
-        if (showGa) {
-            builder.widths(Constraint.percentage(50), Constraint.percentage(50));
-        } else {
-            builder.widths(Constraint.fill());
-        }
-
-        frame.renderStatefulWidget(builder.build(), area, tableState);
+        lastTableInner = block.inner(area);
+        ToolPanel.renderTableWithScrollbar(frame, area, table, tableState, visible.size());
     }
 
     private Row buildRow(ReactorModel.ModuleNode node, boolean showGa, int gaColWidth) {
@@ -381,7 +390,7 @@ class ModuleTreePane {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "▾ " : "▸ ");
+            sb.append(node.expanded ? "▼ " : "▶ ");
         } else {
             sb.append("  ");
         }

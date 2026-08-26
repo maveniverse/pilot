@@ -664,7 +664,7 @@ public class UpdatesTui extends ToolPanel {
         }
 
         if (key.isKey(KeyCode.TAB) && !singleModule) {
-            view = TabBar.next(view, View.values());
+            setActiveSubView((view.ordinal() + 1) % View.values().length);
             return true;
         }
 
@@ -1064,10 +1064,9 @@ public class UpdatesTui extends ToolPanel {
         String title = loading ? "Checking Updates…" : "Dependency Updates";
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" " + projectGav).bold().cyan());
-        spans.addAll(TabBar.render(view, View.values(), v -> switch (v) {
-            case DEPENDENCIES -> loading ? "Dependencies" : "Dependencies (" + updateCount() + ")";
-            case MODULES -> "Modules";
-        }));
+        spans.addAll(theme.inlineTabIndicators(
+                view.ordinal(),
+                new String[] {loading ? "Dependencies" : "Dependencies (" + updateCount() + ")", "Modules"}));
         if (!singleModule) {
             spans.add(Span.raw("  (" + reactorModel.allModules.size() + " modules)")
                     .dim());
@@ -1110,13 +1109,13 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(depsTableWidths())
                 .highlightStyle(displayRows.isEmpty() ? Style.create() : theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS)
                 .block(block)
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, tableState);
+        renderTableWithScrollbar(frame, area, table, tableState, rows.size());
     }
 
     private Row createReactorRow(ReactorRow row, boolean highlight) {
@@ -1126,7 +1125,7 @@ public class UpdatesTui extends ToolPanel {
     private Row createGroupHeaderRow(ReactorRow row, boolean highlight) {
         var group = row.propertyGroup;
         String check = group.applied ? "[·]" : "[ ]";
-        String name = (group.expanded ? "▾ " : "▸ ") + "${" + group.propertyName + "}";
+        String name = (group.expanded ? "▼ " : "▶ ") + "${" + group.propertyName + "}";
         if (duplicatePropertyNames.contains(group.propertyName)) {
             name += " (" + group.origin.artifactId + ")";
         }
@@ -1152,7 +1151,7 @@ public class UpdatesTui extends ToolPanel {
 
     private Row createGroupedDependencyRow(ReactorCollector.AggregatedDependency dep, boolean highlight) {
         String check = "   ";
-        String ga = "  ↳ " + dep.artifactId;
+        String ga = "    " + dep.artifactId;
         Style style = dep.applied ? Style.create().dim() : Style.create();
         if (highlight) style = style.bg(theme.searchHighlightBg());
         String info = buildModuleInfo(dep);
@@ -1360,12 +1359,12 @@ public class UpdatesTui extends ToolPanel {
                 .rows(rows)
                 .widths(Constraint.percentage(75), Constraint.percentage(25))
                 .highlightStyle(theme.highlightStyle())
-                .highlightSymbol("▸ ")
+                .highlightSymbol(theme.highlightSymbol())
                 .block(block)
                 .build();
 
         setTableArea(area, block);
-        frame.renderStatefulWidget(table, area, moduleTableState);
+        renderTableWithScrollbar(frame, area, table, moduleTableState, rows.size());
     }
 
     private Row createModuleRow(ReactorModel.ModuleNode node) {
@@ -1374,7 +1373,7 @@ public class UpdatesTui extends ToolPanel {
             sb.append("  ");
         }
         if (node.hasChildren()) {
-            sb.append(node.expanded ? "▾ " : "▸ ");
+            sb.append(node.expanded ? "▼ " : "▶ ");
         } else {
             sb.append("  ");
         }
@@ -1514,8 +1513,8 @@ public class UpdatesTui extends ToolPanel {
             diffOverlay.handleMouseScroll(mouse, lastContentHeight);
             return true;
         }
-        if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseTabBar(mouse)) return true;
+        if (isScrollbarGutter(mouse, area)) return false;
         List<Constraint> widths = view == View.DEPENDENCIES
                 ? depsTableWidths()
                 : List.of(Constraint.percentage(75), Constraint.percentage(25));
@@ -1538,7 +1537,7 @@ public class UpdatesTui extends ToolPanel {
 
     private void toggleModuleExpand(ReactorModel.ModuleNode node, MouseEvent mouse) {
         if (node.hasChildren() && lastTableInner != null) {
-            int arrowX = lastTableInner.x() + 2 + node.depth * 2; // highlight(2) + indent
+            int arrowX = lastTableInner.x() + lastHighlightWidth + node.depth * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
             }
@@ -1559,7 +1558,13 @@ public class UpdatesTui extends ToolPanel {
 
     private void toggleGroupExpand(int row, MouseEvent mouse) {
         if (lastTableInner == null) return;
-        int nameColStart = lastTableInner.x() + 3 + 2; // checkbox(3) + highlight(2)
+        Rect colArea = new Rect(
+                lastTableInner.x() + lastHighlightWidth,
+                lastTableInner.y(),
+                Math.max(0, lastTableInner.width() - lastHighlightWidth),
+                lastTableInner.height());
+        var cols = Layout.horizontal().constraints(depsTableWidths()).split(colArea);
+        int nameColStart = cols.get(1).x();
         if (mouse.x() >= nameColStart && mouse.x() < nameColStart + 2) {
             var r = displayRows.get(row);
             if (r.isGroupHeader()) {

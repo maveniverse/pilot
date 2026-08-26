@@ -176,7 +176,7 @@ public class TreeTui extends ToolPanel {
         if (isScrollbarGutter(mouse, area)) return false;
         if (handleMouseSortHeader(mouse, List.of(TREE_WIDTHS))) return true;
         if (mouse.isClick()) {
-            return handleTreeMouseClick(mouse, area);
+            return handleTreeMouseClick(mouse);
         }
         if (mouse.isScroll()) {
             return handleTreeMouseScroll(mouse);
@@ -184,13 +184,13 @@ public class TreeTui extends ToolPanel {
         return false;
     }
 
-    private boolean handleTreeMouseClick(MouseEvent mouse, Rect area) {
-        int row = mouse.y() - area.y() - 1 + tableState.offset(); // header + scroll
-        if (row < 0 || row >= displayNodes.size()) return false;
+    private boolean handleTreeMouseClick(MouseEvent mouse) {
+        int row = mouseToTableRow(mouse, displayNodes.size(), tableState);
+        if (row < 0) return false;
         tableState.select(row);
         var node = displayNodes.get(row);
-        if (node.hasChildren()) {
-            int arrowX = area.x() + 1 + 2 + node.depth * 2; // border(1) + highlight(2) + indent
+        if (node.hasChildren() && lastTableInner != null) {
+            int arrowX = lastTableInner.x() + lastHighlightWidth + node.depth * 2;
             if (mouse.x() >= arrowX && mouse.x() < arrowX + 2) {
                 node.expanded = !node.expanded;
                 refreshDisplay();
@@ -546,7 +546,7 @@ public class TreeTui extends ToolPanel {
 
         lastContentHeight = zones.get(0).height();
         setTableArea(zones.get(0), null);
-        frame.renderStatefulWidget(table, zones.get(0), tableState);
+        renderTableWithScrollbar(frame, zones.get(0), table, tableState, displayNodes.size());
         renderDivider(frame, zones.get(1));
         renderDetails(frame, zones.get(2));
     }
@@ -557,7 +557,7 @@ public class TreeTui extends ToolPanel {
         String indent = "  ".repeat(node.depth);
         gaSpans.add(Span.raw(indent));
         if (node.hasChildren()) {
-            gaSpans.add(Span.raw(node.expanded ? "▾ " : "▸ ").bold());
+            gaSpans.add(Span.raw(node.expanded ? "▼ " : "▶ ").bold());
         } else {
             gaSpans.add(Span.raw("  "));
         }

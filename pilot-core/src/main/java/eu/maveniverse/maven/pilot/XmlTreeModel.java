@@ -228,7 +228,7 @@ public class XmlTreeModel {
 
         // Expand/collapse indicator
         if (hasTreeChildren(element)) {
-            spans.add(Span.raw(isExpanded(element) ? "▾ " : "▸ ").bold());
+            spans.add(Span.raw(isExpanded(element) ? "▼ " : "▶ ").bold());
         } else {
             spans.add(Span.raw("  "));
         }
