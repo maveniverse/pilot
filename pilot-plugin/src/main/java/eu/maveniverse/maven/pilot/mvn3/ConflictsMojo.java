@@ -36,6 +36,7 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
  * Interactive TUI for dependency conflict resolution.
@@ -125,7 +126,8 @@ public class ConflictsMojo extends AbstractMojo {
      * "groupId:artifactId" (GA), including a human-readable path to that occurrence.
      *
      * Each recorded entry captures groupId, artifactId, the requested version (using
-     * `conflict.originalVersion` when present), the resolved version, the dependency scope, and the
+     * {@link DependencyManagerUtils#getPremanagedVersion(DependencyNode)} when a
+     * dependency-management override is present), the resolved version, the dependency scope, and the
      * path from the project root joined with " → ".
      *
      * @param node the current dependency node whose children will be processed
@@ -133,19 +135,21 @@ public class ConflictsMojo extends AbstractMojo {
      * @param path the GA path from the project root to the parent of `node`; the method appends the
      *             current child GA when recording entries
      */
-    private void collectConflicts(
+    void collectConflicts(
             DependencyNode node, Map<String, List<ConflictsTui.ConflictEntry>> conflicts, List<String> path) {
         for (DependencyNode child : node.getChildren()) {
             if (child.getDependency() == null) continue;
             var art = child.getDependency().getArtifact();
             String ga = art.getGroupId() + ":" + art.getArtifactId();
 
-            String requestedVersion = art.getVersion();
-            String resolvedVersion = requestedVersion;
+            String resolvedVersion = art.getVersion();
+            String requestedVersion = resolvedVersion;
 
-            // Check if there's version conflict data
-            if (child.getData().get("conflict.originalVersion") instanceof String original) {
-                requestedVersion = original;
+            // Detect dependency-management overrides: the ClassicDependencyManager records the
+            // pre-management version via DependencyManagerUtils when it overrides a version.
+            String premanagedVersion = DependencyManagerUtils.getPremanagedVersion(child);
+            if (premanagedVersion != null && !premanagedVersion.equals(resolvedVersion)) {
+                requestedVersion = premanagedVersion;
             }
 
             List<String> currentPath = new ArrayList<>(path);
