@@ -28,6 +28,8 @@ import java.util.Map;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.graph.DefaultDependencyNode;
 import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 import org.junit.jupiter.api.Test;
 
 class DependencyTreeModelTest {
@@ -200,17 +202,64 @@ class DependencyTreeModelTest {
     }
 
     @Test
+    void fromDependencyNodeDetectsVersionsOverriddenByDependencyManagement() {
+        // Root -> child (jline:4.4.3, managed from declared 3.25.1)
+        // ClassicDependencyManager populates:
+        //   - getManagedBits() bit 0 (VERSION) = set
+        //   - getData()["premanaged.version"] = "3.25.1" (the pre-management version)
+        //   - artifact.getVersion() = "4.4.3" (the resolved version after management)
+        var root = rootNode("com.example", "app", "1.0.0");
+        var managed = depNode("org.jline", "jline", "4.4.3", "compile");
+
+        Map<Object, Object> data = new HashMap<>();
+        data.put(DependencyManagerUtils.NODE_DATA_PREMANAGED_VERSION, "3.25.1");
+        managed.setData(data);
+        managed.setManagedBits(DependencyNode.MANAGED_VERSION); // bit 0: version was managed
+
+        root.setChildren(List.of(managed));
+
+        var model = MojoHelper.fromDependencyNode(root);
+
+        assertThat(model.conflicts).hasSize(1);
+        var conflict = model.conflicts.get(0);
+        assertThat(conflict.ga()).isEqualTo("org.jline:jline");
+        assertThat(conflict.version).isEqualTo("4.4.3"); // resolved (managed) version
+        assertThat(conflict.requestedVersion).isEqualTo("3.25.1"); // pre-management version
+        assertThat(conflict.isConflict()).isTrue();
+    }
+
+    @Test
+    void fromDependencyNodeNoConflictWhenManagedVersionMatchesDeclared() {
+        // If the managed version happens to equal the declared version, no conflict is reported
+        var root = rootNode("com.example", "app", "1.0.0");
+        var managed = depNode("org.slf4j", "slf4j-api", "2.0.9", "compile");
+
+        Map<Object, Object> data = new HashMap<>();
+        data.put(DependencyManagerUtils.NODE_DATA_PREMANAGED_VERSION, "2.0.9"); // same as resolved
+        managed.setData(data);
+        managed.setManagedBits(DependencyNode.MANAGED_VERSION);
+
+        root.setChildren(List.of(managed));
+
+        var model = MojoHelper.fromDependencyNode(root);
+
+        assertThat(model.conflicts).isEmpty();
+    }
+
+    @Test
     void fromDependencyNodeDetectsConflictsViaOriginalVersion() {
-        // Root -> child1 (guava:33.0) -> grandchild (failureaccess:1.0.2, conflict: originally requested 1.0.1)
+        // Root -> child1 (guava:33.0) -> grandchild (failureaccess:1.0.2, managed from 1.0.1)
+        // Verifies the fix: use DependencyManagerUtils (premanaged.version + MANAGED_VERSION bit)
+        // not the old non-existent "conflict.originalVersion" key.
         var root = rootNode("com.example", "app", "1.0.0");
         var child = depNode("com.google.guava", "guava", "33.0.0-jre", "compile");
         var conflicting = depNode("com.google.guava", "failureaccess", "1.0.2", "compile");
 
-        // Simulate Resolver's ConflictResolver: losing node has version replaced
-        // and original version stored in data
+        // Simulate ClassicDependencyManager: records pre-management version in node data
         Map<Object, Object> data = new HashMap<>();
-        data.put("conflict.originalVersion", "1.0.1");
+        data.put(DependencyManagerUtils.NODE_DATA_PREMANAGED_VERSION, "1.0.1");
         conflicting.setData(data);
+        conflicting.setManagedBits(DependencyNode.MANAGED_VERSION);
 
         child.setChildren(List.of(conflicting));
         root.setChildren(List.of(child));
@@ -220,8 +269,8 @@ class DependencyTreeModelTest {
         assertThat(model.conflicts).hasSize(1);
         var conflict = model.conflicts.get(0);
         assertThat(conflict.ga()).isEqualTo("com.google.guava:failureaccess");
-        assertThat(conflict.version).isEqualTo("1.0.2"); // resolved (winner) version
-        assertThat(conflict.requestedVersion).isEqualTo("1.0.1"); // original requested version
+        assertThat(conflict.version).isEqualTo("1.0.2"); // resolved (managed) version
+        assertThat(conflict.requestedVersion).isEqualTo("1.0.1"); // pre-management version
         assertThat(conflict.isConflict()).isTrue();
     }
 
