@@ -132,9 +132,10 @@ public class ConflictsMojo extends AbstractMojo {
      *
      * @param node the current dependency node whose children will be processed
      * @param conflicts a map from GA ("groupId:artifactId") to a list of ConflictEntry occurrences
-     * @param path the GA path from the project root to the parent of `node`; the method appends the
+     * @param path the GA path from the project root to the parent of {@code node}; the method appends the
      *             current child GA when recording entries
      */
+    // package-private for testing
     void collectConflicts(
             DependencyNode node, Map<String, List<ConflictsTui.ConflictEntry>> conflicts, List<String> path) {
         for (DependencyNode child : node.getChildren()) {
