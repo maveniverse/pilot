@@ -85,6 +85,10 @@ under the License.
         <artifactId>maven-plugin-plugin</artifactId>
         <configuration>
           <goalPrefix>pilot</goalPrefix>
+          <!-- tamboui-panama-backend requires Java 22, but it is loaded at runtime
+               only when Java 22+ is available; the plugin itself runs fine on Java 17+.
+               Override the auto-detected value which would otherwise be set to 22. -->
+          <requiredJavaVersion>17</requiredJavaVersion>
         </configuration>
       </plugin>
     </plugins>
