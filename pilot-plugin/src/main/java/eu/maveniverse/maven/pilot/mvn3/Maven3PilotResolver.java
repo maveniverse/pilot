@@ -85,7 +85,16 @@ class Maven3PilotResolver implements PilotResolver {
     public DependencyTreeModel collectDependencies(PilotProject project) {
         try {
             MavenProject mp = requireMaven(project);
-            CollectResult result = repoSystem.collectDependencies(verboseSession, MojoHelper.buildCollectRequest(mp));
+            CollectRequest req = MojoHelper.buildCollectRequest(mp);
+            LOGGER.info("collectDependencies(" + project.ga() + "): "
+                    + req.getManagedDependencies().stream()
+                            .filter(d -> "org.jline".equals(d.getArtifact().getGroupId()))
+                            .map(d -> d.getArtifact().getArtifactId() + ":"
+                                    + d.getArtifact().getVersion())
+                            .toList()
+                    + " jline managed deps; DM="
+                    + verboseSession.getDependencyManager().getClass().getSimpleName());
+            CollectResult result = repoSystem.collectDependencies(verboseSession, req);
             return MojoHelper.fromDependencyNode(result.getRoot());
         } catch (Exception e) {
             throw new IllegalStateException("Failed to collect dependencies for " + project.gav(), e);
