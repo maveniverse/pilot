@@ -300,31 +300,30 @@ public class PluginsTui extends ToolPanel {
         }
     }
 
-    private void fetchReleaseDates(List<PluginEntry> entries, Map<String, List<PluginEntry>> allEntriesByGa) {
-        int count = 0;
-        for (PluginEntry e : entries) {
-            if (e.hasUpdate()) count += 2;
-        }
-        dateFetchesPending = count;
+    private void fetchReleaseDates(
+            List<PluginEntry> currentReps,
+            Map<String, List<PluginEntry>> byCurrentGav,
+            List<PluginEntry> newestReps,
+            Map<String, List<PluginEntry>> byGa) {
+        // One HTTP fetch per distinct current GAV + one per GA (newest version).
+        dateFetchesPending = currentReps.size() + newestReps.size();
         if (dateFetchesPending == 0) return;
         datesLoading = true;
 
-        for (PluginEntry entry : entries) {
-            if (entry.hasUpdate()) {
-                fetchEntryDates(entry, allEntriesByGa.getOrDefault(entry.ga(), List.of(entry)));
-            }
+        for (PluginEntry entry : currentReps) {
+            List<PluginEntry> sameCurrentVersion = byCurrentGav.getOrDefault(entry.gav(), List.of(entry));
+            fetchDate(entry.groupId, entry.artifactId, entry.version, date -> {
+                for (PluginEntry e : sameCurrentVersion) e.currentReleaseDate = date;
+                for (PluginEntry e : sameCurrentVersion) computeLibYear(e);
+            });
         }
-    }
-
-    private void fetchEntryDates(PluginEntry entry, List<PluginEntry> allForGa) {
-        fetchDate(entry.groupId, entry.artifactId, entry.version, date -> {
-            for (PluginEntry e : allForGa) e.currentReleaseDate = date;
-            for (PluginEntry e : allForGa) computeLibYear(e);
-        });
-        fetchDate(entry.groupId, entry.artifactId, entry.newestVersion, date -> {
-            for (PluginEntry e : allForGa) e.newestReleaseDate = date;
-            for (PluginEntry e : allForGa) computeLibYear(e);
-        });
+        for (PluginEntry entry : newestReps) {
+            List<PluginEntry> sameGa = byGa.getOrDefault(entry.ga(), List.of(entry));
+            fetchDate(entry.groupId, entry.artifactId, entry.newestVersion, date -> {
+                for (PluginEntry e : sameGa) e.newestReleaseDate = date;
+                for (PluginEntry e : sameGa) computeLibYear(e);
+            });
+        }
     }
 
     private void fetchDate(String groupId, String artifactId, String version, Consumer<LocalDate> onDate) {
