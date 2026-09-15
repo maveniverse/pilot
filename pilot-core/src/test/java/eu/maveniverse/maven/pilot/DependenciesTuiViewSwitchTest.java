@@ -194,9 +194,9 @@ class DependenciesTuiViewSwitchTest {
         TreeTui dmTree = createSimpleDmTree();
         DependenciesTui tui = createTuiWithDmTree(dmTree);
         tui.setActiveSubView(3);
-        // Key events should be delegated to dmTreeTui
+        // Key events should be delegated to dmTreeTui; view remains DM_TREE (index 3)
         tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.DOWN));
-        // Just verify no exception; dmTree handles the event
+        assertThat(tui.activeSubView()).isEqualTo(3);
     }
 
     @Test
@@ -207,7 +207,8 @@ class DependenciesTuiViewSwitchTest {
         MouseEvent click = MouseEvent.press(MouseButton.LEFT, 10, 5);
         Rect area = new Rect(0, 0, 80, 24);
         tui.handleMouseEvent(click, area);
-        // Just verify no exception
+        // Mouse events are delegated; active sub-view stays at DM_TREE (index 3)
+        assertThat(tui.activeSubView()).isEqualTo(3);
     }
 
     @Test
