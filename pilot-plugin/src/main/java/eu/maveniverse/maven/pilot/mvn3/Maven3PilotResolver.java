@@ -35,6 +35,7 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
+import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
@@ -146,8 +147,12 @@ class Maven3PilotResolver implements PilotResolver {
                 return emptyTree(mp);
             }
             CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRootArtifact(
-                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()));
+            // Use setRoot() (not setRootArtifact()) so Aether reads the root descriptor via
+            // ArtifactDescriptorReader and feeds managed deps into DefaultDependencyManager
+            // through its normal deriveChildManager() pipeline. With setRootArtifact(), the
+            // descriptor is skipped and setManagedDependencies() is silently ignored.
+            collectRequest.setRoot(new Dependency(
+                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()), ""));
             collectRequest.setDependencies(MojoHelper.convertDependencies(managed));
             collectRequest.setManagedDependencies(
                     MojoHelper.convertDependencies(mp.getDependencyManagement().getDependencies()));
