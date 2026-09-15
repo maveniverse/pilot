@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
+import java.lang.reflect.Method;
 import org.apache.maven.api.Artifact;
 import org.apache.maven.api.DependencyCoordinates;
 import org.apache.maven.api.DownloadedArtifact;
@@ -71,12 +72,6 @@ class Maven4PilotResolver implements PilotResolver {
 
     Maven4PilotResolver(Session session, Map<String, Model> effectiveModels) {
         this.effectiveModels = effectiveModels;
-        // The standalone CLI session (ApiRunner) creates a bare DefaultRepositorySystemSession
-        // without a DependencyManager. BfDependencyCollector null-checks it and skips version
-        // management entirely, so setManagedDependencies() in CollectRequest is silently ignored
-        // and transitive deps show their declared version instead of the DM-managed one.
-        // Install DefaultDependencyManager if none is set — it reads managed deps on every
-        // deriveChildManager() call (no depth gate), so the override takes effect correctly.
         if (session instanceof AbstractSession abstractSession) {
             RepositorySystemSession repoSession = abstractSession.getSession();
             if (repoSession instanceof DefaultRepositorySystemSession mutableSession) {
@@ -390,7 +385,7 @@ class Maven4PilotResolver implements PilotResolver {
     @SuppressWarnings("java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
     private static String getPremanagedVersion(Node node) {
         try {
-            java.lang.reflect.Method m = node.getClass().getDeclaredMethod("getDependencyNode");
+            Method m = node.getClass().getDeclaredMethod("getDependencyNode");
             m.setAccessible(true);
             DependencyNode aetherNode = (DependencyNode) m.invoke(node);
             return DependencyManagerUtils.getPremanagedVersion(aetherNode);
