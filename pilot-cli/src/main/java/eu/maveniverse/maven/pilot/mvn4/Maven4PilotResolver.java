@@ -377,10 +377,13 @@ class Maven4PilotResolver implements PilotResolver {
     }
 
     /**
-     * Extracts the pre-managed version from the underlying Aether {@code DependencyNode} via
-     * reflection. The Maven 4 {@code Node} API does not expose this directly, but
-     * {@code AbstractNode.getDependencyNode()} (package-private) returns the Aether node whose
-     * data map contains {@code "premanaged.version"} when verbose mode is enabled.
+     * Extracts the pre-managed version from the underlying Aether {@code DependencyNode}.
+     *
+     * <p>The Maven 4 {@code Node} API does not expose this information directly.
+     * {@code AbstractNode.getDependencyNode()} (package-private) is the only path to the Aether
+     * node whose data map contains {@code "premanaged.version"} when verbose mode is enabled.
+     * Reflection is used here until the Maven API exposes this — see
+     * <a href="https://issues.apache.org/jira/browse/MNG-XXXX">MNG-XXXX</a>.
      *
      * @return the original (pre-management) version string, or {@code null} if not available
      */
