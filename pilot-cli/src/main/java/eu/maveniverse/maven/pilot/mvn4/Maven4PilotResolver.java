@@ -50,6 +50,10 @@ import org.apache.maven.api.services.VersionRangeResolver;
 import org.apache.maven.api.services.VersionRangeResolverRequest;
 import org.apache.maven.api.services.VersionRangeResolverResult;
 import org.apache.maven.api.services.xml.ModelXmlFactory;
+import org.apache.maven.impl.AbstractSession;
+import org.eclipse.aether.DefaultRepositorySystemSession;
+import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
 
 /**
  * Maven 4 implementation of {@link PilotResolver} using the standalone Maven 4 API.
@@ -64,8 +68,21 @@ class Maven4PilotResolver implements PilotResolver {
     private final Map<String, Model> effectiveModels;
 
     Maven4PilotResolver(Session session, Map<String, Model> effectiveModels) {
-        this.session = session;
         this.effectiveModels = effectiveModels;
+        // The standalone CLI session (ApiRunner) creates a bare DefaultRepositorySystemSession
+        // without a DependencyManager. BfDependencyCollector null-checks it and skips version
+        // management entirely, so setManagedDependencies() in CollectRequest is silently ignored
+        // and transitive deps show their declared version instead of the DM-managed one.
+        // Install DefaultDependencyManager if none is set — it reads managed deps on every
+        // deriveChildManager() call (no depth gate), so the override takes effect correctly.
+        if (session instanceof AbstractSession abstractSession) {
+            RepositorySystemSession repoSession = abstractSession.getSession();
+            if (repoSession.getDependencyManager() == null
+                    && repoSession instanceof DefaultRepositorySystemSession mutableSession) {
+                mutableSession.setDependencyManager(new DefaultDependencyManager());
+            }
+        }
+        this.session = session;
     }
 
     Maven4PilotResolver(Session session, Model effectiveModel) {
