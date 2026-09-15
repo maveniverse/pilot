@@ -23,6 +23,7 @@ import eu.maveniverse.maven.pilot.PilotProject;
 import eu.maveniverse.maven.pilot.PilotResolver;
 import eu.maveniverse.maven.pilot.UpdatesTui;
 import java.io.File;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
-import java.lang.reflect.Method;
 import org.apache.maven.api.Artifact;
 import org.apache.maven.api.DependencyCoordinates;
 import org.apache.maven.api.DownloadedArtifact;
@@ -382,8 +382,10 @@ class Maven4PilotResolver implements PilotResolver {
      *
      * @return the original (pre-management) version string, or {@code null} if not available
      */
-    @SuppressWarnings("java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
-    private static String getPremanagedVersion(Node node) {
+    @SuppressWarnings(
+            @SuppressWarnings(
+                    "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
+            private static String getPremanagedVersion(Node node) {
         try {
             Method m = node.getClass().getDeclaredMethod("getDependencyNode");
             m.setAccessible(true);
