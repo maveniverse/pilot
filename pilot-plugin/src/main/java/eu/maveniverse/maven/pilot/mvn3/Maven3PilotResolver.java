@@ -35,13 +35,13 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResult;
+import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
 import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
@@ -69,6 +69,13 @@ class Maven3PilotResolver implements PilotResolver {
         this.repoSession = repoSession;
         DefaultRepositorySystemSession verbose = new DefaultRepositorySystemSession(repoSession);
         verbose.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
+        // Replace ClassicDependencyManager (which has a depth gate and only reads managed
+        // deps from context at depth >= 2, too late for setRootArtifact() requests where
+        // the root descriptor is skipped) with DefaultDependencyManager, which reads managed
+        // deps from context on every deriveChildManager() call regardless of depth.
+        // This ensures setManagedDependencies() in buildCollectRequest() is honoured and
+        // managed version overrides (e.g. jline:4.4.3) are applied to transitive deps.
+        verbose.setDependencyManager(new DefaultDependencyManager());
         this.verboseSession = verbose;
         this.rootProject = rootProject;
         this.pilotToMaven = pilotToMaven;
@@ -147,12 +154,11 @@ class Maven3PilotResolver implements PilotResolver {
                 return emptyTree(mp);
             }
             CollectRequest collectRequest = new CollectRequest();
-            // Use setRoot() (not setRootArtifact()) so Aether reads the root descriptor via
-            // ArtifactDescriptorReader and feeds managed deps into DefaultDependencyManager
-            // through its normal deriveChildManager() pipeline. With setRootArtifact(), the
-            // descriptor is skipped and setManagedDependencies() is silently ignored.
-            collectRequest.setRoot(new Dependency(
-                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()), ""));
+            // setRootArtifact() — do NOT use setRoot(). See buildCollectRequest() for rationale.
+            // The verboseSession has DefaultDependencyManager installed, which applies
+            // setManagedDependencies() correctly without the depth gate ClassicDependencyManager has.
+            collectRequest.setRootArtifact(
+                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()));
             collectRequest.setDependencies(MojoHelper.convertDependencies(managed));
             collectRequest.setManagedDependencies(
                     MojoHelper.convertDependencies(mp.getDependencyManagement().getDependencies()));

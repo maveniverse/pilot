@@ -105,16 +105,17 @@ public final class MojoHelper {
      */
     public static CollectRequest buildCollectRequest(MavenProject project) {
         CollectRequest collectRequest = new CollectRequest();
-        // Use setRoot() (not setRootArtifact()) so Aether reads the root descriptor via
-        // ArtifactDescriptorReader and feeds managed deps into ClassicDependencyManager
-        // through its normal deriveChildManager() pipeline. With setRootArtifact(), the
-        // descriptor is skipped and ClassicDependencyManager never populates its version
-        // map, causing setManagedDependencies() to be silently ignored.
-        collectRequest.setRoot(new Dependency(
-                new DefaultArtifact(
-                        project.getGroupId(), project.getArtifactId(),
-                        project.getPackaging(), project.getVersion()),
-                ""));
+        // Use setRootArtifact() — do NOT use setRoot() here. setRoot() causes Aether to
+        // read the root descriptor from the repository, which is unreliable in reactor/
+        // aggregator builds where the current SNAPSHOT POM may not be installed in the
+        // local repo yet, and workspace-reader coverage varies by context.
+        // Instead we feed the already-resolved Maven model data explicitly:
+        // setManagedDependencies() carries the project's effective DM, and the session's
+        // DependencyManager (set in Maven3PilotResolver to DefaultDependencyManager)
+        // applies it correctly without a depth gate.
+        collectRequest.setRootArtifact(new DefaultArtifact(
+                project.getGroupId(), project.getArtifactId(),
+                project.getPackaging(), project.getVersion()));
         collectRequest.setDependencies(convertDependencies(project.getDependencies()));
         if (project.getDependencyManagement() != null) {
             collectRequest.setManagedDependencies(
