@@ -46,6 +46,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -267,9 +268,12 @@ public class PluginsTui extends ToolPanel {
                 .map(l -> l.get(0))
                 .filter(PluginEntry::hasUpdate)
                 .toList();
+        // For the newest-date rep, pick the first entry in the GA group that actually has an update,
+        // so we never skip the fetch when the first-inserted entry (e.g. a managed plugin already at
+        // the newest version) has hasUpdate()==false while other same-GA entries do have an update.
         List<PluginEntry> newestReps = byGa.values().stream()
-                .map(l -> l.get(0))
-                .filter(PluginEntry::hasUpdate)
+                .map(l -> l.stream().filter(PluginEntry::hasUpdate).findFirst().orElse(null))
+                .filter(Objects::nonNull)
                 .toList();
         fetchReleaseDates(currentReps, byCurrentGav, newestReps, byGa);
     }
