@@ -53,7 +53,9 @@ import org.apache.maven.api.services.xml.ModelXmlFactory;
 import org.apache.maven.impl.AbstractSession;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
+import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
  * Maven 4 implementation of {@link PilotResolver} using the standalone Maven 4 API.
@@ -77,9 +79,21 @@ class Maven4PilotResolver implements PilotResolver {
         // deriveChildManager() call (no depth gate), so the override takes effect correctly.
         if (session instanceof AbstractSession abstractSession) {
             RepositorySystemSession repoSession = abstractSession.getSession();
-            if (repoSession.getDependencyManager() == null
-                    && repoSession instanceof DefaultRepositorySystemSession mutableSession) {
-                mutableSession.setDependencyManager(new DefaultDependencyManager());
+            if (repoSession instanceof DefaultRepositorySystemSession mutableSession) {
+                if (mutableSession.getDependencyManager() == null) {
+                    // The standalone CLI session (ApiRunner) creates a bare DefaultRepositorySystemSession
+                    // without a DependencyManager. BfDependencyCollector null-checks getDependencyManager()
+                    // and skips deriveChildManager() entirely when it is null, so setManagedDependencies()
+                    // in the CollectRequest is silently ignored and transitive deps display their declared
+                    // version instead of the DM-managed override.
+                    // Install DefaultDependencyManager — it reads managed deps on every
+                    // deriveChildManager() call without a depth gate.
+                    mutableSession.setDependencyManager(new DefaultDependencyManager());
+                }
+                // Enable verbose mode so Aether records the pre-managed version on each node.
+                // This populates node.getData().get("premanaged.version"), which lets the UI
+                // show the "4.4.3 ⚠ 3.25.1" indicator for DM-overridden dependencies.
+                mutableSession.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
             }
         }
         this.session = session;
@@ -337,7 +351,7 @@ class Maven4PilotResolver implements PilotResolver {
     private static DependencyTreeModel.TreeNode createTreeNode(Node node, int depth) {
         if (node.getDependency() != null) {
             var dep = node.getDependency();
-            return new DependencyTreeModel.TreeNode(
+            DependencyTreeModel.TreeNode treeNode = new DependencyTreeModel.TreeNode(
                     dep.getGroupId(),
                     dep.getArtifactId(),
                     dep.getClassifier() != null ? dep.getClassifier() : "",
@@ -345,6 +359,8 @@ class Maven4PilotResolver implements PilotResolver {
                     dep.getScope() != null ? dep.getScope().id() : "",
                     dep.isOptional(),
                     depth);
+            treeNode.requestedVersion = getPremanagedVersion(node);
+            return treeNode;
         }
         if (node.getArtifact() != null) {
             Artifact a = node.getArtifact();
@@ -358,5 +374,24 @@ class Maven4PilotResolver implements PilotResolver {
                     depth);
         }
         return new DependencyTreeModel.TreeNode("?", "?", "", "?", "", false, depth);
+    }
+
+    /**
+     * Extracts the pre-managed version from the underlying Aether {@code DependencyNode} via
+     * reflection. The Maven 4 {@code Node} API does not expose this directly, but
+     * {@code AbstractNode.getDependencyNode()} (package-private) returns the Aether node whose
+     * data map contains {@code "premanaged.version"} when verbose mode is enabled.
+     *
+     * @return the original (pre-management) version string, or {@code null} if not available
+     */
+    private static String getPremanagedVersion(Node node) {
+        try {
+            java.lang.reflect.Method m = node.getClass().getDeclaredMethod("getDependencyNode");
+            m.setAccessible(true);
+            DependencyNode aetherNode = (DependencyNode) m.invoke(node);
+            return DependencyManagerUtils.getPremanagedVersion(aetherNode);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
