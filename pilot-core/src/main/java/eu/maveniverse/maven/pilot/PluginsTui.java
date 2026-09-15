@@ -250,18 +250,28 @@ public class PluginsTui extends ToolPanel {
         loading = false;
         applyFilter();
         statusText = buildStatusMessage();
-        // Build GA → all entries map so date results propagate to both declared and
-        // managed entries that share the same GA (both appear in the Updates view).
-        Map<String, List<PluginEntry>> allEntriesByGa = new LinkedHashMap<>();
-        for (PluginEntry e : plugins)
-            allEntriesByGa.computeIfAbsent(e.ga(), k -> new ArrayList<>()).add(e);
-        for (PluginEntry e : managed)
-            allEntriesByGa.computeIfAbsent(e.ga(), k -> new ArrayList<>()).add(e);
-        // Deduplicate HTTP requests: fetch dates once per GA, propagate to all entries.
-        Map<String, PluginEntry> datesByGa = new LinkedHashMap<>();
-        for (PluginEntry e : plugins) datesByGa.put(e.ga(), e);
-        for (PluginEntry e : managed) datesByGa.putIfAbsent(e.ga(), e);
-        fetchReleaseDates(new ArrayList<>(datesByGa.values()), allEntriesByGa);
+        List<PluginEntry> all = new ArrayList<>();
+        all.addAll(plugins);
+        all.addAll(managed);
+        // Group by current GAV so each distinct current version gets its own date fetch,
+        // and entries sharing the same current version share the result.
+        Map<String, List<PluginEntry>> byCurrentGav = new LinkedHashMap<>();
+        for (PluginEntry e : all)
+            byCurrentGav.computeIfAbsent(e.gav(), k -> new ArrayList<>()).add(e);
+        // Group by GA for the newest-version date: all same-GA entries share newestVersion.
+        Map<String, List<PluginEntry>> byGa = new LinkedHashMap<>();
+        for (PluginEntry e : all)
+            byGa.computeIfAbsent(e.ga(), k -> new ArrayList<>()).add(e);
+        // Representatives: one per distinct current GAV (for current date), one per GA (for newest date).
+        List<PluginEntry> currentReps = byCurrentGav.values().stream()
+                .map(l -> l.get(0))
+                .filter(PluginEntry::hasUpdate)
+                .toList();
+        List<PluginEntry> newestReps = byGa.values().stream()
+                .map(l -> l.get(0))
+                .filter(PluginEntry::hasUpdate)
+                .toList();
+        fetchReleaseDates(currentReps, byCurrentGav, newestReps, byGa);
     }
 
     void applyFilter() {
