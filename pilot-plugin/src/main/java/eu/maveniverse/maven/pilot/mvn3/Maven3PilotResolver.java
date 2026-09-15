@@ -41,7 +41,7 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResult;
-import org.eclipse.aether.util.graph.manager.ClassicDependencyManager;
+import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
 import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
@@ -69,11 +69,15 @@ class Maven3PilotResolver implements PilotResolver {
         this.repoSession = repoSession;
         DefaultRepositorySystemSession verbose = new DefaultRepositorySystemSession(repoSession);
         verbose.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
-        // Maven 3's repositorySystemSession has no DependencyManager set, so Aether's
-        // ClassicDependencyManager is never instantiated and request.getManagedDependencies()
-        // is silently ignored. Explicitly install one so version overrides are applied.
+        // Maven 3's repositorySystemSession has no DependencyManager configured —
+        // getDependencyManager() returns null. As a result BfDependencyCollector skips
+        // deriveChildManager() entirely and request.getManagedDependencies() is silently
+        // ignored. ClassicDependencyManager also has a depth gate (only reads managed deps
+        // from context at depth >= 2), so it won't apply overrides correctly either.
+        // DefaultDependencyManager has no such gate and reads context managed deps on every
+        // deriveChildManager() call, making it the right choice here.
         if (verbose.getDependencyManager() == null) {
-            verbose.setDependencyManager(new ClassicDependencyManager());
+            verbose.setDependencyManager(new DefaultDependencyManager());
         }
         this.verboseSession = verbose;
         this.rootProject = rootProject;
