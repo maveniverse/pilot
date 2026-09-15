@@ -63,7 +63,7 @@ public class PluginsTui extends ToolPanel {
         final String artifactId;
         String version;
         final List<String> modules = new ArrayList<>();
-        /** Per-module version: module name → declared version (null if inherited/absent). */
+        /** Per-module version: module GA (groupId:artifactId) → declared version (empty string if inherited/absent). */
         final Map<String, String> moduleVersions = new LinkedHashMap<>();
 
         volatile String newestVersion;

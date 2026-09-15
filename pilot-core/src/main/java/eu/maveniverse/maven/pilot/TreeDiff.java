@@ -26,7 +26,7 @@ import java.util.Map;
 /**
  * Compares two {@link DependencyTreeModel} trees and produces a list of diff entries.
  *
- * <p>Siblings are matched by GA identity before descending, so an inserted or removed
+ * <p>Siblings are matched by GA+classifier+extension identity before descending, so an inserted or removed
  * child before an unchanged sibling does not cause spurious LEFT/RIGHT entries for the
  * unchanged siblings.
  */
