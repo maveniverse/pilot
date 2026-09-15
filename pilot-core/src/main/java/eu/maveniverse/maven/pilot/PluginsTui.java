@@ -122,7 +122,7 @@ public class PluginsTui extends ToolPanel {
     final List<PluginEntry> updates = new ArrayList<>();
     private final boolean singleModule;
     private final UpdatesTui.VersionResolver versionResolver;
-    private final ExecutorService httpPool = PilotUtil.newHttpPool();
+    final ExecutorService httpPool = PilotUtil.newHttpPool();
     private final TableState tableState = new TableState();
     private final TableState detailTableState = new TableState();
 
