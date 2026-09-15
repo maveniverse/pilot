@@ -1086,7 +1086,7 @@ public class UpdatesTui extends ToolPanel {
                 .exceptionally(ex -> {
                     runner.runOnRenderThread(() -> {
                         if (gen != treeImpactGeneration.get()) return; // stale, discard
-                        status = "Tree impact failed for " + target.label() + ": " + ex.getMessage();
+                        status = "Tree impact failed for " + target.label() + ": " + ex;
                     });
                     return null;
                 });
