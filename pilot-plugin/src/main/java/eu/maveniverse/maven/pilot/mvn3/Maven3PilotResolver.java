@@ -86,14 +86,6 @@ class Maven3PilotResolver implements PilotResolver {
         try {
             MavenProject mp = requireMaven(project);
             CollectRequest req = MojoHelper.buildCollectRequest(mp);
-            LOGGER.info("collectDependencies(" + project.ga() + "): "
-                    + req.getManagedDependencies().stream()
-                            .filter(d -> "org.jline".equals(d.getArtifact().getGroupId()))
-                            .map(d -> d.getArtifact().getArtifactId() + ":"
-                                    + d.getArtifact().getVersion())
-                            .toList()
-                    + " jline managed deps; DM="
-                    + verboseSession.getDependencyManager().getClass().getSimpleName());
             CollectResult result = repoSystem.collectDependencies(verboseSession, req);
             return MojoHelper.fromDependencyNode(result.getRoot());
         } catch (Exception e) {

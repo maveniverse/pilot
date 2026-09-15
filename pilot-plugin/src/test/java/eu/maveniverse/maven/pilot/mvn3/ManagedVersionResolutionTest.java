@@ -45,6 +45,7 @@ import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
 import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 /**
  * Regression test for: UI tree showing unmanaged transitive version instead of the version
@@ -67,7 +68,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Fix: install {@code DefaultDependencyManager} on the verbose session — it reads managed
  * deps on every {@code deriveChildManager()} call, so the version override takes effect.
+ * <p>Requires network access to Maven Central. Enable with {@code -Dpilot.test.network=true}.
  */
+@EnabledIfSystemProperty(named = "pilot.test.network", matches = "true")
 class ManagedVersionResolutionTest {
 
     static RepositorySystem repoSystem;
@@ -105,6 +108,7 @@ class ManagedVersionResolutionTest {
      * With the fix applied (DefaultDependencyManager installed), it must pass.
      */
     @Test
+    @EnabledIfSystemProperty(named = "pilot.test.network", matches = "true")
     void uiPath_managedVersionApplied_withDefaultDependencyManager() throws Exception {
         // Simulate PilotMojo creating a quietSession copy, then Maven3PilotResolver
         // creating verboseSession from it — with our DefaultDependencyManager fix.
@@ -130,17 +134,18 @@ class ManagedVersionResolutionTest {
     }
 
     /**
-     * Verifies that the BROKEN path (ClassicDependencyManager, no fix) actually fails —
-     * i.e. shows 3.25.1 instead of 4.4.3.
+     * Verifies that ClassicDependencyManager, without the fix, also applies the managed version
+     * in an isolated Aether session — documenting that the root cause is environmental
+     * (Mimir/Njord session customisations in a real Maven run), not a ClassicDM/DefaultDM
+     * difference in pure Aether.
      *
-     * NOTE: In isolated tests with a plain MavenRepositorySystemUtils session, ClassicDM
-     * actually works correctly (returns 4.4.3). The real bug only manifests when the
-     * Mimir/Njord session customisations from the actual Maven run are involved.
-     * This test therefore just documents that BOTH paths work in isolation — the root
-     * cause is environmental, not a ClassicDM/DefaultDM difference in pure Aether.
+     * <p>NOTE: this test exercises a code path WITHOUT the DefaultDependencyManager fix.
+     * Both DMs return 4.4.3 in isolation; the real-world bug only manifests when Maven 3's
+     * actual session (with Mimir/Njord) is in play.
      */
     @Test
-    void brokenPath_classicDependencyManager_alsoAppliesManagedVersion() throws Exception {
+    @EnabledIfSystemProperty(named = "pilot.test.network", matches = "true")
+    void classicDependencyManager_alsoAppliesManagedVersion_inIsolation() throws Exception {
         DefaultRepositorySystemSession quietSession = new DefaultRepositorySystemSession(mavenSession);
         DefaultRepositorySystemSession verboseSession = new DefaultRepositorySystemSession(quietSession);
         verboseSession.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
