@@ -134,7 +134,7 @@ public class UpdatesTui extends ToolPanel {
     private final VersionResolver versionResolver;
     private final TreeImpactResolver treeImpactResolver;
     private final Function<Path, PomEditSession> sessionProvider;
-    private final TableState tableState = new TableState();
+    final TableState tableState = new TableState();
     private final TableState moduleTableState = new TableState();
     private final ExecutorService httpPool = PilotUtil.newHttpPool();
 
