@@ -178,4 +178,81 @@ class TreeDiffTest {
         assertThat(diff.get(2).side()).isEqualTo(TreeDiff.Side.RIGHT); // g:b runtime
         assertThat(diff.get(2).gav()).contains("[runtime]");
     }
+
+    @Test
+    void addedNodeWithChildrenDrainsSubtree() {
+        // A newly added node (right-only) that itself has children must drain the
+        // entire subtree — both the parent and its descendants appear as RIGHT.
+        var root1 = node("g", "a", "1.0", 0);
+        var root2 = node("g", "a", "1.0", 0);
+        var newParent = node("g", "new-parent", "1.0", 1);
+        newParent.children.add(node("g", "new-child", "1.0", 2));
+        root2.children.add(newParent);
+
+        List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root1), tree(root2));
+
+        // root SAME + new-parent RIGHT + new-child RIGHT = 3 entries
+        assertThat(diff).hasSize(3);
+        assertThat(diff.get(0).side()).isEqualTo(TreeDiff.Side.SAME);
+        assertThat(diff.get(1).side()).isEqualTo(TreeDiff.Side.RIGHT);
+        assertThat(diff.get(1).ga()).isEqualTo("g:new-parent");
+        assertThat(diff.get(2).side()).isEqualTo(TreeDiff.Side.RIGHT);
+        assertThat(diff.get(2).ga()).isEqualTo("g:new-child");
+    }
+
+    @Test
+    void removedNodeWithChildrenDrainsSubtree() {
+        // A removed node (left-only) that itself has children must drain the
+        // entire subtree — both the parent and its descendants appear as LEFT.
+        var root1 = node("g", "a", "1.0", 0);
+        var oldParent = node("g", "old-parent", "1.0", 1);
+        oldParent.children.add(node("g", "old-child", "1.0", 2));
+        root1.children.add(oldParent);
+        var root2 = node("g", "a", "1.0", 0);
+
+        List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root1), tree(root2));
+
+        // root SAME + old-parent LEFT + old-child LEFT = 3 entries
+        assertThat(diff).hasSize(3);
+        assertThat(diff.get(0).side()).isEqualTo(TreeDiff.Side.SAME);
+        assertThat(diff.get(1).side()).isEqualTo(TreeDiff.Side.LEFT);
+        assertThat(diff.get(1).ga()).isEqualTo("g:old-parent");
+        assertThat(diff.get(2).side()).isEqualTo(TreeDiff.Side.LEFT);
+        assertThat(diff.get(2).ga()).isEqualTo("g:old-child");
+    }
+
+    @Test
+    void gavWithEmptyScopeOmitsBracket() {
+        // When scope is empty, gav() returns just "ga:version" without a bracket suffix.
+        var entry = new TreeDiff.DiffEntry("g:a", "1.0", "", 0, TreeDiff.Side.SAME);
+        assertThat(entry.gav()).isEqualTo("g:a:1.0");
+    }
+
+    @Test
+    void gavWithNullScopeOmitsBracket() {
+        // When scope is null, gav() returns just "ga:version" without a bracket suffix.
+        var entry = new TreeDiff.DiffEntry("g:a", "1.0", null, 0, TreeDiff.Side.SAME);
+        assertThat(entry.gav()).isEqualTo("g:a:1.0");
+    }
+
+    @Test
+    void nonJarExtensionIncludedInNodeKey() {
+        // A node with a non-jar extension must produce a distinct key so it is not
+        // collapsed with the default jar variant.
+        var root1 = new DependencyTreeModel.TreeNode("g", "a", "", "1.0", "compile", false, 0);
+        var zip1 = new DependencyTreeModel.TreeNode("g", "b", "", "zip", "1.0", "compile", false, 1);
+        root1.children.add(zip1);
+
+        var root2 = new DependencyTreeModel.TreeNode("g", "a", "", "1.0", "compile", false, 0);
+        var zip2 = new DependencyTreeModel.TreeNode("g", "b", "", "zip", "2.0", "compile", false, 1);
+        root2.children.add(zip2);
+
+        List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root1), tree(root2));
+
+        // root SAME + zip 1.0 LEFT + zip 2.0 RIGHT = 3 entries
+        assertThat(diff).hasSize(3);
+        assertThat(diff.get(0).side()).isEqualTo(TreeDiff.Side.SAME);
+        assertThat(diff.get(1).side()).isEqualTo(TreeDiff.Side.LEFT);
+        assertThat(diff.get(2).side()).isEqualTo(TreeDiff.Side.RIGHT);
+    }
 }

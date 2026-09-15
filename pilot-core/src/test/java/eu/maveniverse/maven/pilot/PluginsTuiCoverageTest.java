@@ -20,6 +20,7 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.tui.event.KeyEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -351,5 +352,53 @@ class PluginsTuiCoverageTest {
 
         assertThat(tui.helpSections()).isNotEmpty();
         assertThat(tui.toolName()).isEqualTo("Plugins");
+    }
+
+    // ── handleSimpleStandaloneEvent paths ─────────────────────────────────────
+
+    private PilotProject singlePluginProject(String subdirName) throws IOException {
+        Path dir = subdir(subdirName);
+        return createProject(
+                "com.example",
+                "app",
+                "1.0",
+                dir,
+                List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0")),
+                List.of());
+    }
+
+    @Test
+    void handleEventHKeyOpensHelpOverlayAndReturnsTrue() throws IOException {
+        // 'h' key → helpOverlay.open(...) → return true
+        // Exercises the key.isCharIgnoreCase('h') branch in handleSimpleStandaloneEvent.
+        PluginsTui tui = new PluginsTui(singlePluginProject("h-opens-help"), List.of(), (g, a) -> List.of());
+
+        boolean result = tui.handleEvent(KeyEvent.ofChar('h'), null);
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    void handleEventScrollKeyWhenHelpOverlayActiveIsConsumed() throws IOException {
+        // Open the help overlay, then send a DOWN key.
+        // HelpOverlay.handleKey(DOWN) returns true → handleSimpleStandaloneEvent returns true.
+        // Exercises the helpOverlay.isActive() + handleKey returning true branch.
+        PluginsTui tui = new PluginsTui(singlePluginProject("help-scroll"), List.of(), (g, a) -> List.of());
+        // Open the overlay via 'h'
+        tui.handleEvent(KeyEvent.ofChar('h'), null);
+        // DOWN key should be consumed by the overlay
+        boolean result = tui.handleEvent(KeyEvent.ofKey(dev.tamboui.tui.event.KeyCode.DOWN), null);
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    void handleEventUnhandledKeyWhenHelpOverlayActiveReturnsFalse() throws IOException {
+        // Open the help overlay via 'h', then send an 'a' key.
+        // HelpOverlay.handleKey('a') returns false, 'a' is not 'q'/Ctrl-C → return false.
+        // Exercises the helpOverlay.isActive() + handleKey returning false branch.
+        PluginsTui tui = new PluginsTui(singlePluginProject("help-unknown-key"), List.of(), (g, a) -> List.of());
+        tui.handleEvent(KeyEvent.ofChar('h'), null);
+        // 'a' is not handled by the overlay and is not 'q'/'ctrl-c' → false
+        boolean result = tui.handleEvent(KeyEvent.ofChar('a'), null);
+        assertThat(result).isFalse();
     }
 }

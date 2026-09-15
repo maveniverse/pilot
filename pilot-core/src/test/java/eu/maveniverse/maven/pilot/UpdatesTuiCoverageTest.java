@@ -24,6 +24,7 @@ import dev.tamboui.text.Span;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -530,5 +531,63 @@ class UpdatesTuiCoverageTest {
         tui.handleKeyEvent(KeyEvent.ofChar('N'));
 
         assertThat(tui.status()).contains("match");
+    }
+
+    // --- buildStatusMessage libYears branch (L367) ---
+
+    @Test
+    void statusMessageIncludesLibYearsWhenDatesComplete() throws Exception {
+        Path dir = subdir("status-libyears");
+        PilotProject.Dep d = new PilotProject.Dep("com.example", "lib", "1.0");
+        PilotProject project = createProjectWithDep("com.example", "app", "1.0", dir, d);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+
+        // Set update + libYears on the dep so totalLibYears() returns > 0
+        for (var dep : result.allDependencies) {
+            dep.newestVersion = "2.0";
+            dep.updateType = VersionComparator.UpdateType.MAJOR;
+            dep.libYears = 1.5f;
+        }
+        tui.loading = false;
+
+        // Invoke the private onDatesComplete() via reflection. That method sets
+        // datesLoading = false and then calls buildStatusMessage(), which hits L367
+        // because totalLibYears() > 0.
+        var method = UpdatesTui.class.getDeclaredMethod("onDatesComplete");
+        method.setAccessible(true);
+        method.invoke(tui);
+
+        // After onDatesComplete, the status should mention libyears
+        assertThat(tui.status()).contains("libyear");
+    }
+
+    // --- render(Frame, Rect) with treeImpactOverlay active (L1123) ---
+
+    /**
+     * Opens the treeImpactOverlay on the given UpdatesTui via reflection.
+     */
+    private static void openTreeImpactOverlay(UpdatesTui tui) throws Exception {
+        Field f = UpdatesTui.class.getDeclaredField("treeImpactOverlay");
+        f.setAccessible(true);
+        DiffOverlay overlay = (DiffOverlay) f.get(tui);
+        var entries = List.of(new TreeDiff.DiffEntry("com.example:lib", "1.0", "compile", 0, TreeDiff.Side.LEFT));
+        overlay.openTreeImpact(entries);
+    }
+
+    @Test
+    void renderNonStandaloneWithTreeImpactOverlayActive() throws Exception {
+        Path dir = subdir("render-overlay");
+        PilotProject project = createProject("com.example", "app", "1.0", dir);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+        tui.loading = false;
+        tui.buildDisplayRows();
+        openTreeImpactOverlay(tui);
+
+        // Call render(Frame, Rect) directly — this exercises L1123 (treeImpactOverlay.render)
+        // which is NOT called by renderStandalone (which uses zones.get(1)).
+        String output = TuiTestHelper.render(frame -> tui.render(frame, frame.area()));
+        assertThat(output).isNotEmpty();
     }
 }

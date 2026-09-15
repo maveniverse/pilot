@@ -257,4 +257,73 @@ class DependenciesTuiViewSwitchTest {
         // Should include "DM Tree: N" entry
         assertThat(names).anyMatch(n -> n.startsWith("DM Tree:"));
     }
+
+    @Test
+    void setFocusedForwardsToTreeTuiWhenPresent() throws IOException {
+        // setFocused should delegate to treeTui when treeTui != null.
+        // Exercises the treeTui != null branch in DependenciesTui.setFocused().
+        Path pom = pomPath();
+        PomEditSession session = new PomEditSession(pom);
+        var root = new DependencyTreeModel.TreeNode("com.example", "app", "1.0", "compile", false, 0);
+        var model = new DependencyTreeModel(root, List.of(), 1);
+        TreeTui treeTui = new TreeTui(model, "compile", "com.example:app:1.0");
+        DependenciesTui tui = new DependenciesTui(
+                List.of(),
+                List.of(),
+                List.of(),
+                session,
+                null,
+                "com.example:app:1.0",
+                false,
+                treeTui,
+                null); // dmTreeTui = null
+        // Verify setFocused delegates without throwing; view count is TREE, DECLARED, TRANSITIVE, MANAGED = 4
+        tui.setFocused(true);
+        tui.setFocused(false);
+        assertThat(tui.subViewCount()).isEqualTo(4);
+    }
+
+    // --- View.label() enum cases for the new views ---
+
+    @Test
+    void viewSwitchHintIncludesDmTreeLabel() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // helpSections() → viewSwitchHint() → View::label for all views including DM_TREE (L231)
+        List<HelpOverlay.Section> sections = tui.helpSections();
+        String allText = sections.stream()
+                .flatMap(s -> s.entries().stream())
+                .map(e -> e.key() + " " + e.description())
+                .reduce("", String::concat);
+        assertThat(allText).contains("DM Tree");
+    }
+
+    @Test
+    void viewSwitchHintIncludesUnusedDeclaredAndUsedTransitive() throws IOException {
+        // Reactor-mode DependenciesTui has UNUSED_DECLARED and USED_TRANSITIVE views (L232-233)
+        Path pom = pomPath();
+        DependenciesTui tui = new DependenciesTui(
+                List.of(), List.of(), "com.example:reactor:1.0", 1, 0, path -> new PomEditSession(pom), null);
+        List<HelpOverlay.Section> sections = tui.helpSections();
+        String allText = sections.stream()
+                .flatMap(s -> s.entries().stream())
+                .map(e -> e.key() + " " + e.description())
+                .reduce("", String::concat);
+        assertThat(allText).contains("Unused Declared").contains("Used Transitive");
+    }
+
+    // --- render(Frame, Rect) with DM_TREE active (L522-523) ---
+
+    @Test
+    void renderNonStandaloneWithDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // Switch to DM_TREE view (index 3: DECLARED=0, TRANSITIVE=1, MANAGED=2, DM_TREE=3)
+        tui.setActiveSubView(3);
+
+        // Call render(Frame, Rect) directly — exercises L521-523 (dmTreeTui.render)
+        // which differs from renderStandalone (which renders into zones.get(1)).
+        String output = TuiTestHelper.render(frame -> tui.render(frame, frame.area()));
+        assertThat(output).isNotEmpty();
+    }
 }
