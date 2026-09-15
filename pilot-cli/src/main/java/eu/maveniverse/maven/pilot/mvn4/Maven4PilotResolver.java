@@ -383,9 +383,8 @@ class Maven4PilotResolver implements PilotResolver {
      * @return the original (pre-management) version string, or {@code null} if not available
      */
     @SuppressWarnings(
-            @SuppressWarnings(
-                    "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
-            private static String getPremanagedVersion(Node node) {
+            "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
+    private static String getPremanagedVersion(Node node) {
         try {
             Method m = node.getClass().getDeclaredMethod("getDependencyNode");
             m.setAccessible(true);
