@@ -225,25 +225,28 @@ class DependenciesTuiViewSwitchTest {
     void closeForwardsToDmTreeTui() throws IOException {
         TreeTui dmTree = createSimpleDmTree();
         DependenciesTui tui = createTuiWithDmTree(dmTree);
-        // close() should not throw; it forwards to dmTreeTui
+        // close() forwards to dmTreeTui; view structure is unchanged
         tui.close();
+        assertThat(tui.subViewCount()).isEqualTo(4);
     }
 
     @Test
     void setRunnerForwardsToDmTreeTui() throws IOException {
         TreeTui dmTree = createSimpleDmTree();
         DependenciesTui tui = createTuiWithDmTree(dmTree);
-        // setRunner(null) should not throw; it forwards to dmTreeTui
+        // setRunner(null) forwards to dmTreeTui; view structure is unchanged
         tui.setRunner(null);
+        assertThat(tui.subViewCount()).isEqualTo(4);
     }
 
     @Test
     void setFocusedForwardsToDmTreeTui() throws IOException {
         TreeTui dmTree = createSimpleDmTree();
         DependenciesTui tui = createTuiWithDmTree(dmTree);
-        // setFocused(true) should not throw; it forwards to dmTreeTui
+        // setFocused forwards to dmTreeTui; view structure and active sub-view are unchanged
         tui.setFocused(true);
         tui.setFocused(false);
+        assertThat(tui.subViewCount()).isEqualTo(4);
     }
 
     @Test
