@@ -20,6 +20,11 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.layout.Rect;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseButton;
+import dev.tamboui.tui.event.MouseEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Tests for the view-switch hint text and help sections in DependenciesTui.
+ * Tests for the view-switch hint text, help sections, and DM tree delegation in DependenciesTui.
  */
 class DependenciesTuiViewSwitchTest {
 
@@ -131,5 +136,121 @@ class DependenciesTuiViewSwitchTest {
         Path pom = pomPath();
         DependenciesTui tui = new DependenciesTui(List.of(), List.of(), pom.toString(), "com.example:app:1.0", false);
         assertThat(tui.toolName()).isEqualTo("Deps");
+    }
+
+    // --- DM tree (dmTreeTui) delegation ---
+
+    private static TreeTui createSimpleDmTree() {
+        var root = new DependencyTreeModel.TreeNode("com.example", "bom", "1.0", "compile", false, 0);
+        var child = new DependencyTreeModel.TreeNode("org.dep", "managed-lib", "2.0", "compile", false, 1);
+        root.children.add(child);
+        var model = new DependencyTreeModel(root, List.of(), 2);
+        return new TreeTui(model, "compile", "com.example:bom:1.0");
+    }
+
+    private DependenciesTui createTuiWithDmTree(TreeTui dmTreeTui) throws IOException {
+        Path pom = pomPath();
+        PomEditSession session = new PomEditSession(pom);
+        return new DependenciesTui(
+                List.of(),
+                List.of(),
+                List.of(),
+                session,
+                null,
+                "com.example:app:1.0",
+                false,
+                null, // no treeTui
+                dmTreeTui);
+    }
+
+    @Test
+    void subViewCountIncludesDmTreeWhenDmTreePresent() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // Without treeTui: DECLARED, TRANSITIVE, MANAGED, DM_TREE → 4 views
+        assertThat(tui.subViewCount()).isEqualTo(4);
+    }
+
+    @Test
+    void statusDelegatesWhenDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // Switch to DM_TREE view (index 3: DECLARED=0, TRANSITIVE=1, MANAGED=2, DM_TREE=3)
+        tui.setActiveSubView(3);
+        // Should delegate status to dmTreeTui (non-null)
+        assertThat(tui.status()).isNotNull();
+    }
+
+    @Test
+    void keyHintsDelegatesWhenDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        tui.setActiveSubView(3);
+        assertThat(tui.keyHints()).isNotNull();
+    }
+
+    @Test
+    void handleKeyEventDelegatesWhenDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        tui.setActiveSubView(3);
+        // Key events should be delegated to dmTreeTui
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.DOWN));
+        // Just verify no exception; dmTree handles the event
+    }
+
+    @Test
+    void handleMouseEventDelegatesWhenDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        tui.setActiveSubView(3);
+        MouseEvent click = MouseEvent.press(MouseButton.LEFT, 10, 5);
+        Rect area = new Rect(0, 0, 80, 24);
+        tui.handleMouseEvent(click, area);
+        // Just verify no exception
+    }
+
+    @Test
+    void renderDelegatesWhenDmTreeViewActive() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        tui.setActiveSubView(3);
+        String output = TuiTestHelper.render(tui::renderStandalone);
+        // DM tree should render managed-lib
+        assertThat(output).isNotEmpty();
+    }
+
+    @Test
+    void closeForwardsToDmTreeTui() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // close() should not throw; it forwards to dmTreeTui
+        tui.close();
+    }
+
+    @Test
+    void setRunnerForwardsToDmTreeTui() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // setRunner(null) should not throw; it forwards to dmTreeTui
+        tui.setRunner(null);
+    }
+
+    @Test
+    void setFocusedForwardsToDmTreeTui() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        // setFocused(true) should not throw; it forwards to dmTreeTui
+        tui.setFocused(true);
+        tui.setFocused(false);
+    }
+
+    @Test
+    void subViewNamesIncludesDmTreeCount() throws IOException {
+        TreeTui dmTree = createSimpleDmTree();
+        DependenciesTui tui = createTuiWithDmTree(dmTree);
+        List<String> names = tui.subViewNames();
+        // Should include "DM Tree: N" entry
+        assertThat(names).anyMatch(n -> n.startsWith("DM Tree:"));
     }
 }

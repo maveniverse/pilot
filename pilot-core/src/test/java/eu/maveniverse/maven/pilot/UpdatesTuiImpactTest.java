@@ -459,4 +459,57 @@ class UpdatesTuiImpactTest {
         UpdatesTui tui = new UpdatesTui(result, model, "com.example:app:1.0", (g, a) -> List.of(), resolver, null);
         assertThat(tui.status()).isNotNull();
     }
+
+    // --- handleEvent (standalone) with tree-impact overlay active ---
+
+    @Test
+    void handleEventEscWhenTreeImpactOverlayActive() throws Exception {
+        Path dir = subdir("standalone-overlay-esc");
+        PilotProject project = createProject("com.example", "app", "1.0", dir);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+        openTreeImpactOverlay(tui);
+
+        // Standalone handleEvent with ESC should close the overlay
+        boolean handled = tui.handleEvent(KeyEvent.ofKey(KeyCode.ESCAPE), null);
+        assertThat(handled).isTrue();
+    }
+
+    @Test
+    void handleEventQWhenTreeImpactOverlayActive() throws Exception {
+        Path dir = subdir("standalone-overlay-q");
+        PilotProject project = createProject("com.example", "app", "1.0", dir);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+        openTreeImpactOverlay(tui);
+
+        boolean handled = tui.handleEvent(KeyEvent.ofChar('q'), null);
+        assertThat(handled).isTrue();
+    }
+
+    @Test
+    void handleEventScrollWhenTreeImpactOverlayActive() throws Exception {
+        Path dir = subdir("standalone-overlay-scroll");
+        PilotProject project = createProject("com.example", "app", "1.0", dir);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+        openTreeImpactOverlay(tui);
+
+        // Down arrow goes to scroll, overlay stays active → handled
+        boolean handled = tui.handleEvent(KeyEvent.ofKey(KeyCode.DOWN), null);
+        assertThat(handled).isTrue();
+    }
+
+    @Test
+    void handleEventNonKeyEventIsConsumed() throws Exception {
+        Path dir = subdir("standalone-non-key");
+        PilotProject project = createProject("com.example", "app", "1.0", dir);
+        ReactorCollector.CollectionResult result = ReactorCollector.collect(List.of(project));
+        UpdatesTui tui = createTui(result, List.of(project));
+
+        // Non-key event (mouse scroll) should be consumed immediately
+        MouseEvent scroll = MouseEvent.scrollDown(10, 10);
+        boolean handled = tui.handleEvent(scroll, null);
+        assertThat(handled).isTrue();
+    }
 }
