@@ -79,7 +79,7 @@ public final class TreeDiff {
     private static void diffNodes(
             DependencyTreeModel.TreeNode left, DependencyTreeModel.TreeNode right, List<DiffEntry> result) {
         if (left.depth > MAX_DEPTH) {
-            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", left.depth, Side.SAME));
+            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", 0, Side.SAME));
             return;
         }
         // Emit the root / current pair — treat scope change as a difference
@@ -130,7 +130,7 @@ public final class TreeDiff {
 
     private static void drainSubtree(DependencyTreeModel.TreeNode node, Side side, List<DiffEntry> result) {
         if (node.depth > MAX_DEPTH) {
-            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", node.depth, Side.SAME));
+            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", 0, Side.SAME));
             return;
         }
         result.add(new DiffEntry(node.ga(), node.version, node.scope, node.depth, side));

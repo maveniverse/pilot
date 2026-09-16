@@ -235,9 +235,14 @@ class TreeDiffTest {
 
         List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root), tree(root));
 
-        assertThat(diff.stream().anyMatch(e -> e.ga().startsWith("[tree truncated")))
-                .as("depth guard must emit a truncation sentinel")
-                .isTrue();
+        TreeDiff.DiffEntry sentinel = diff.stream()
+                .filter(e -> e.ga().startsWith("[tree truncated"))
+                .findFirst()
+                .orElse(null);
+        assertThat(sentinel).as("depth guard must emit a truncation sentinel").isNotNull();
+        assertThat(sentinel.depth())
+                .as("sentinel must have depth 0 so it renders at the left margin")
+                .isEqualTo(0);
     }
 
     @Test
@@ -255,9 +260,16 @@ class TreeDiffTest {
 
         List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root1), tree(root2));
 
-        assertThat(diff.stream().anyMatch(e -> e.ga().startsWith("[tree truncated")))
+        TreeDiff.DiffEntry sentinel = diff.stream()
+                .filter(e -> e.ga().startsWith("[tree truncated"))
+                .findFirst()
+                .orElse(null);
+        assertThat(sentinel)
                 .as("drainSubtree depth guard must emit a truncation sentinel")
-                .isTrue();
+                .isNotNull();
+        assertThat(sentinel.depth())
+                .as("sentinel must have depth 0 so it renders at the left margin")
+                .isEqualTo(0);
     }
 
     @Test
