@@ -39,20 +39,8 @@ public final class PluginsReporter {
     /**
      * A resolved plugin entry: the plugin coordinates plus the newest available version (if any).
      */
-    public static class PluginUpdate {
-        public final String groupId;
-        public final String artifactId;
-        public final String currentVersion;
-        public final String newestVersion;
-        public final boolean managed;
-
-        PluginUpdate(String groupId, String artifactId, String currentVersion, String newestVersion, boolean managed) {
-            this.groupId = groupId;
-            this.artifactId = artifactId;
-            this.currentVersion = currentVersion;
-            this.newestVersion = newestVersion;
-            this.managed = managed;
-        }
+    public record PluginUpdate(
+            String groupId, String artifactId, String currentVersion, String newestVersion, boolean managed) {
 
         public String ga() {
             return groupId + ":" + artifactId;
@@ -61,17 +49,14 @@ public final class PluginsReporter {
 
     /**
      * Result of {@link #resolveAndCheck}: the plain-text report and the list of available updates.
+     *
+     * <p>{@code updates} is an unmodifiable list.</p>
      */
-    public static class CheckResult {
-        /** Plain-text report suitable for logging. */
-        public final String report;
-        /** Plugin updates found. Empty when all plugins are up to date. */
-        public final List<PluginUpdate> updates;
-
-        CheckResult(String report, List<PluginUpdate> updates) {
-            this.report = report;
-            this.updates = updates;
-        }
+    public record CheckResult(
+            /** Plain-text report suitable for logging. */
+            String report,
+            /** Plugin updates found. Empty when all plugins are up to date. */
+            List<PluginUpdate> updates) {
 
         public String formatFailure() {
             return updates.size() + " plugin update(s) available. Run pilot:plugins to review.";
@@ -154,18 +139,18 @@ public final class PluginsReporter {
             sb.append("  All plugins are up to date.\n");
         } else {
             for (PluginUpdate u : updates) {
-                VersionComparator.UpdateType type = VersionComparator.classify(u.currentVersion, u.newestVersion);
+                VersionComparator.UpdateType type = VersionComparator.classify(u.currentVersion(), u.newestVersion());
                 sb.append(String.format(
                         Locale.US,
                         "  %-60s %s -> %s  [%s]%s%n",
                         u.ga(),
-                        u.currentVersion,
-                        u.newestVersion,
+                        u.currentVersion(),
+                        u.newestVersion(),
                         VersionComparator.updateTypeLabel(type),
-                        u.managed ? " (managed)" : ""));
+                        u.managed() ? " (managed)" : ""));
             }
         }
 
-        return new CheckResult(sb.toString(), updates);
+        return new CheckResult(sb.toString(), List.copyOf(updates));
     }
 }

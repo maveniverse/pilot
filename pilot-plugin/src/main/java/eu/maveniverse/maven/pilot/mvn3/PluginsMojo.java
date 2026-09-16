@@ -102,9 +102,9 @@ public class PluginsMojo extends AbstractMojo {
             List<PilotProject> projects, UpdatesTui.VersionResolver versionResolver, String projectGav)
             throws MojoFailureException {
         PluginsReporter.CheckResult result = PluginsReporter.resolveAndCheck(projects, versionResolver, projectGav);
-        getLog().info("\n" + result.report);
+        getLog().info("\n" + result.report());
 
-        if ("check".equals(action) && !result.updates.isEmpty()) {
+        if ("check".equals(action) && !result.updates().isEmpty()) {
             throw new MojoFailureException(result.formatFailure());
         }
     }
