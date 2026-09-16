@@ -57,7 +57,6 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 import org.eclipse.aether.util.graph.manager.TransitiveDependencyManager;
-import org.eclipse.aether.util.graph.transformer.ConflictResolver;
 
 /**
  * Maven 4 implementation of {@link PilotResolver} using the standalone Maven 4 API.
@@ -414,37 +413,5 @@ class Maven4PilotResolver implements PilotResolver {
     private static String getPremanagedVersion(Node node) {
         DependencyNode aetherNode = getDependencyNode(node);
         return aetherNode != null ? DependencyManagerUtils.getPremanagedVersion(aetherNode) : null;
-    }
-
-    /**
-     * @return the original scope before dependency management overrode it, or {@code null}
-     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
-     */
-    @SuppressWarnings({"unused", "java:S1144"
-    }) // pending MNG-13151: will be called once Node API exposes pre-managed scope
-    private static String getPremanagedScope(Node node) {
-        DependencyNode aetherNode = getDependencyNode(node);
-        return aetherNode != null ? DependencyManagerUtils.getPremanagedScope(aetherNode) : null;
-    }
-
-    /**
-     * @return the scope before conflict resolution changed it, or {@code null}
-     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
-     */
-    @SuppressWarnings({"unused", "java:S1144"
-    }) // pending MNG-13151: will be called once Node API exposes original scope
-    private static String getOriginalScope(Node node) {
-        DependencyNode aetherNode = getDependencyNode(node);
-        return aetherNode != null ? (String) aetherNode.getData().get(ConflictResolver.NODE_DATA_ORIGINAL_SCOPE) : null;
-    }
-
-    /**
-     * @return the winning node when this node was omitted due to a conflict, or {@code null}
-     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
-     */
-    @SuppressWarnings({"unused", "java:S1144"}) // pending MNG-13151: will be called once Node API exposes winner info
-    private static DependencyNode getWinner(Node node) {
-        DependencyNode aetherNode = getDependencyNode(node);
-        return aetherNode != null ? (DependencyNode) aetherNode.getData().get(ConflictResolver.NODE_DATA_WINNER) : null;
     }
 }
