@@ -222,6 +222,45 @@ class TreeDiffTest {
     }
 
     @Test
+    void diffNodesTruncatesAtMaxDepth() {
+        // Build a tree that is MAX_DEPTH + 1 deep (depth field = MAX_DEPTH + 1 on the leaf).
+        // diffNodes hits the guard when left.depth > MAX_DEPTH.
+        DependencyTreeModel.TreeNode root = node("g", "root", "1.0", 0);
+        DependencyTreeModel.TreeNode cur = root;
+        for (int i = 1; i <= TreeDiff.MAX_DEPTH + 1; i++) {
+            DependencyTreeModel.TreeNode child = node("g", "dep", "1.0", i);
+            cur.children.add(child);
+            cur = child;
+        }
+
+        List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root), tree(root));
+
+        assertThat(diff.stream().anyMatch(e -> e.ga().startsWith("[tree truncated")))
+                .as("depth guard must emit a truncation sentinel")
+                .isTrue();
+    }
+
+    @Test
+    void drainSubtreeTruncatesAtMaxDepth() {
+        // Build a right-only deep subtree so drainSubtree is called on a node at depth
+        // MAX_DEPTH + 1, exercising the guard in drainSubtree.
+        DependencyTreeModel.TreeNode root1 = node("g", "a", "1.0", 0);
+        DependencyTreeModel.TreeNode root2 = node("g", "a", "1.0", 0);
+        DependencyTreeModel.TreeNode cur = root2;
+        for (int i = 1; i <= TreeDiff.MAX_DEPTH + 1; i++) {
+            DependencyTreeModel.TreeNode child = node("g", "new", "1.0", i);
+            cur.children.add(child);
+            cur = child;
+        }
+
+        List<TreeDiff.DiffEntry> diff = TreeDiff.diff(tree(root1), tree(root2));
+
+        assertThat(diff.stream().anyMatch(e -> e.ga().startsWith("[tree truncated")))
+                .as("drainSubtree depth guard must emit a truncation sentinel")
+                .isTrue();
+    }
+
+    @Test
     void gavWithEmptyScopeOmitsBracket() {
         // When scope is empty, gav() returns just "ga:version" without a bracket suffix.
         var entry = new TreeDiff.DiffEntry("g:a", "1.0", "", 0, TreeDiff.Side.SAME);
