@@ -29,8 +29,14 @@ import java.util.Map;
  * <p>Siblings are matched by GA+classifier+extension identity before descending, so an inserted or removed
  * child before an unchanged sibling does not cause spurious LEFT/RIGHT entries for the
  * unchanged siblings.
+ *
+ * <p>Recursion depth is capped at {@value #MAX_DEPTH} to prevent {@link StackOverflowError} on
+ * pathological deep trees. Entries beyond the cap are emitted as a {@link Side#SAME} truncation sentinel.
  */
 public final class TreeDiff {
+
+    /** Maximum recursion depth for {@link #diffNodes} and {@link #drainSubtree}. */
+    static final int MAX_DEPTH = 500;
 
     public enum Side {
         LEFT(-1),
@@ -72,6 +78,10 @@ public final class TreeDiff {
 
     private static void diffNodes(
             DependencyTreeModel.TreeNode left, DependencyTreeModel.TreeNode right, List<DiffEntry> result) {
+        if (left.depth > MAX_DEPTH) {
+            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", left.depth, Side.SAME));
+            return;
+        }
         // Emit the root / current pair — treat scope change as a difference
         if (left.ga().equals(right.ga()) && left.version.equals(right.version) && left.scope.equals(right.scope)) {
             result.add(new DiffEntry(left.ga(), left.version, left.scope, left.depth, Side.SAME));
@@ -119,6 +129,10 @@ public final class TreeDiff {
     }
 
     private static void drainSubtree(DependencyTreeModel.TreeNode node, Side side, List<DiffEntry> result) {
+        if (node.depth > MAX_DEPTH) {
+            result.add(new DiffEntry("[tree truncated at depth " + MAX_DEPTH + "]", "", "", node.depth, Side.SAME));
+            return;
+        }
         result.add(new DiffEntry(node.ga(), node.version, node.scope, node.depth, side));
         for (DependencyTreeModel.TreeNode child : node.children) {
             drainSubtree(child, side, result);

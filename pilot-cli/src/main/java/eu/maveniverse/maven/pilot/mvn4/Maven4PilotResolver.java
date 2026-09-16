@@ -379,13 +379,30 @@ class Maven4PilotResolver implements PilotResolver {
     // DependencyNode.getData() and via DependencyManagerUtils (winner, pre-managed version/scope,
     // original scope). AbstractNode.getDependencyNode() is package-private, so reflection is the
     // only option until those getters are added to the Node interface.
+    //
+    // The Method is resolved once at class-load time and cached so that tree conversion
+    // (O(N) nodes) does not pay getDeclaredMethod + setAccessible on every node.
 
     @SuppressWarnings(
             "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
-    private static DependencyNode getDependencyNode(Node node) {
+    private static final Method DEPENDENCY_NODE_METHOD = resolveDependencyNodeMethod();
+
+    @SuppressWarnings("java:S3011") // same rationale as DEPENDENCY_NODE_METHOD
+    private static Method resolveDependencyNodeMethod() {
         try {
-            Method m = node.getClass().getDeclaredMethod("getDependencyNode");
+            Class<?> abstractNode = Class.forName("org.apache.maven.impl.AbstractNode");
+            Method m = abstractNode.getDeclaredMethod("getDependencyNode");
             m.setAccessible(true);
+            return m;
+        } catch (Exception e) {
+            return null; // Maven version without AbstractNode — reflection unavailable
+        }
+    }
+
+    private static DependencyNode getDependencyNode(Node node) {
+        Method m = DEPENDENCY_NODE_METHOD;
+        if (m == null) return null;
+        try {
             return (DependencyNode) m.invoke(node);
         } catch (Exception e) {
             return null;
@@ -398,22 +415,33 @@ class Maven4PilotResolver implements PilotResolver {
         return aetherNode != null ? DependencyManagerUtils.getPremanagedVersion(aetherNode) : null;
     }
 
-    /** @return the original scope before dependency management overrode it, or {@code null} */
-    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    /**
+     * @return the original scope before dependency management overrode it, or {@code null}
+     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+     */
+    @SuppressWarnings({"unused", "java:S1144"
+    }) // pending MNG-13151: will be called once Node API exposes pre-managed scope
     private static String getPremanagedScope(Node node) {
         DependencyNode aetherNode = getDependencyNode(node);
         return aetherNode != null ? DependencyManagerUtils.getPremanagedScope(aetherNode) : null;
     }
 
-    /** @return the scope before conflict resolution changed it, or {@code null} */
-    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    /**
+     * @return the scope before conflict resolution changed it, or {@code null}
+     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+     */
+    @SuppressWarnings({"unused", "java:S1144"
+    }) // pending MNG-13151: will be called once Node API exposes original scope
     private static String getOriginalScope(Node node) {
         DependencyNode aetherNode = getDependencyNode(node);
         return aetherNode != null ? (String) aetherNode.getData().get(ConflictResolver.NODE_DATA_ORIGINAL_SCOPE) : null;
     }
 
-    /** @return the winning node when this node was omitted due to a conflict, or {@code null} */
-    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    /**
+     * @return the winning node when this node was omitted due to a conflict, or {@code null}
+     * @deprecated not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+     */
+    @SuppressWarnings({"unused", "java:S1144"}) // pending MNG-13151: will be called once Node API exposes winner info
     private static DependencyNode getWinner(Node node) {
         DependencyNode aetherNode = getDependencyNode(node);
         return aetherNode != null ? (DependencyNode) aetherNode.getData().get(ConflictResolver.NODE_DATA_WINNER) : null;
