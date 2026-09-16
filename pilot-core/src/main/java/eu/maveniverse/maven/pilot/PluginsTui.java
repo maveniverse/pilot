@@ -66,7 +66,9 @@ public class PluginsTui extends ToolPanel {
         /** Per-module version: module GA (groupId:artifactId) → declared version (empty string if inherited/absent). */
         final Map<String, String> moduleVersions = new LinkedHashMap<>();
 
-        volatile String newestVersion;
+        // All mutations to mutable fields go through runOnRenderThread and are consumed on the same
+        // render thread, so no volatile/synchronization is needed on any of these fields.
+        String newestVersion;
         VersionComparator.UpdateType updateType;
         LocalDate currentReleaseDate;
         LocalDate newestReleaseDate;
