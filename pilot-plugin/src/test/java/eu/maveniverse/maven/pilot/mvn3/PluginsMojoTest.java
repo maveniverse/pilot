@@ -156,6 +156,42 @@ class PluginsMojoTest {
     }
 
     @Test
+    void checkFailsWhenResolverFails() {
+        var mojo = new PluginsMojo(null);
+        mojo.action = "check";
+
+        PilotProject p = makeProject("app");
+        p.setPlugins(List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.10.0")));
+
+        // Resolver throws — check mode must fail because result is incomplete
+        assertThatThrownBy(() -> mojo.executeNonInteractive(
+                        List.of(p),
+                        (g, a) -> {
+                            throw new IllegalStateException("network error");
+                        },
+                        "com.example:app:1.0"))
+                .isInstanceOf(MojoFailureException.class)
+                .hasMessageContaining("could not be resolved");
+    }
+
+    @Test
+    void reportDoesNotThrowWhenResolverFails() throws Exception {
+        var mojo = new PluginsMojo(null);
+        mojo.action = "report";
+
+        PilotProject p = makeProject("app");
+        p.setPlugins(List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.10.0")));
+
+        // Report mode exits 0 even when resolver fails
+        mojo.executeNonInteractive(
+                List.of(p),
+                (g, a) -> {
+                    throw new IllegalStateException("network error");
+                },
+                "com.example:app:1.0");
+    }
+
+    @Test
     void multiModuleReactorAggregatesPlugins() {
         var mojo = new PluginsMojo(null);
         mojo.action = "check";

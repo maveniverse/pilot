@@ -104,7 +104,7 @@ public class PluginsMojo extends AbstractMojo {
         PluginsReporter.CheckResult result = PluginsReporter.resolveAndCheck(projects, versionResolver, projectGav);
         getLog().info("\n" + result.report());
 
-        if ("check".equals(action) && !result.updates().isEmpty()) {
+        if ("check".equals(action) && (!result.updates().isEmpty() || !result.isComplete())) {
             throw new MojoFailureException(result.formatFailure());
         }
     }
@@ -114,7 +114,7 @@ public class PluginsMojo extends AbstractMojo {
             try {
                 VersionRangeRequest request = new VersionRangeRequest();
                 request.setArtifact(new DefaultArtifact(groupId, artifactId, "jar", "[0,)"));
-                request.setRepositories(project.getRemoteProjectRepositories());
+                request.setRepositories(project.getRemotePluginRepositories());
                 VersionRangeResult result = repoSystem.resolveVersionRange(repoSession, request);
                 return UpdatesTui.versionsNewestFirst(result.getVersions());
             } catch (VersionRangeResolutionException e) {

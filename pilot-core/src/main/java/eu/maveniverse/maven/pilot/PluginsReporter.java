@@ -20,9 +20,11 @@ package eu.maveniverse.maven.pilot;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Non-interactive report formatter for plugin update data.
@@ -48,18 +50,42 @@ public final class PluginsReporter {
     }
 
     /**
-     * Result of {@link #resolveAndCheck}: the plain-text report and the list of available updates.
+     * Result of {@link #resolveAndCheck}: the plain-text report, the list of available updates,
+     * and the set of plugin GAs whose version lookup failed.
      *
-     * <p>{@code updates} is an unmodifiable list.</p>
+     * <p>{@code updates} is an unmodifiable list. {@code unresolved} is an unmodifiable set.</p>
      */
     public record CheckResult(
             /** Plain-text report suitable for logging. */
             String report,
             /** Plugin updates found. Empty when all plugins are up to date. */
-            List<PluginUpdate> updates) {
+            List<PluginUpdate> updates,
+            /**
+             * GAs for which version resolution failed (e.g. repository unreachable).
+             * Non-empty means the check result is incomplete.
+             */
+            Set<String> unresolved) {
 
         public String formatFailure() {
-            return updates.size() + " plugin update(s) available. Run pilot:plugins to review.";
+            StringBuilder sb = new StringBuilder();
+            if (!updates.isEmpty()) {
+                sb.append(updates.size()).append(" plugin update(s) available. Run pilot:plugins to review.");
+            }
+            if (!unresolved.isEmpty()) {
+                if (sb.length() > 0) {
+                    sb.append(' ');
+                }
+                sb.append(unresolved.size())
+                        .append(" plugin(s) could not be resolved: ")
+                        .append(unresolved)
+                        .append('.');
+            }
+            return sb.toString();
+        }
+
+        /** Returns {@code true} when the result is complete (no resolver failures). */
+        public boolean isComplete() {
+            return unresolved.isEmpty();
         }
     }
 
@@ -116,13 +142,19 @@ public final class PluginsReporter {
 
         // Resolve updates.
         List<PluginUpdate> updates = new ArrayList<>();
+        Set<String> unresolved = new LinkedHashSet<>();
         for (Entry entry : allByGa.values()) {
             if (entry.version.isEmpty()) continue;
             List<String> versions;
             try {
                 versions = resolver.resolveVersions(entry.groupId, entry.artifactId);
             } catch (Exception e) {
-                continue; // skip on lookup failure
+                unresolved.add(entry.ga()); // record lookup failure
+                continue;
+            }
+            if (versions.isEmpty()) {
+                unresolved.add(entry.ga()); // empty result also means unresolved
+                continue;
             }
             versions.stream()
                     .filter(v -> !VersionComparator.isPreview(v))
@@ -135,7 +167,7 @@ public final class PluginsReporter {
         // Build report.
         StringBuilder sb = new StringBuilder();
         sb.append("Plugin updates for ").append(projectGav).append(":\n\n");
-        if (updates.isEmpty()) {
+        if (updates.isEmpty() && unresolved.isEmpty()) {
             sb.append("  All plugins are up to date.\n");
         } else {
             for (PluginUpdate u : updates) {
@@ -149,8 +181,14 @@ public final class PluginsReporter {
                         VersionComparator.updateTypeLabel(type),
                         u.managed() ? " (managed)" : ""));
             }
+            if (!unresolved.isEmpty()) {
+                sb.append("\n  Could not resolve versions for:\n");
+                for (String ga : unresolved) {
+                    sb.append("    ").append(ga).append('\n');
+                }
+            }
         }
 
-        return new CheckResult(sb.toString(), List.copyOf(updates));
+        return new CheckResult(sb.toString(), List.copyOf(updates), Set.copyOf(unresolved));
     }
 }
