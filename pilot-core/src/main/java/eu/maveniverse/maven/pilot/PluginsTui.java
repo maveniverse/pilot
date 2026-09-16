@@ -133,8 +133,10 @@ public class PluginsTui extends ToolPanel {
     private Filter filter = Filter.ALL;
     volatile String statusText = "Loading updates\u2026";
     volatile boolean loading = true;
+    // loadedCount, failedCount, dateFetchesPending, datesLoading are mutated exclusively inside
+    // runOnRenderThread callbacks and read only from the render thread — no volatile needed.
     int loadedCount;
-    volatile int failedCount;
+    int failedCount;
     int dateFetchesPending;
     boolean datesLoading;
     private int lastContentHeight;
