@@ -57,6 +57,7 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
 import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
+import org.eclipse.aether.util.graph.transformer.ConflictResolver;
 
 /**
  * Maven 4 implementation of {@link PilotResolver} using the standalone Maven 4 API.
@@ -371,27 +372,50 @@ class Maven4PilotResolver implements PilotResolver {
         return new DependencyTreeModel.TreeNode("?", "?", "", "?", "", false, depth);
     }
 
-    /**
-     * Extracts the pre-managed version from the underlying Aether {@code DependencyNode}.
-     *
-     * <p>The Maven 4 {@code Node} API does not expose this information directly.
-     * {@code AbstractNode.getDependencyNode()} (package-private) is the only path to the Aether
-     * node whose data map contains {@code "premanaged.version"} when verbose mode is enabled.
-     * Reflection is used here until the Maven API exposes this — see
-     * <a href="https://issues.apache.org/jira/browse/MNG-XXXX">MNG-XXXX</a>.
-     *
-     * @return the original (pre-management) version string, or {@code null} if not available
-     */
+    // ── Reflection bridge to Aether DependencyNode ──────────────────────────
+    //
+    // TODO: remove once https://github.com/apache/maven/issues/13151 is resolved.
+    // The Maven 4 Node API does not expose the resolution metadata that Aether stores in
+    // DependencyNode.getData() and via DependencyManagerUtils (winner, pre-managed version/scope,
+    // original scope). AbstractNode.getDependencyNode() is package-private, so reflection is the
+    // only option until those getters are added to the Node interface.
+
     @SuppressWarnings(
             "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
-    private static String getPremanagedVersion(Node node) {
+    private static DependencyNode getDependencyNode(Node node) {
         try {
             Method m = node.getClass().getDeclaredMethod("getDependencyNode");
             m.setAccessible(true);
-            DependencyNode aetherNode = (DependencyNode) m.invoke(node);
-            return DependencyManagerUtils.getPremanagedVersion(aetherNode);
+            return (DependencyNode) m.invoke(node);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** @return the original version before dependency management overrode it, or {@code null} */
+    private static String getPremanagedVersion(Node node) {
+        DependencyNode aetherNode = getDependencyNode(node);
+        return aetherNode != null ? DependencyManagerUtils.getPremanagedVersion(aetherNode) : null;
+    }
+
+    /** @return the original scope before dependency management overrode it, or {@code null} */
+    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    private static String getPremanagedScope(Node node) {
+        DependencyNode aetherNode = getDependencyNode(node);
+        return aetherNode != null ? DependencyManagerUtils.getPremanagedScope(aetherNode) : null;
+    }
+
+    /** @return the scope before conflict resolution changed it, or {@code null} */
+    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    private static String getOriginalScope(Node node) {
+        DependencyNode aetherNode = getDependencyNode(node);
+        return aetherNode != null ? (String) aetherNode.getData().get(ConflictResolver.NODE_DATA_ORIGINAL_SCOPE) : null;
+    }
+
+    /** @return the winning node when this node was omitted due to a conflict, or {@code null} */
+    @SuppressWarnings("unused") // not yet surfaced in TreeNode; kept for completeness pending MNG-13151
+    private static DependencyNode getWinner(Node node) {
+        DependencyNode aetherNode = getDependencyNode(node);
+        return aetherNode != null ? (DependencyNode) aetherNode.getData().get(ConflictResolver.NODE_DATA_WINNER) : null;
     }
 }
