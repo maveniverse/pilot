@@ -105,6 +105,14 @@ public final class MojoHelper {
      */
     public static CollectRequest buildCollectRequest(MavenProject project) {
         CollectRequest collectRequest = new CollectRequest();
+        // Use setRootArtifact() — do NOT use setRoot() here. setRoot() causes Aether to
+        // read the root descriptor from the repository, which is unreliable in reactor/
+        // aggregator builds where the current SNAPSHOT POM may not be installed in the
+        // local repo yet, and workspace-reader coverage varies by context.
+        // Instead we feed the already-resolved Maven model data explicitly:
+        // setManagedDependencies() carries the project's effective DM, and the session's
+        // DependencyManager (set in Maven3PilotResolver to DefaultDependencyManager)
+        // applies it correctly without a depth gate.
         collectRequest.setRootArtifact(new DefaultArtifact(
                 project.getGroupId(), project.getArtifactId(),
                 project.getPackaging(), project.getVersion()));
@@ -174,12 +182,36 @@ public final class MojoHelper {
                 outputDir,
                 testOutputDir);
 
+        pp.setPlugins(extractPlugins(mp));
+        pp.setManagedPlugins(extractManagedPlugins(mp));
+
         cache.put(mp, pp);
 
         if (mp.getParent() != null) {
             pp.parent = toPilotProject(mp.getParent(), cache);
         }
         return pp;
+    }
+
+    private static List<PilotProject.Plugin> extractPlugins(MavenProject mp) {
+        if (mp.getBuildPlugins() == null) return List.of();
+        return mp.getBuildPlugins().stream().map(MojoHelper::toPilotPlugin).toList();
+    }
+
+    private static List<PilotProject.Plugin> extractManagedPlugins(MavenProject mp) {
+        if (mp.getPluginManagement() == null || mp.getPluginManagement().getPlugins() == null) return List.of();
+        return mp.getPluginManagement().getPlugins().stream()
+                .map(MojoHelper::toPilotPlugin)
+                .toList();
+    }
+
+    private static PilotProject.Plugin toPilotPlugin(org.apache.maven.model.Plugin plugin) {
+        List<PilotProject.Dep> deps = plugin.getDependencies() != null
+                ? plugin.getDependencies().stream().map(MojoHelper::toPilotDep).toList()
+                : List.of();
+        List<PilotProject.Excl> exclusions = List.of();
+        return new PilotProject.Plugin(
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, exclusions);
     }
 
     static PilotProject.Dep toPilotDep(org.apache.maven.model.Dependency dep) {

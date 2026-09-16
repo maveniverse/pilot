@@ -41,8 +41,10 @@ import java.util.logging.Logger;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.maven.api.DownloadedArtifact;
 import org.apache.maven.api.Session;
+import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.Model;
 import org.apache.maven.api.model.Parent;
+import org.apache.maven.api.model.Plugin;
 import org.apache.maven.api.services.ArtifactResolver;
 import org.apache.maven.api.services.ArtifactResolverRequest;
 import org.apache.maven.api.services.ModelBuilder;
@@ -524,7 +526,7 @@ public class PilotMain {
 
         String packaging = effectiveModel.getPackaging() != null ? effectiveModel.getPackaging() : "jar";
 
-        return new PilotProject(
+        PilotProject pp = new PilotProject(
                 effectiveModel.getGroupId(),
                 effectiveModel.getArtifactId(),
                 effectiveModel.getVersion(),
@@ -538,9 +540,38 @@ public class PilotMain {
                 origProps,
                 outputDir,
                 testOutputDir);
+        pp.setPlugins(extractPlugins(effectiveModel));
+        pp.setManagedPlugins(extractManagedPlugins(effectiveModel));
+        return pp;
     }
 
-    private static PilotProject.Dep modelDepToPilotDep(org.apache.maven.api.model.Dependency dep) {
+    private static List<PilotProject.Plugin> extractPlugins(Model model) {
+        if (model.getBuild() == null || model.getBuild().getPlugins() == null) return List.of();
+        return model.getBuild().getPlugins().stream()
+                .map(PilotMain::modelPluginToPilotPlugin)
+                .toList();
+    }
+
+    private static List<PilotProject.Plugin> extractManagedPlugins(Model model) {
+        if (model.getBuild() == null
+                || model.getBuild().getPluginManagement() == null
+                || model.getBuild().getPluginManagement().getPlugins() == null) return List.of();
+        return model.getBuild().getPluginManagement().getPlugins().stream()
+                .map(PilotMain::modelPluginToPilotPlugin)
+                .toList();
+    }
+
+    private static PilotProject.Plugin modelPluginToPilotPlugin(Plugin plugin) {
+        List<PilotProject.Dep> deps = plugin.getDependencies() != null
+                ? plugin.getDependencies().stream()
+                        .map(PilotMain::modelDepToPilotDep)
+                        .toList()
+                : List.of();
+        return new PilotProject.Plugin(
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of());
+    }
+
+    private static PilotProject.Dep modelDepToPilotDep(Dependency dep) {
         List<PilotProject.Excl> exclusions = dep.getExclusions() != null
                 ? dep.getExclusions().stream()
                         .map(e -> new PilotProject.Excl(e.getGroupId(), e.getArtifactId()))

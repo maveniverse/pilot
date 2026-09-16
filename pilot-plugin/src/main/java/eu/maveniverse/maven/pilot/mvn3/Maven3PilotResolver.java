@@ -26,11 +26,14 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
 import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
@@ -38,6 +41,8 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.resolution.VersionRangeRequest;
 import org.eclipse.aether.resolution.VersionRangeResult;
+import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
+import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
  * Maven 3 implementation of {@link PilotResolver} using the Aether
@@ -45,8 +50,13 @@ import org.eclipse.aether.resolution.VersionRangeResult;
  */
 class Maven3PilotResolver implements PilotResolver {
 
+    private static final Logger LOGGER = Logger.getLogger(Maven3PilotResolver.class.getName());
+
     private final RepositorySystem repoSystem;
     private final RepositorySystemSession repoSession;
+    /** Session with verbose dependency-manager mode: causes Aether to record premanaged.version in node data. */
+    private final RepositorySystemSession verboseSession;
+
     private final MavenProject rootProject;
     private final IdentityHashMap<PilotProject, MavenProject> pilotToMaven;
 
@@ -57,6 +67,16 @@ class Maven3PilotResolver implements PilotResolver {
             IdentityHashMap<PilotProject, MavenProject> pilotToMaven) {
         this.repoSystem = repoSystem;
         this.repoSession = repoSession;
+        DefaultRepositorySystemSession verbose = new DefaultRepositorySystemSession(repoSession);
+        verbose.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
+        // Replace ClassicDependencyManager (which has a depth gate and only reads managed
+        // deps from context at depth >= 2, too late for setRootArtifact() requests where
+        // the root descriptor is skipped) with DefaultDependencyManager, which reads managed
+        // deps from context on every deriveChildManager() call regardless of depth.
+        // This ensures setManagedDependencies() in buildCollectRequest() is honoured and
+        // managed version overrides (e.g. jline:4.4.3) are applied to transitive deps.
+        verbose.setDependencyManager(new DefaultDependencyManager());
+        this.verboseSession = verbose;
         this.rootProject = rootProject;
         this.pilotToMaven = pilotToMaven;
     }
@@ -65,7 +85,8 @@ class Maven3PilotResolver implements PilotResolver {
     public DependencyTreeModel collectDependencies(PilotProject project) {
         try {
             MavenProject mp = requireMaven(project);
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(mp));
+            CollectRequest req = MojoHelper.buildCollectRequest(mp);
+            CollectResult result = repoSystem.collectDependencies(verboseSession, req);
             return MojoHelper.fromDependencyNode(result.getRoot());
         } catch (Exception e) {
             throw new IllegalStateException("Failed to collect dependencies for " + project.gav(), e);
@@ -77,7 +98,7 @@ class Maven3PilotResolver implements PilotResolver {
         try {
             MavenProject mp = requireMaven(project);
             DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(mp), null);
-            DependencyResult depResult = repoSystem.resolveDependencies(repoSession, depRequest);
+            DependencyResult depResult = repoSystem.resolveDependencies(verboseSession, depRequest);
             DependencyTreeModel tree = MojoHelper.fromDependencyNode(depResult.getRoot());
             Map<String, File> gaToJar = new HashMap<>();
             for (ArtifactResult ar : depResult.getArtifactResults()) {
@@ -116,6 +137,59 @@ class Maven3PilotResolver implements PilotResolver {
             return result.getArtifact().getFile().toPath();
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    @Override
+    public DependencyTreeModel collectManagedDependencyTree(PilotProject project) {
+        MavenProject mp = requireMaven(project);
+        try {
+            if (mp.getDependencyManagement() == null
+                    || mp.getDependencyManagement().getDependencies().isEmpty()) {
+                return emptyTree(mp);
+            }
+            List<org.apache.maven.model.Dependency> managed = mp.getDependencyManagement().getDependencies().stream()
+                    .filter(d -> !("pom".equals(d.getType()) && "import".equals(d.getScope())))
+                    .toList();
+            if (managed.isEmpty()) {
+                return emptyTree(mp);
+            }
+            CollectRequest collectRequest = new CollectRequest();
+            // setRootArtifact() — do NOT use setRoot(). See buildCollectRequest() for rationale.
+            // The verboseSession has DefaultDependencyManager installed, which applies
+            // setManagedDependencies() correctly without the depth gate ClassicDependencyManager has.
+            collectRequest.setRootArtifact(
+                    new DefaultArtifact(mp.getGroupId(), mp.getArtifactId(), mp.getPackaging(), mp.getVersion()));
+            collectRequest.setDependencies(MojoHelper.convertDependencies(managed));
+            collectRequest.setManagedDependencies(
+                    MojoHelper.convertDependencies(mp.getDependencyManagement().getDependencies()));
+            collectRequest.setRepositories(mp.getRemoteProjectRepositories());
+            CollectResult result = repoSystem.collectDependencies(verboseSession, collectRequest);
+            return MojoHelper.fromDependencyNode(result.getRoot());
+        } catch (Exception e) {
+            LOGGER.warning("collectManagedDependencyTree failed for " + mp.getGroupId() + ":" + mp.getArtifactId() + ":"
+                    + mp.getVersion() + ": " + e);
+            return emptyTree(mp);
+        }
+    }
+
+    private static DependencyTreeModel emptyTree(MavenProject mp) {
+        DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
+                mp.getGroupId(), mp.getArtifactId(), "", mp.getVersion(), "", false, 0);
+        return new DependencyTreeModel(root, List.of(), 1);
+    }
+
+    @Override
+    public DependencyTreeModel collectArtifactDependencies(String groupId, String artifactId, String version) {
+        try {
+            CollectRequest collectRequest = new CollectRequest();
+            collectRequest.setRootArtifact(new DefaultArtifact(groupId, artifactId, "jar", version));
+            collectRequest.setRepositories(rootProject.getRemoteProjectRepositories());
+            CollectResult result = repoSystem.collectDependencies(repoSession, collectRequest);
+            return MojoHelper.fromDependencyNode(result.getRoot());
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Failed to collect dependency tree for " + groupId + ":" + artifactId + ":" + version, e);
         }
     }
 

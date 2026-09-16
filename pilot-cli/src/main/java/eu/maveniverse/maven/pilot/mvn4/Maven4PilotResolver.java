@@ -23,6 +23,7 @@ import eu.maveniverse.maven.pilot.PilotProject;
 import eu.maveniverse.maven.pilot.PilotResolver;
 import eu.maveniverse.maven.pilot.UpdatesTui;
 import java.io.File;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,6 +51,12 @@ import org.apache.maven.api.services.VersionRangeResolver;
 import org.apache.maven.api.services.VersionRangeResolverRequest;
 import org.apache.maven.api.services.VersionRangeResolverResult;
 import org.apache.maven.api.services.xml.ModelXmlFactory;
+import org.apache.maven.impl.AbstractSession;
+import org.eclipse.aether.DefaultRepositorySystemSession;
+import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.util.graph.manager.DefaultDependencyManager;
+import org.eclipse.aether.util.graph.manager.DependencyManagerUtils;
 
 /**
  * Maven 4 implementation of {@link PilotResolver} using the standalone Maven 4 API.
@@ -64,8 +71,27 @@ class Maven4PilotResolver implements PilotResolver {
     private final Map<String, Model> effectiveModels;
 
     Maven4PilotResolver(Session session, Map<String, Model> effectiveModels) {
-        this.session = session;
         this.effectiveModels = effectiveModels;
+        if (session instanceof AbstractSession abstractSession) {
+            RepositorySystemSession repoSession = abstractSession.getSession();
+            if (repoSession instanceof DefaultRepositorySystemSession mutableSession) {
+                if (mutableSession.getDependencyManager() == null) {
+                    // The standalone CLI session (ApiRunner) creates a bare DefaultRepositorySystemSession
+                    // without a DependencyManager. BfDependencyCollector null-checks getDependencyManager()
+                    // and skips deriveChildManager() entirely when it is null, so setManagedDependencies()
+                    // in the CollectRequest is silently ignored and transitive deps display their declared
+                    // version instead of the DM-managed override.
+                    // Install DefaultDependencyManager — it reads managed deps on every
+                    // deriveChildManager() call without a depth gate.
+                    mutableSession.setDependencyManager(new DefaultDependencyManager());
+                }
+                // Enable verbose mode so Aether records the pre-managed version on each node.
+                // This populates node.getData().get("premanaged.version"), which lets the UI
+                // show the "4.4.3 ⚠ 3.25.1" indicator for DM-overridden dependencies.
+                mutableSession.setConfigProperty(DependencyManagerUtils.CONFIG_PROP_VERBOSE, Boolean.TRUE);
+            }
+        }
+        this.session = session;
     }
 
     Maven4PilotResolver(Session session, Model effectiveModel) {
@@ -206,6 +232,74 @@ class Maven4PilotResolver implements PilotResolver {
     }
 
     @Override
+    public DependencyTreeModel collectManagedDependencyTree(PilotProject project) {
+        Model model = modelFor(project);
+        try {
+            if (model.getDependencyManagement() == null
+                    || model.getDependencyManagement().getDependencies().isEmpty()) {
+                return emptyTree(model);
+            }
+            List<org.apache.maven.api.model.Dependency> managed =
+                    model.getDependencyManagement().getDependencies().stream()
+                            .filter(d -> !("pom".equals(d.getType()) && "import".equals(d.getScope())))
+                            .toList();
+            if (managed.isEmpty()) {
+                return emptyTree(model);
+            }
+            DependencyResolver resolver = session.getService(DependencyResolver.class);
+            DependencyResolverRequest request = DependencyResolverRequest.builder()
+                    .session(session)
+                    .requestType(DependencyResolverRequest.RequestType.COLLECT)
+                    .rootArtifact(session.createArtifact(
+                            model.getGroupId(),
+                            model.getArtifactId(),
+                            model.getVersion(),
+                            model.getPackaging() != null ? model.getPackaging() : "jar"))
+                    .dependencies(toDependencyCoordinates(managed))
+                    .managedDependencies(toDependencyCoordinates(
+                            model.getDependencyManagement().getDependencies()))
+                    .pathScope(PathScope.TEST_RUNTIME)
+                    .build();
+            DependencyResolverResult result = resolver.resolve(request);
+            return convertTree(result.getRoot());
+        } catch (Exception e) {
+            LOGGER.warning("collectManagedDependencyTree failed for " + model.getGroupId() + ":" + model.getArtifactId()
+                    + ": " + e);
+            return emptyTree(model);
+        }
+    }
+
+    private static DependencyTreeModel emptyTree(Model model) {
+        DependencyTreeModel.TreeNode root = new DependencyTreeModel.TreeNode(
+                model.getGroupId(),
+                model.getArtifactId(),
+                "",
+                model.getVersion() != null ? model.getVersion() : "?",
+                "",
+                false,
+                0);
+        return new DependencyTreeModel(root, List.of(), 1);
+    }
+
+    @Override
+    public DependencyTreeModel collectArtifactDependencies(String groupId, String artifactId, String version) {
+        try {
+            DependencyResolver resolver = session.getService(DependencyResolver.class);
+            DependencyResolverRequest request = DependencyResolverRequest.builder()
+                    .session(session)
+                    .requestType(DependencyResolverRequest.RequestType.COLLECT)
+                    .rootArtifact(session.createArtifact(groupId, artifactId, version, "jar"))
+                    .pathScope(PathScope.MAIN_RUNTIME)
+                    .build();
+            DependencyResolverResult result = resolver.resolve(request);
+            return convertTree(result.getRoot());
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Failed to collect dependency tree for " + groupId + ":" + artifactId + ":" + version, e);
+        }
+    }
+
+    @Override
     public String effectivePom(PilotProject project) {
         return session.getService(ModelXmlFactory.class).toXmlString(modelFor(project));
     }
@@ -252,7 +346,7 @@ class Maven4PilotResolver implements PilotResolver {
     private static DependencyTreeModel.TreeNode createTreeNode(Node node, int depth) {
         if (node.getDependency() != null) {
             var dep = node.getDependency();
-            return new DependencyTreeModel.TreeNode(
+            DependencyTreeModel.TreeNode treeNode = new DependencyTreeModel.TreeNode(
                     dep.getGroupId(),
                     dep.getArtifactId(),
                     dep.getClassifier() != null ? dep.getClassifier() : "",
@@ -260,6 +354,8 @@ class Maven4PilotResolver implements PilotResolver {
                     dep.getScope() != null ? dep.getScope().id() : "",
                     dep.isOptional(),
                     depth);
+            treeNode.requestedVersion = getPremanagedVersion(node);
+            return treeNode;
         }
         if (node.getArtifact() != null) {
             Artifact a = node.getArtifact();
@@ -273,5 +369,48 @@ class Maven4PilotResolver implements PilotResolver {
                     depth);
         }
         return new DependencyTreeModel.TreeNode("?", "?", "", "?", "", false, depth);
+    }
+
+    // ── Reflection bridge to Aether DependencyNode ──────────────────────────
+    //
+    // TODO: remove once https://github.com/apache/maven/issues/13151 is resolved.
+    // The Maven 4 Node API does not expose the resolution metadata that Aether stores in
+    // DependencyNode.getData() and via DependencyManagerUtils (pre-managed version).
+    // AbstractNode.getDependencyNode() is package-private, so reflection is the
+    // only option until those getters are added to the Node interface.
+    //
+    // The Method is resolved once at class-load time and cached so that tree conversion
+    // (O(N) nodes) does not pay getDeclaredMethod + setAccessible on every node.
+
+    @SuppressWarnings(
+            "java:S3011") // Reflection required: getDependencyNode() is package-private; no Maven 4 API alternative
+    private static final Method DEPENDENCY_NODE_METHOD = resolveDependencyNodeMethod();
+
+    @SuppressWarnings("java:S3011") // same rationale as DEPENDENCY_NODE_METHOD
+    private static Method resolveDependencyNodeMethod() {
+        try {
+            Class<?> abstractNode = Class.forName("org.apache.maven.impl.AbstractNode");
+            Method m = abstractNode.getDeclaredMethod("getDependencyNode");
+            m.setAccessible(true);
+            return m;
+        } catch (Exception e) {
+            return null; // Maven version without AbstractNode — reflection unavailable
+        }
+    }
+
+    private static DependencyNode getDependencyNode(Node node) {
+        Method m = DEPENDENCY_NODE_METHOD;
+        if (m == null) return null;
+        try {
+            return (DependencyNode) m.invoke(node);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** @return the original version before dependency management overrode it, or {@code null} */
+    private static String getPremanagedVersion(Node node) {
+        DependencyNode aetherNode = getDependencyNode(node);
+        return aetherNode != null ? DependencyManagerUtils.getPremanagedVersion(aetherNode) : null;
     }
 }
