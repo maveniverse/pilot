@@ -120,7 +120,7 @@ public final class PluginsReporter {
      * @param projects     projects to scan (reactor or single-module)
      * @param resolver     version resolver (newest-first list; empty = lookup failed)
      * @param projectGav   project or reactor identifier for the report header
-     * @return check result with a plain-text report and the list of updates found
+     * @return check result with a plain-text report, the list of updates found, and the set of plugin GAs whose version lookup failed
      */
     public static CheckResult resolveAndCheck(
             List<PilotProject> projects, UpdatesTui.VersionResolver resolver, String projectGav) {
