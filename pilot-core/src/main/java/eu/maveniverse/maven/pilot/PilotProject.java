@@ -142,7 +142,7 @@ public class PilotProject {
     public record Plugin(
             String groupId, String artifactId, String version, List<Dep> dependencies, List<Excl> exclusions) {
 
-        Plugin(String groupId, String artifactId, String version) {
+        public Plugin(String groupId, String artifactId, String version) {
             this(groupId, artifactId, version, List.of(), List.of());
         }
 
