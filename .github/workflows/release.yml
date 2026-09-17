@@ -53,7 +53,7 @@ jobs:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
         run: |
-          ./mvnw -B deploy -Dnjord.autoPublish -Dnjord.publishingType=automatic -Dnjord.waitForStates=true -Pmaveniverse-release -s .github/release-settings.xml
+          ./mvnw -B deploy -Dnjord.autoPublish -Dnjord.publishingType=automatic -Dnjord.waitForStates -Pmaveniverse-release -s .github/release-settings.xml
 
       - name: Post release
         env:
