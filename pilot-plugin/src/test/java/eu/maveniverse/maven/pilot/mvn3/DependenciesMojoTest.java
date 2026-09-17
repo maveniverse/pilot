@@ -100,6 +100,25 @@ class DependenciesMojoTest {
         assertThat(result).containsExactlyInAnyOrder("org.slf4j:slf4j-api", "com.example:*");
     }
 
+    @Test
+    void buildIgnoreSetWithDefaultsMergesPatterns() {
+        Set<String> defaults = Set.of("org.default:default-lib");
+        Set<String> result = DependenciesMojo.buildIgnoreSet(List.of("com.user:user-lib"), defaults);
+        assertThat(result).containsExactlyInAnyOrder("org.default:default-lib", "com.user:user-lib");
+    }
+
+    @Test
+    void buildIgnoreSetWithDefaultsNullUserPatterns() {
+        Set<String> defaults = Set.of("org.opentest4j:opentest4j");
+        Set<String> result = DependenciesMojo.buildIgnoreSet(null, defaults);
+        assertThat(result).containsExactly("org.opentest4j:opentest4j");
+    }
+
+    @Test
+    void defaultIgnoredUsedTransitiveContainsOpentest4j() {
+        assertThat(DependenciesMojo.DEFAULT_IGNORED_USED_TRANSITIVE).contains("org.opentest4j:opentest4j");
+    }
+
     // --- buildAnalyzer ---
 
     @Test

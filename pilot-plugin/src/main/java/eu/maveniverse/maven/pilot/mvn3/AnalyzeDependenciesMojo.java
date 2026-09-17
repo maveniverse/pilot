@@ -191,7 +191,8 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
 
         // Apply ignore lists
         Set<String> ignoredUnused = buildIgnoreSet(ignoredUnusedDeclared);
-        Set<String> ignoredTransitive = buildIgnoreSet(ignoredUsedTransitive);
+        Set<String> ignoredTransitive =
+                buildIgnoreSet(ignoredUsedTransitive, DependenciesMojo.DEFAULT_IGNORED_USED_TRANSITIVE);
         unusedDeclared.removeIf(dep -> DependencyUsageAnalyzer.matchesArtifactPattern(dep.ga(), ignoredUnused));
         usedTransitive.removeIf(dep -> DependencyUsageAnalyzer.matchesArtifactPattern(dep.ga(), ignoredTransitive));
 
@@ -235,6 +236,10 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
 
     static Set<String> buildIgnoreSet(List<String> patterns) {
         return patterns != null && !patterns.isEmpty() ? new HashSet<>(patterns) : Set.of();
+    }
+
+    static Set<String> buildIgnoreSet(List<String> patterns, Set<String> defaults) {
+        return DependenciesMojo.buildIgnoreSet(patterns, defaults);
     }
 
     // Kept for backwards-compatible test access; delegates to DependenciesReporter

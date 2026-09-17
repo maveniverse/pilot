@@ -71,6 +71,31 @@ import org.eclipse.aether.resolution.DependencyResult;
 @Mojo(name = "dependencies", requiresProject = true, threadSafe = true)
 public class DependenciesMojo extends AbstractMojo {
 
+    /**
+     * Built-in set of transitive dependencies that are silently suppressed from the used-transitive
+     * report even when their classes appear in the consuming module's bytecode.
+     * <p>
+     * These are "test-framework companion" artifacts whose classes are routinely referenced in
+     * bytecode produced by users of the corresponding test framework, but which are considered
+     * implementation details of that framework rather than direct dependencies that consumers should
+     * declare. Asking users to add these to {@code ignoredUsedTransitive} individually would be
+     * tedious and surprising.
+     * </p>
+     * <ul>
+     *   <li>{@code org.opentest4j:opentest4j} — common test-exception foundation shared by JUnit 5,
+     *       TestNG, AssertJ and others. Its types (e.g. {@code AssertionFailedError},
+     *       {@code MultipleFailuresError}) appear in the bytecode of any module that uses
+     *       {@code junit-jupiter-api} assertions, yet declaring {@code opentest4j} separately would
+     *       be unusual and unnecessary.</li>
+     * </ul>
+     * <p>
+     * This list can be extended in future releases as other false-positive patterns are identified.
+     * Individual projects can suppress additional entries via the {@code ignoredUsedTransitive}
+     * configuration parameter.
+     * </p>
+     */
+    static final Set<String> DEFAULT_IGNORED_USED_TRANSITIVE = Set.of("org.opentest4j:opentest4j");
+
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
 
@@ -270,7 +295,7 @@ public class DependenciesMojo extends AbstractMojo {
         }
 
         Set<String> ignoredUnused = buildIgnoreSet(ignoredUnusedDeclared);
-        Set<String> ignoredTransitive = buildIgnoreSet(ignoredUsedTransitive);
+        Set<String> ignoredTransitive = buildIgnoreSet(ignoredUsedTransitive, DEFAULT_IGNORED_USED_TRANSITIVE);
         unusedDeclared.removeIf(dep -> DependencyUsageAnalyzer.matchesArtifactPattern(dep.ga(), ignoredUnused));
         usedTransitive.removeIf(dep -> DependencyUsageAnalyzer.matchesArtifactPattern(dep.ga(), ignoredTransitive));
 
@@ -328,5 +353,16 @@ public class DependenciesMojo extends AbstractMojo {
 
     static Set<String> buildIgnoreSet(List<String> patterns) {
         return patterns != null && !patterns.isEmpty() ? new HashSet<>(patterns) : Set.of();
+    }
+
+    static Set<String> buildIgnoreSet(List<String> patterns, Set<String> defaults) {
+        if ((patterns == null || patterns.isEmpty()) && defaults.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> result = new HashSet<>(defaults);
+        if (patterns != null) {
+            result.addAll(patterns);
+        }
+        return result;
     }
 }

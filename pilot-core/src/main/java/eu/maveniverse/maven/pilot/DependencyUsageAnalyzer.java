@@ -74,15 +74,16 @@ public final class DependencyUsageAnalyzer {
      * classpath to be invoked by {@code javac}; dependencies declared with those scopes are only available at runtime
      * and would never be invoked as processors.
      */
-    private static final Set<String> ANNOTATION_PROCESSOR_SCOPES = Set.of("compile", "provided", "test", "test-only",
-            "compile-only");
+    private static final Set<String> ANNOTATION_PROCESSOR_SCOPES =
+            Set.of("compile", "provided", "test", "test-only", "compile-only");
 
     public enum UsageStatus {
-        USED, UNUSED, UNDETERMINED
+        USED,
+        UNUSED,
+        UNDETERMINED
     }
 
-    public record AnalysisResult(Map<String, UsageStatus> declaredUsage, Map<String, UsageStatus> transitiveUsage) {
-    }
+    public record AnalysisResult(Map<String, UsageStatus> declaredUsage, Map<String, UsageStatus> transitiveUsage) {}
 
     private final Set<String> runtimeArtifacts;
     private final Set<String> annotationOnlyArtifacts;
@@ -150,8 +151,12 @@ public final class DependencyUsageAnalyzer {
      *
      * @return analysis result with usage status for each dependency
      */
-    public AnalysisResult analyze(Set<String> mainRefs, Set<String> testRefs, Map<String, String> classIndex,
-            Map<String, File> gaToJar, List<DependenciesTui.DepEntry> declared,
+    public AnalysisResult analyze(
+            Set<String> mainRefs,
+            Set<String> testRefs,
+            Map<String, String> classIndex,
+            Map<String, File> gaToJar,
+            List<DependenciesTui.DepEntry> declared,
             List<DependenciesTui.DepEntry> transitive) {
 
         // Build reverse index: GA -> set of class names provided by that artifact
@@ -177,8 +182,12 @@ public final class DependencyUsageAnalyzer {
         return new AnalysisResult(declaredUsage, transitiveUsage);
     }
 
-    private UsageStatus classify(DependenciesTui.DepEntry dep, Map<String, Set<String>> gaToClasses,
-            Map<String, File> gaToJar, Set<String> mainRefs, Set<String> allRefs) {
+    private UsageStatus classify(
+            DependenciesTui.DepEntry dep,
+            Map<String, Set<String>> gaToClasses,
+            Map<String, File> gaToJar,
+            Set<String> mainRefs,
+            Set<String> allRefs) {
 
         // Choose the appropriate reference set based on scope.
         // Maven 3 scopes: compile, provided, runtime, test, system.
@@ -219,8 +228,8 @@ public final class DependencyUsageAnalyzer {
      * <li>{@code null} — the dep has no runtime-discovery metadata; caller decides.</li>
      * </ul>
      */
-    private static UsageStatus classifyByRuntimeDiscovery(DependenciesTui.DepEntry dep, Map<String, File> gaToJar,
-            Set<String> refs) {
+    private static UsageStatus classifyByRuntimeDiscovery(
+            DependenciesTui.DepEntry dep, Map<String, File> gaToJar, Set<String> refs) {
         File jarFile = gaToJar.get(dep.ga());
         if (jarFile == null) {
             return null;
@@ -311,8 +320,9 @@ public final class DependencyUsageAnalyzer {
                 classes.add("org.springframework.stereotype.Component");
             }
             // Spring Boot auto-configuration
-            if (jar.getEntry("META-INF/spring.factories") != null || jar.getEntry(
-                    "META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports") != null) {
+            if (jar.getEntry("META-INF/spring.factories") != null
+                    || jar.getEntry("META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
+                            != null) {
                 classes.add("org.springframework.boot.autoconfigure.EnableAutoConfiguration");
             }
         } catch (IOException ignored) {
@@ -423,8 +433,7 @@ public final class DependencyUsageAnalyzer {
         private Set<String> annotationOnlyArtifacts = Set.of();
         private Map<String, List<String>> reflectionLoadedClasses = Map.of();
 
-        private Builder() {
-        }
+        private Builder() {}
 
         /**
          * Artifacts that are needed only at runtime and never referenced in bytecode (JDBC drivers, SLF4J backends, XML
