@@ -18,14 +18,18 @@
  */
 package eu.maveniverse.maven.pilot;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.stream.Stream;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
@@ -265,6 +269,75 @@ public final class ClassFileScanner {
 
         private static String toClassName(String internalName) {
             return internalName.replace('/', '.');
+        }
+    }
+
+    /**
+     * Returns {@code true} if the given JAR contains at least one class with a
+     * {@code public static final} field backed by a compile-time {@code ConstantValue}
+     * attribute (i.e. a {@code String}, {@code int}, {@code long}, {@code float}, or
+     * {@code double} literal).
+     *
+     * <p>The Java compiler inlines such constants at every call site: instead of emitting
+     * {@code GETSTATIC com/example/Constants.FOO}, it emits {@code LDC "the-literal-value"}.
+     * This means the declaring class leaves <em>no</em> bytecode trace in consuming modules,
+     * and pilot's bytecode scanner would otherwise classify the dependency as {@code UNUSED}.
+     * Detecting the presence of inlineable constants allows the analyzer to return
+     * {@code UNDETERMINED} instead, avoiding false-positive removals.</p>
+     *
+     * @param jarFile the JAR to inspect
+     * @return {@code true} if at least one inlineable constant field is found
+     */
+    @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
+    public static boolean hasInlineableConstants(File jarFile) {
+        try (JarFile jar = new JarFile(jarFile)) {
+            Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (!name.endsWith(".class") || name.equals("module-info.class") || name.startsWith("META-INF/")) {
+                    continue;
+                }
+                try (InputStream is = jar.getInputStream(entry)) {
+                    ClassReader reader = new ClassReader(is);
+                    InlineableConstantDetector detector = new InlineableConstantDetector();
+                    reader.accept(detector, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                    if (detector.found) {
+                        return true;
+                    }
+                } catch (IOException | IllegalArgumentException ignored) {
+                    // skip corrupt or unsupported class files
+                }
+            }
+        } catch (IOException ignored) {
+            // skip unreadable JARs
+        }
+        return false;
+    }
+
+    /**
+     * ASM visitor that stops as soon as it finds a {@code public static final} field
+     * with a compile-time {@link ClassVisitor#visitField ConstantValue} attribute.
+     * The {@code value} parameter of {@code visitField} is non-null exactly when the
+     * field has a {@code ConstantValue} attribute in the class file.
+     */
+    private static final class InlineableConstantDetector extends ClassVisitor {
+        boolean found = false;
+
+        InlineableConstantDetector() {
+            super(Opcodes.ASM9);
+        }
+
+        @Override
+        public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+            // ConstantValue attribute is present iff value != null.
+            // We only care about public static final fields (the ones javac inlines).
+            boolean isPublicStaticFinal = (access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL))
+                    == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL);
+            if (isPublicStaticFinal && value != null) {
+                found = true;
+            }
+            return null;
         }
     }
 

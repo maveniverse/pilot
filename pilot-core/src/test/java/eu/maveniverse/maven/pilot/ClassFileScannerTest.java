@@ -20,8 +20,11 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -74,6 +77,118 @@ class ClassFileScannerTest {
                 .noneMatch(name -> name.startsWith("["))
                 // No class name should contain '/' (should be dot-separated)
                 .noneMatch(name -> name.contains("/"));
+    }
+
+    /**
+     * Regression test for the inlined-constants false-positive removal bug:
+     * {@link ClassFileScanner#hasInlineableConstants} must return {@code true} for a JAR that
+     * contains a class with {@code public static final} String/int fields (ConstantValue
+     * attribute), and {@code false} for a JAR that has no such fields.
+     *
+     * <p>The fixture class {@link ConstantProviderFixture} is compiled as part of the test
+     * sources, so it is already in {@code target/test-classes}.  We create a one-class JAR from
+     * it and verify the detector fires, then verify it does NOT fire on an empty JAR.</p>
+     */
+    @Test
+    void hasInlineableConstantsDetectsConstantValueAttribute(@TempDir Path tempDir) throws Exception {
+        Path testClasses = Path.of("target/test-classes");
+        Assumptions.assumeTrue(
+                Files.isDirectory(testClasses), "target/test-classes not found — skipping bytecode scan test");
+
+        // Build a JAR that contains ConstantProviderFixture (which has public static final fields)
+        Path constantsJar = tempDir.resolve("constants.jar");
+        Path classFile = testClasses.resolve("eu/maveniverse/maven/pilot/ConstantProviderFixture.class");
+        Assumptions.assumeTrue(Files.exists(classFile), "ConstantProviderFixture.class not compiled — skipping");
+
+        try (OutputStream os = Files.newOutputStream(constantsJar);
+                JarOutputStream jos = new JarOutputStream(os)) {
+            jos.putNextEntry(new JarEntry("eu/maveniverse/maven/pilot/ConstantProviderFixture.class"));
+            Files.copy(classFile, jos);
+            jos.closeEntry();
+        }
+
+        assertThat(ClassFileScanner.hasInlineableConstants(constantsJar.toFile()))
+                .as("JAR with public static final String/int fields must be detected as having inlineable constants")
+                .isTrue();
+
+        // An empty JAR (no classes) must NOT trigger the detector
+        Path emptyJar = tempDir.resolve("empty.jar");
+        try (OutputStream os = Files.newOutputStream(emptyJar);
+                JarOutputStream jos = new JarOutputStream(os)) {
+            // intentionally empty
+        }
+        assertThat(ClassFileScanner.hasInlineableConstants(emptyJar.toFile()))
+                .as("Empty JAR must NOT be detected as having inlineable constants")
+                .isFalse();
+    }
+
+    /**
+     * Verifies that a JAR whose classes have no {@code public static final} constant fields
+     * is NOT flagged as having inlineable constants.  {@link AnnotationFixture} has only
+     * instance fields and no static fields at all, so it serves as a representative class
+     * that should never trigger the detector.
+     */
+    @Test
+    void hasInlineableConstantsIgnoresNonConstantClasses(@TempDir Path tempDir) throws Exception {
+        // We reuse the AnnotationFixture class, which has only instance fields — no static
+        // fields at all — and therefore no ConstantValue attributes in its class file.
+        Path testClasses = Path.of("target/test-classes");
+        Assumptions.assumeTrue(
+                Files.isDirectory(testClasses), "target/test-classes not found — skipping bytecode scan test");
+
+        Path classFile = testClasses.resolve("eu/maveniverse/maven/pilot/AnnotationFixture.class");
+        Assumptions.assumeTrue(Files.exists(classFile), "AnnotationFixture.class not compiled — skipping");
+
+        Path noConstantsJar = tempDir.resolve("no-constants.jar");
+        try (OutputStream os = Files.newOutputStream(noConstantsJar);
+                JarOutputStream jos = new JarOutputStream(os)) {
+            jos.putNextEntry(new JarEntry("eu/maveniverse/maven/pilot/AnnotationFixture.class"));
+            Files.copy(classFile, jos);
+            jos.closeEntry();
+        }
+
+        assertThat(ClassFileScanner.hasInlineableConstants(noConstantsJar.toFile()))
+                .as("JAR without public static final constant fields must NOT be flagged")
+                .isFalse();
+    }
+
+    /**
+     * Verifies that a JAR whose classes have <em>only</em> non-public {@code static final}
+     * constant fields is NOT flagged as having inlineable constants.
+     *
+     * <p>{@link NonPublicConstantFixture} contains only package-private and private
+     * {@code static final} fields.  javac still emits a {@code ConstantValue} attribute
+     * for each (JVMS §4.7.2), but they cannot be inlined by external consumers because
+     * they lack the {@code public} modifier.  The scanner's {@code ACC_PUBLIC} guard must
+     * reject them.</p>
+     *
+     * <p>This test distinguishes the non-public-constants case from the no-constants case
+     * covered by {@link #hasInlineableConstantsIgnoresNonConstantClasses}: a regression
+     * that accidentally removed the {@code ACC_PUBLIC} mask check would still pass the
+     * {@code AnnotationFixture}-based test (which has no static fields at all) but would
+     * fail here.</p>
+     */
+    @Test
+    void hasInlineableConstantsIgnoresNonPublicConstants(@TempDir Path tempDir) throws Exception {
+        Path testClasses = Path.of("target/test-classes");
+        Assumptions.assumeTrue(
+                Files.isDirectory(testClasses), "target/test-classes not found — skipping bytecode scan test");
+
+        Path classFile = testClasses.resolve("eu/maveniverse/maven/pilot/NonPublicConstantFixture.class");
+        Assumptions.assumeTrue(Files.exists(classFile), "NonPublicConstantFixture.class not compiled — skipping");
+
+        Path nonPublicJar = tempDir.resolve("non-public-constants.jar");
+        try (OutputStream os = Files.newOutputStream(nonPublicJar);
+                JarOutputStream jos = new JarOutputStream(os)) {
+            jos.putNextEntry(new JarEntry("eu/maveniverse/maven/pilot/NonPublicConstantFixture.class"));
+            Files.copy(classFile, jos);
+            jos.closeEntry();
+        }
+
+        assertThat(ClassFileScanner.hasInlineableConstants(nonPublicJar.toFile()))
+                .as(
+                        "JAR with only non-public static final constants must NOT be flagged as having inlineable constants")
+                .isFalse();
     }
 
     @Test

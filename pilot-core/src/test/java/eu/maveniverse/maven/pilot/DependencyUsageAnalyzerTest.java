@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -853,5 +854,61 @@ class DependencyUsageAnalyzerTest {
         // runtimeArtifacts allowlist must win: USED, not UNDETERMINED
         assertThat(result.declaredUsage().get("org.postgresql:postgresql"))
                 .isEqualTo(DependencyUsageAnalyzer.UsageStatus.USED);
+    }
+
+    /**
+     * Regression test: a dependency whose JAR contains {@code public static final} fields
+     * (compile-time constants with a {@code ConstantValue} attribute) must be classified as
+     * {@code UNDETERMINED}, not {@code UNUSED}, even when no bytecode reference to its classes
+     * is found in the consuming module.
+     *
+     * <p>Root cause: the Java compiler inlines constant field values at call sites.  For example,
+     * {@code Constants.MAVEN_USER_CONF} compiles to {@code LDC "maven.user.conf"} — no
+     * {@code GETSTATIC} is emitted — so the {@code Constants} class never appears in the
+     * consumer's bytecode.  Pilot must not suggest removing such a dependency.</p>
+     *
+     * <p>The fixture {@link ConstantProviderFixture} is compiled as part of the test sources
+     * and has {@code public static final String/int} fields.  We package it into a temporary
+     * JAR and verify that the analyzer returns {@code UNDETERMINED}.</p>
+     */
+    @Test
+    void depWithInlineableConstantsClassifiedAsUndetermined(@TempDir Path tempDir) throws Exception {
+        // Package ConstantProviderFixture into a JAR — it has public static final String/int fields
+        Path testClasses = Path.of("target/test-classes");
+        Assumptions.assumeTrue(
+                Files.isDirectory(testClasses),
+                "target/test-classes not found — skipping inlineable-constants regression test");
+
+        Path classFile = testClasses.resolve("eu/maveniverse/maven/pilot/ConstantProviderFixture.class");
+        Assumptions.assumeTrue(Files.exists(classFile), "ConstantProviderFixture.class not compiled — skipping");
+
+        Path constantsJar = tempDir.resolve("constants-lib.jar");
+        try (OutputStream os = Files.newOutputStream(constantsJar);
+                JarOutputStream jos = new JarOutputStream(os)) {
+            jos.putNextEntry(new JarEntry("eu/maveniverse/maven/pilot/ConstantProviderFixture.class"));
+            Files.copy(classFile, jos);
+            jos.closeEntry();
+        }
+
+        var dep = new DependenciesTui.DepEntry("com.example", "constants-lib", "", "1.0", "compile", true);
+        Map<String, File> gaToJar = Map.of("com.example:constants-lib", constantsJar.toFile());
+        // The class is in the index, but no bytecode reference is found (simulates compile-time inlining)
+        Map<String, String> classIndex =
+                Map.of("eu.maveniverse.maven.pilot.ConstantProviderFixture", "com.example:constants-lib");
+
+        var result = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(
+                        Set.of("com.other.Unrelated"), // no reference to ConstantProviderFixture
+                        Set.of(),
+                        classIndex,
+                        gaToJar,
+                        List.of(dep),
+                        List.of());
+
+        assertThat(result.declaredUsage())
+                .as("dep with public static final constant fields must be UNDETERMINED, not UNUSED "
+                        + "(regression: inlined constants leave no bytecode trace)")
+                .containsEntry("com.example:constants-lib", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
     }
 }

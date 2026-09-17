@@ -88,6 +88,7 @@ public final class DependencyUsageAnalyzer {
     private final Set<String> runtimeArtifacts;
     private final Set<String> annotationOnlyArtifacts;
     private final Map<String, List<String>> reflectionLoadedClasses;
+    private final Map<String, Boolean> inlineableConstantsCache = new HashMap<>();
 
     private DependencyUsageAnalyzer(Builder builder) {
         this.runtimeArtifacts = Set.copyOf(builder.runtimeArtifacts);
@@ -212,6 +213,15 @@ public final class DependencyUsageAnalyzer {
         UsageStatus discoveryStatus = classifyByRuntimeDiscovery(dep, gaToJar, refs);
         if (discoveryStatus != null) {
             return discoveryStatus;
+        }
+
+        // A JAR that contains public static final String/int/… fields (ConstantValue attribute)
+        // may have had those constants inlined by javac at every call site.  Inlined constants
+        // produce an LDC instruction — not a GETSTATIC — so the declaring class never appears in
+        // the consumer's bytecode.  We cannot distinguish "truly unused" from "all usages were
+        // inlined", so we conservatively classify such deps as UNDETERMINED.
+        if (depClasses != null && hasInlineableConstants(dep.ga(), gaToJar)) {
+            return UsageStatus.UNDETERMINED;
         }
 
         return depClasses == null ? UsageStatus.UNDETERMINED : UsageStatus.UNUSED;
@@ -378,9 +388,23 @@ public final class DependencyUsageAnalyzer {
     }
 
     /**
-     * Check whether a dependency's GA coordinates match any pattern in the given set. Supports exact matches
-     * ({@code groupId:artifactId}) and wildcard matches ({@code groupId:*}). For dependencies with a classifier
-     * ({@code groupId:artifactId:classifier}), the pattern is also matched against the base {@code groupId:artifactId}.
+     * Returns {@code true} if {@code ga}'s JAR is non-null and contains at least one class with
+     * a {@code public static final} field backed by a compile-time constant ({@code ConstantValue}
+     * attribute).  Results are memoized per GA to avoid re-scanning the same JAR multiple times
+     * when a dependency appears in both the declared and transitive lists.
+     */
+    private boolean hasInlineableConstants(String ga, Map<String, File> gaToJar) {
+        return inlineableConstantsCache.computeIfAbsent(ga, k -> {
+            File jarFile = gaToJar.get(k);
+            return jarFile != null && ClassFileScanner.hasInlineableConstants(jarFile);
+        });
+    }
+
+    /**
+     * Check whether a dependency's GA coordinates match any pattern in the given set.
+     * Supports exact matches ({@code groupId:artifactId}) and wildcard matches ({@code groupId:*}).
+     * For dependencies with a classifier ({@code groupId:artifactId:classifier}), the pattern
+     * is also matched against the base {@code groupId:artifactId}.
      */
     public static boolean matchesArtifactPattern(String ga, Set<String> patterns) {
         if (patterns.isEmpty()) {
