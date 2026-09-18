@@ -226,7 +226,7 @@ public class DependenciesMojo extends AbstractMojo {
                         .anyMatch(dep -> DependencyUsageAnalyzer.isTestScope(dep.getScope()))) {
             throw new MojoExecutionException(
                     "target/test-classes not found but the project declares test-scoped dependencies."
-                            + " Run 'mvn test-compile pilot:dependencies' for accurate analysis,"
+                            + " Run 'mvn test-compile' first for accurate analysis,"
                             + " or use -Dpilot.skipTestScope=true to exclude test-scope analysis.");
         }
 
