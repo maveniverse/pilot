@@ -23,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import eu.maveniverse.maven.pilot.*;
 import java.util.List;
 import org.apache.maven.model.Exclusion;
+import org.eclipse.aether.artifact.DefaultArtifactType;
 import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.util.artifact.DefaultArtifactTypeRegistry;
 import org.junit.jupiter.api.Test;
 
 class MojoHelperTest {
@@ -135,5 +137,40 @@ class MojoHelperTest {
     @Test
     void convertDependenciesReturnsEmptyForEmptyList() {
         assertThat(MojoHelper.convertDependencies(List.of())).isEmpty();
+    }
+
+    @Test
+    void convertDependency_withRegistry_resolvesTestJarType() {
+        var dep = new org.apache.maven.model.Dependency();
+        dep.setGroupId("com.example");
+        dep.setArtifactId("lib");
+        dep.setVersion("1.0");
+        dep.setType("test-jar"); // no explicit classifier
+
+        var registry = new DefaultArtifactTypeRegistry();
+        registry.add(new DefaultArtifactType("test-jar", "jar", "tests", "java"));
+
+        Dependency result = MojoHelper.convertDependency(dep, registry);
+
+        assertThat(result.getArtifact().getExtension()).isEqualTo("jar");
+        assertThat(result.getArtifact().getClassifier()).isEqualTo("tests");
+    }
+
+    @Test
+    void convertDependency_withRegistry_explicitClassifierOverridesTypeDefault() {
+        var dep = new org.apache.maven.model.Dependency();
+        dep.setGroupId("com.example");
+        dep.setArtifactId("lib");
+        dep.setVersion("1.0");
+        dep.setType("test-jar");
+        dep.setClassifier("android"); // explicit — must not be overridden by type default
+
+        var registry = new DefaultArtifactTypeRegistry();
+        registry.add(new DefaultArtifactType("test-jar", "jar", "tests", "java"));
+
+        Dependency result = MojoHelper.convertDependency(dep, registry);
+
+        assertThat(result.getArtifact().getExtension()).isEqualTo("jar");
+        assertThat(result.getArtifact().getClassifier()).isEqualTo("android"); // explicit wins
     }
 }
