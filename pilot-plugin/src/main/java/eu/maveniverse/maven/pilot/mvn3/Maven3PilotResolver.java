@@ -85,7 +85,7 @@ class Maven3PilotResolver implements PilotResolver {
     public DependencyTreeModel collectDependencies(PilotProject project) {
         try {
             MavenProject mp = requireMaven(project);
-            CollectRequest req = MojoHelper.buildCollectRequest(mp);
+            CollectRequest req = MojoHelper.buildCollectRequest(mp, repoSession);
             CollectResult result = repoSystem.collectDependencies(verboseSession, req);
             return MojoHelper.fromDependencyNode(result.getRoot());
         } catch (Exception e) {
@@ -97,7 +97,7 @@ class Maven3PilotResolver implements PilotResolver {
     public ResolvedDependencies resolveDependencies(PilotProject project) {
         try {
             MavenProject mp = requireMaven(project);
-            DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(mp), null);
+            DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(mp, repoSession), null);
             DependencyResult depResult = repoSystem.resolveDependencies(verboseSession, depRequest);
             DependencyTreeModel tree = MojoHelper.fromDependencyNode(depResult.getRoot());
             Map<String, File> gaToJar = new HashMap<>();

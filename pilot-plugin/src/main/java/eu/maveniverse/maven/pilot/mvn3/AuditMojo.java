@@ -92,16 +92,16 @@ public class AuditMojo extends AbstractMojo {
             if (projects.size() > 1) {
                 MavenProject root = projects.get(0);
                 CollectResult rootResult =
-                        repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root));
+                        repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(root, repoSession));
                 treeModel = MojoHelper.fromDependencyNode(rootResult.getRoot());
                 for (MavenProject proj : projects) {
-                    CollectResult result =
-                            repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+                    CollectResult result = repoSystem.collectDependencies(
+                            repoSession, MojoHelper.buildCollectRequest(proj, repoSession));
                     collectEntries(result.getRoot(), entryMap, proj.getArtifactId(), true);
                 }
             } else {
-                CollectResult result =
-                        repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(project));
+                CollectResult result = repoSystem.collectDependencies(
+                        repoSession, MojoHelper.buildCollectRequest(project, repoSession));
                 treeModel = MojoHelper.fromDependencyNode(result.getRoot());
                 collectEntries(result.getRoot(), entryMap, null, true);
             }

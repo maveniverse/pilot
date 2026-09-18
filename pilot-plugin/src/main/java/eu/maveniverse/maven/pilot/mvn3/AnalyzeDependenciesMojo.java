@@ -125,7 +125,7 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         }
 
         // Resolve transitive tree
-        DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(proj), null);
+        DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(proj, repoSession), null);
         DependencyResult depResult = repoSystem.resolveDependencies(repoSession, depRequest);
 
         DependencyTreeModel depTree = MojoHelper.fromDependencyNode(depResult.getRoot());

@@ -108,7 +108,8 @@ public class ConflictsMojo extends AbstractMojo {
     private void executeReactor(List<MavenProject> projects) throws Exception {
         Map<String, List<ConflictsTui.ConflictEntry>> mergedMap = new HashMap<>();
         for (MavenProject proj : projects) {
-            CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+            CollectResult result =
+                    repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj, repoSession));
             collectConflicts(result.getRoot(), mergedMap, new ArrayList<>(), proj.getArtifactId());
         }
 
@@ -171,7 +172,8 @@ public class ConflictsMojo extends AbstractMojo {
     }
 
     private List<ConflictsTui.ConflictGroup> collectConflictsForProject(MavenProject proj) throws Exception {
-        CollectResult result = repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj));
+        CollectResult result =
+                repoSystem.collectDependencies(repoSession, MojoHelper.buildCollectRequest(proj, repoSession));
         Map<String, List<ConflictsTui.ConflictEntry>> conflictMap = new HashMap<>();
         collectConflicts(result.getRoot(), conflictMap, new ArrayList<>());
         return conflictMap.entrySet().stream()
