@@ -269,7 +269,7 @@ class DependenciesMojoTest {
 
         MavenProject proj = new MavenProject();
         proj.setPackaging("jar");
-        proj.getBuild().setSourceDirectory(mainSrcDir.toString());
+        proj.addCompileSourceRoot(mainSrcDir.toString()); // getCompileSourceRoots() is what hasMainSources() reads
         proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
 
@@ -290,7 +290,7 @@ class DependenciesMojoTest {
         proj.setPackaging("jar");
         proj.getBuild().setOutputDirectory(classesDir.toString());
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
-        proj.getBuild().setTestSourceDirectory(testSrcDir.toString());
+        proj.addTestCompileSourceRoot(testSrcDir.toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
         Dependency dep = new Dependency();
         dep.setGroupId("org.junit.jupiter");
         dep.setArtifactId("junit-jupiter-api");
@@ -341,7 +341,7 @@ class DependenciesMojoTest {
         proj.setPackaging("jar");
         proj.getBuild().setOutputDirectory(classesDir.toString());
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
-        proj.getBuild().setTestSourceDirectory(tmp.resolve("src/test/java").toString());
+        proj.addTestCompileSourceRoot(tmp.resolve("src/test/java").toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
         Dependency dep = new Dependency();
         dep.setGroupId("org.junit.jupiter");
         dep.setArtifactId("junit-jupiter-api");

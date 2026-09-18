@@ -510,14 +510,19 @@ public class DependenciesMojo extends AbstractMojo {
      * Returns {@code true} if the project has at least one main source directory that contains at least one
      * regular file (walking recursively). When a project has no main sources (e.g. POM packaging, BOM,
      * parent POM), the absence of {@code target/classes} is expected and should not be treated as an error.
+     *
+     * <p>Iterates {@link MavenProject#getCompileSourceRoots()} so that source roots registered by
+     * annotation processors or build-helper-maven-plugin are included alongside the primary source
+     * directory.</p>
      */
     static boolean hasMainSources(MavenProject proj) throws IOException {
-        String srcDir = proj.getBuild().getSourceDirectory();
-        if (srcDir != null) {
-            Path srcPath = Path.of(srcDir);
-            if (Files.isDirectory(srcPath)) {
-                try (var walk = Files.walk(srcPath)) {
-                    return walk.anyMatch(Files::isRegularFile);
+        for (String root : proj.getCompileSourceRoots()) {
+            if (root != null) {
+                Path rootPath = Path.of(root);
+                if (Files.isDirectory(rootPath)) {
+                    try (var walk = Files.walk(rootPath)) {
+                        if (walk.anyMatch(Files::isRegularFile)) return true;
+                    }
                 }
             }
         }
@@ -528,14 +533,19 @@ public class DependenciesMojo extends AbstractMojo {
      * Returns {@code true} if the project has at least one test source directory that contains at least one
      * regular file (walking recursively). When a project has no test sources, the absence of
      * {@code target/test-classes} is expected and should not be treated as an error.
+     *
+     * <p>Iterates {@link MavenProject#getTestCompileSourceRoots()} so that generated test source roots
+     * registered by annotation processors (Quarkus Panache, MapStruct, etc.) or build-helper-maven-plugin
+     * are included alongside the primary test source directory.</p>
      */
     static boolean hasTestSources(MavenProject proj) throws IOException {
-        String testSrcDir = proj.getBuild().getTestSourceDirectory();
-        if (testSrcDir != null) {
-            Path testSrcPath = Path.of(testSrcDir);
-            if (Files.isDirectory(testSrcPath)) {
-                try (var walk = Files.walk(testSrcPath)) {
-                    return walk.anyMatch(Files::isRegularFile);
+        for (String root : proj.getTestCompileSourceRoots()) {
+            if (root != null) {
+                Path rootPath = Path.of(root);
+                if (Files.isDirectory(rootPath)) {
+                    try (var walk = Files.walk(rootPath)) {
+                        if (walk.anyMatch(Files::isRegularFile)) return true;
+                    }
                 }
             }
         }
