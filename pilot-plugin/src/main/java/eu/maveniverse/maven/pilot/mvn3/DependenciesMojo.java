@@ -511,17 +511,19 @@ public class DependenciesMojo extends AbstractMojo {
      * When a project has no main sources (e.g. POM packaging, BOM, parent POM), the absence of
      * {@code target/classes} is expected and should not be treated as an error.
      */
-    static boolean hasMainSources(MavenProject proj) {
-        String srcDir = proj.getBuild().getSourceDirectory();
-        if (srcDir != null) {
-            Path srcPath = Path.of(srcDir);
-            if (Files.isDirectory(srcPath)) {
-                try (var stream = Files.list(srcPath)) {
-                    if (stream.findAny().isPresent()) {
-                        return true;
+    boolean hasMainSources(MavenProject proj) {
+        List<String> roots = proj.getCompileSourceRoots();
+        if (roots != null) {
+            for (String root : roots) {
+                Path srcPath = Path.of(root);
+                if (Files.isDirectory(srcPath)) {
+                    try (var stream = Files.list(srcPath)) {
+                        if (stream.findAny().isPresent()) {
+                            return true;
+                        }
+                    } catch (IOException e) {
+                        getLog().debug("Cannot list source directory " + srcPath + ": " + e.getMessage());
                     }
-                } catch (IOException e) {
-                    // treat as no main sources
                 }
             }
         }
@@ -533,17 +535,19 @@ public class DependenciesMojo extends AbstractMojo {
      * When a project has no test sources, the absence of {@code target/test-classes} is expected and should
      * not be treated as an error.
      */
-    static boolean hasTestSources(MavenProject proj) {
-        String testSrcDir = proj.getBuild().getTestSourceDirectory();
-        if (testSrcDir != null) {
-            Path testSrcPath = Path.of(testSrcDir);
-            if (Files.isDirectory(testSrcPath)) {
-                try (var stream = Files.list(testSrcPath)) {
-                    if (stream.findAny().isPresent()) {
-                        return true;
+    boolean hasTestSources(MavenProject proj) {
+        List<String> roots = proj.getTestCompileSourceRoots();
+        if (roots != null) {
+            for (String root : roots) {
+                Path testSrcPath = Path.of(root);
+                if (Files.isDirectory(testSrcPath)) {
+                    try (var stream = Files.list(testSrcPath)) {
+                        if (stream.findAny().isPresent()) {
+                            return true;
+                        }
+                    } catch (IOException e) {
+                        getLog().debug("Cannot list test source directory " + testSrcPath + ": " + e.getMessage());
                     }
-                } catch (IOException e) {
-                    // treat as no test sources
                 }
             }
         }
