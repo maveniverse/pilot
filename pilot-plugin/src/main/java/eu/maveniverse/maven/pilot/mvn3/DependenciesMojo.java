@@ -20,6 +20,7 @@ package eu.maveniverse.maven.pilot.mvn3;
 
 import eu.maveniverse.maven.pilot.*;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -101,7 +102,8 @@ public class DependenciesMojo extends AbstractMojo {
      * {@code mvn compile} only) and you want to proceed without test-scope analysis.
      * <p>
      * When {@code false} (default) and {@code target/test-classes} is absent but
-     * the project has test-scoped dependencies, the mojo fails with an error.
+     * the project has test sources and test-scoped dependencies, the mojo fails with an error.
+     * Projects with no test sources are handled gracefully regardless of this setting.
      * </p>
      */
     @Parameter(property = "pilot.skipTestScope", defaultValue = "false")
@@ -212,11 +214,13 @@ public class DependenciesMojo extends AbstractMojo {
         Path classesDir = Path.of(proj.getBuild().getOutputDirectory());
         Path testClassesDir = Path.of(proj.getBuild().getTestOutputDirectory());
 
-        if (!Files.isDirectory(classesDir)) {
-            throw new MojoExecutionException(
-                    "target/classes not found." + " Run 'mvn compile pilot:dependencies' first.");
+        boolean hasMainSources = hasMainSources(proj);
+        if (hasMainSources && !Files.isDirectory(classesDir)) {
+            throw new MojoExecutionException("target/classes not found. Run 'mvn compile pilot:dependencies' first.");
         }
+        boolean hasTestSources = hasTestSources(proj);
         if (!skipTestScope
+                && hasTestSources
                 && !Files.isDirectory(testClassesDir)
                 && proj.getDependencies().stream()
                         .anyMatch(dep -> DependencyUsageAnalyzer.isTestScope(dep.getScope()))) {
@@ -268,8 +272,10 @@ public class DependenciesMojo extends AbstractMojo {
         // should add it without a <version> element rather than hardcoding the resolved literal.
         Set<String> ancestorManagedGAs = buildAncestorManagedGAs(proj);
 
-        // classesDir and testClassesDir are guaranteed to be in correct state by the early-exit guards above.
-        ClassFileScanner.ScanResult mainScan = ClassFileScanner.scanDirectory(classesDir);
+        // Scan compiled bytecode — absent when project has no sources (e.g. POM packaging).
+        ClassFileScanner.ScanResult mainScan = Files.isDirectory(classesDir)
+                ? ClassFileScanner.scanDirectory(classesDir)
+                : new ClassFileScanner.ScanResult(Set.of(), Map.of());
         boolean testClassesScanned = Files.isDirectory(testClassesDir);
         ClassFileScanner.ScanResult testScan;
 
@@ -498,5 +504,49 @@ public class DependenciesMojo extends AbstractMojo {
 
     static Set<String> buildIgnoreSet(List<String> patterns) {
         return patterns != null && !patterns.isEmpty() ? new HashSet<>(patterns) : Set.of();
+    }
+
+    /**
+     * Returns {@code true} if the project has at least one main source directory that exists and is non-empty.
+     * When a project has no main sources (e.g. POM packaging, BOM, parent POM), the absence of
+     * {@code target/classes} is expected and should not be treated as an error.
+     */
+    static boolean hasMainSources(MavenProject proj) {
+        String srcDir = proj.getBuild().getSourceDirectory();
+        if (srcDir != null) {
+            Path srcPath = Path.of(srcDir);
+            if (Files.isDirectory(srcPath)) {
+                try (var stream = Files.list(srcPath)) {
+                    if (stream.findAny().isPresent()) {
+                        return true;
+                    }
+                } catch (IOException e) {
+                    // treat as no main sources
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns {@code true} if the project has at least one test source directory that exists and is non-empty.
+     * When a project has no test sources, the absence of {@code target/test-classes} is expected and should
+     * not be treated as an error.
+     */
+    static boolean hasTestSources(MavenProject proj) {
+        String testSrcDir = proj.getBuild().getTestSourceDirectory();
+        if (testSrcDir != null) {
+            Path testSrcPath = Path.of(testSrcDir);
+            if (Files.isDirectory(testSrcPath)) {
+                try (var stream = Files.list(testSrcPath)) {
+                    if (stream.findAny().isPresent()) {
+                        return true;
+                    }
+                } catch (IOException e) {
+                    // treat as no test sources
+                }
+            }
+        }
+        return false;
     }
 }
