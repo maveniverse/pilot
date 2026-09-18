@@ -290,7 +290,8 @@ class DependenciesMojoTest {
         proj.setPackaging("jar");
         proj.getBuild().setOutputDirectory(classesDir.toString());
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
-        proj.addTestCompileSourceRoot(testSrcDir.toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
+        proj.addTestCompileSourceRoot(
+                testSrcDir.toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
         Dependency dep = new Dependency();
         dep.setGroupId("org.junit.jupiter");
         dep.setArtifactId("junit-jupiter-api");
@@ -341,7 +342,8 @@ class DependenciesMojoTest {
         proj.setPackaging("jar");
         proj.getBuild().setOutputDirectory(classesDir.toString());
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
-        proj.addTestCompileSourceRoot(tmp.resolve("src/test/java").toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
+        proj.addTestCompileSourceRoot(
+                tmp.resolve("src/test/java").toString()); // getTestCompileSourceRoots() is what hasTestSources() reads
         Dependency dep = new Dependency();
         dep.setGroupId("org.junit.jupiter");
         dep.setArtifactId("junit-jupiter-api");
@@ -371,6 +373,61 @@ class DependenciesMojoTest {
         var mojo = new DependenciesMojo(null);
         // Guard must NOT throw MojoExecutionException — it will NPE deeper in repoSystem
         assertThatThrownBy(() -> mojo.executeForProject(proj)).isNotInstanceOf(MojoExecutionException.class);
+    }
+
+    @Test
+    void executeForProject_generatedTestSourcesDetectedViaCompileSourceRoots(@TempDir Path tmp) throws Exception {
+        // Regression for gnodet-bot review: a project that has ONLY generated test sources
+        // (empty primary dir, non-empty generated root registered via addTestCompileSourceRoot)
+        // must be classified as having test sources. Previously, hasTestSources() only checked
+        // getBuild().getTestSourceDirectory() — the primary dir — missing generated roots entirely.
+        Path classesDir = Files.createDirectory(tmp.resolve("classes"));
+        // Primary test source dir: exists but empty (no source files)
+        Path primaryTestSrcDir = Files.createDirectories(tmp.resolve("src/test/java"));
+        // Generated test source root: registered separately by an annotation processor
+        Path generatedTestSrcDir = Files.createDirectories(tmp.resolve("target/generated-test-sources/annotations"));
+        Files.createFile(generatedTestSrcDir.resolve("GeneratedTest.java"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.getBuild().setOutputDirectory(classesDir.toString());
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
+        // Register both roots as test compile source roots (as Maven lifecycle and build-helper do)
+        proj.addTestCompileSourceRoot(primaryTestSrcDir.toString());
+        proj.addTestCompileSourceRoot(generatedTestSrcDir.toString());
+        Dependency dep = new Dependency();
+        dep.setGroupId("org.junit.jupiter");
+        dep.setArtifactId("junit-jupiter-api");
+        dep.setVersion("5.10.0");
+        dep.setScope("test");
+        proj.getDependencies().add(dep);
+
+        var mojo = new DependenciesMojo(null);
+        // Generated test source found → hasTestSources=true → test-classes absent → guard fires
+        assertThatThrownBy(() -> mojo.executeForProject(proj))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/test-classes not found");
+    }
+
+    @Test
+    void executeForProject_generatedMainSourcesDetectedViaCompileSourceRoots(@TempDir Path tmp) throws Exception {
+        // Symmetrical test for hasMainSources: a project with ONLY generated main sources
+        // (registered via addCompileSourceRoot, not getBuild().setSourceDirectory()) must be
+        // correctly classified as having main sources.
+        Path generatedSrcDir = Files.createDirectories(tmp.resolve("target/generated-sources/annotations"));
+        Files.createFile(generatedSrcDir.resolve("Generated.java"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.addCompileSourceRoot(generatedSrcDir.toString()); // generated root only
+        proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
+
+        var mojo = new DependenciesMojo(null);
+        // Generated main source found → hasMainSources=true → classes absent → guard fires
+        assertThatThrownBy(() -> mojo.executeForProject(proj))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/classes not found");
     }
 
     // --- knownUsed / knownUnused override ---

@@ -286,10 +286,10 @@ public class DependenciesMojo extends AbstractMojo {
             declared.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
             transitive.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
             testScan = new ClassFileScanner.ScanResult(Set.of(), Map.of());
-        } else if (testClassesScanned) {
+        } else if (hasTestSources && testClassesScanned) {
             testScan = ClassFileScanner.scanDirectory(testClassesDir);
         } else {
-            // No test sources (checked above) — proceed without test bytecode.
+            // No test sources or no compiled test classes — proceed without test bytecode.
             testScan = new ClassFileScanner.ScanResult(Set.of(), Map.of());
         }
 
