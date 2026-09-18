@@ -226,7 +226,7 @@ public class DependenciesMojo extends AbstractMojo {
                         .anyMatch(dep -> DependencyUsageAnalyzer.isTestScope(dep.getScope()))) {
             throw new MojoExecutionException(
                     "target/test-classes not found but the project declares test-scoped dependencies."
-                            + " Run 'mvn package pilot:dependencies' for accurate analysis,"
+                            + " Run 'mvn test-compile pilot:dependencies' for accurate analysis,"
                             + " or use -Dpilot.skipTestScope=true to exclude test-scope analysis.");
         }
 
@@ -507,21 +507,17 @@ public class DependenciesMojo extends AbstractMojo {
     }
 
     /**
-     * Returns {@code true} if the project has at least one main source directory that exists and is non-empty.
-     * When a project has no main sources (e.g. POM packaging, BOM, parent POM), the absence of
-     * {@code target/classes} is expected and should not be treated as an error.
+     * Returns {@code true} if the project has at least one main source directory that contains at least one
+     * regular file (walking recursively). When a project has no main sources (e.g. POM packaging, BOM,
+     * parent POM), the absence of {@code target/classes} is expected and should not be treated as an error.
      */
-    static boolean hasMainSources(MavenProject proj) {
+    static boolean hasMainSources(MavenProject proj) throws IOException {
         String srcDir = proj.getBuild().getSourceDirectory();
         if (srcDir != null) {
             Path srcPath = Path.of(srcDir);
             if (Files.isDirectory(srcPath)) {
-                try (var stream = Files.list(srcPath)) {
-                    if (stream.findAny().isPresent()) {
-                        return true;
-                    }
-                } catch (IOException e) {
-                    // treat as no main sources
+                try (var walk = Files.walk(srcPath)) {
+                    return walk.anyMatch(Files::isRegularFile);
                 }
             }
         }
@@ -529,21 +525,17 @@ public class DependenciesMojo extends AbstractMojo {
     }
 
     /**
-     * Returns {@code true} if the project has at least one test source directory that exists and is non-empty.
-     * When a project has no test sources, the absence of {@code target/test-classes} is expected and should
-     * not be treated as an error.
+     * Returns {@code true} if the project has at least one test source directory that contains at least one
+     * regular file (walking recursively). When a project has no test sources, the absence of
+     * {@code target/test-classes} is expected and should not be treated as an error.
      */
-    static boolean hasTestSources(MavenProject proj) {
+    static boolean hasTestSources(MavenProject proj) throws IOException {
         String testSrcDir = proj.getBuild().getTestSourceDirectory();
         if (testSrcDir != null) {
             Path testSrcPath = Path.of(testSrcDir);
             if (Files.isDirectory(testSrcPath)) {
-                try (var stream = Files.list(testSrcPath)) {
-                    if (stream.findAny().isPresent()) {
-                        return true;
-                    }
-                } catch (IOException e) {
-                    // treat as no test sources
+                try (var walk = Files.walk(testSrcPath)) {
+                    return walk.anyMatch(Files::isRegularFile);
                 }
             }
         }

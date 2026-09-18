@@ -329,6 +329,33 @@ class DependenciesMojoTest {
     }
 
     @Test
+    void executeForProject_packageOnlyTestSrcDirTreatedAsNoTestSources(@TempDir Path tmp) throws Exception {
+        // Regression: a test-source directory that contains only package subdirectories (no .java files)
+        // must be treated as "no test sources". Previously, Files.list().findAny() returned true on
+        // the package directory, causing a false positive that triggered the test-classes guard.
+        Path classesDir = Files.createDirectory(tmp.resolve("classes"));
+        // Create a package directory inside src/test/java but no actual source files
+        Files.createDirectories(tmp.resolve("src/test/java/com/example"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.getBuild().setOutputDirectory(classesDir.toString());
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
+        proj.getBuild().setTestSourceDirectory(tmp.resolve("src/test/java").toString());
+        Dependency dep = new Dependency();
+        dep.setGroupId("org.junit.jupiter");
+        dep.setArtifactId("junit-jupiter-api");
+        dep.setVersion("5.10.0");
+        dep.setScope("test");
+        proj.getDependencies().add(dep);
+
+        var mojo = new DependenciesMojo(null);
+        // Guard must NOT throw MojoExecutionException (no actual test sources → absence of
+        // test-classes is expected). It will NPE deeper on repoSystem, which is fine.
+        assertThatThrownBy(() -> mojo.executeForProject(proj)).isNotInstanceOf(MojoExecutionException.class);
+    }
+
+    @Test
     void executeForProject_doesNotFailWhenTestClassesAbsentAndNoTestScopedDeps(@TempDir Path tmp) throws Exception {
         // Projects with no test-scoped deps and no test-classes must not be rejected —
         // the guard must be a no-op, and executeForProject should proceed past it
