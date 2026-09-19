@@ -78,6 +78,13 @@ public class DependenciesTui extends ToolPanel {
         final String version;
         public String scope;
         final boolean declared;
+        /**
+         * {@code true} if this dependency is declared in the module's own pom.xml;
+         * {@code false} if it is inherited from a parent POM.
+         * Inherited deps are not candidates for unused-declared warnings or fix actions.
+         */
+        public boolean ownDeclared;
+
         String pulledBy; // for transitive deps: who pulled this in
         public DependencyUsageAnalyzer.UsageStatus usageStatus; // set after bytecode analysis
         public Map<String, List<String>> usedMembers; // class -> list of member references (methods/fields)
@@ -104,6 +111,7 @@ public class DependenciesTui extends ToolPanel {
             this.version = version != null ? version : "";
             this.scope = scope != null ? scope : COMPILE_SCOPE;
             this.declared = declared;
+            this.ownDeclared = declared; // default: own-declared unless overridden
         }
 
         /**
@@ -147,6 +155,26 @@ public class DependenciesTui extends ToolPanel {
      * @param classifier dependency classifier (may be empty)
      * @param version dependency version
      * @param scope dependency scope
+     * @param isOwn {@code true} if the dependency is declared in this module's own pom.xml;
+     *              {@code false} if it is inherited from a parent POM
+     */
+    public static void addDeclaredEntry(
+            Set<String> declaredGAs,
+            List<DepEntry> declared,
+            String groupId,
+            String artifactId,
+            String classifier,
+            String version,
+            String scope,
+            boolean isOwn) {
+        var entry = new DepEntry(groupId, artifactId, classifier, version, scope, true);
+        entry.ownDeclared = isOwn;
+        declaredGAs.add(entry.ga());
+        declared.add(entry);
+    }
+
+    /**
+     * Backward-compatible overload that assumes own-declared (isOwn=true).
      */
     public static void addDeclaredEntry(
             Set<String> declaredGAs,
@@ -156,9 +184,7 @@ public class DependenciesTui extends ToolPanel {
             String classifier,
             String version,
             String scope) {
-        var entry = new DepEntry(groupId, artifactId, classifier, version, scope, true);
-        declaredGAs.add(entry.ga());
-        declared.add(entry);
+        addDeclaredEntry(declaredGAs, declared, groupId, artifactId, classifier, version, scope, true);
     }
 
     /**

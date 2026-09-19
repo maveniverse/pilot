@@ -443,6 +443,32 @@ class DependenciesMojoTest {
     }
 
     @Test
+    void hasMainSources_detectsGroovyMainDirByConvention(@TempDir Path tmp) throws Exception {
+        // Symmetric test for hasMainSources: when pilot:dependencies is invoked directly,
+        // GMavenPlus's addSources (GENERATE_SOURCES phase) may not have run, so src/main/groovy
+        // is NOT in getCompileSourceRoots(). hasMainSources() must fall back to probing
+        // well-known JVM main source directories by convention.
+        // Only src/main/java registered (Maven default), but it's empty (package dirs only)
+        Path javaMainSrcDir = Files.createDirectories(tmp.resolve("src/main/java/com/example"));
+        // Groovy main sources exist but are NOT registered in getCompileSourceRoots()
+        Path groovyMainSrcDir = Files.createDirectories(tmp.resolve("src/main/groovy/com/example"));
+        Files.createFile(groovyMainSrcDir.resolve("SomeClass.groovy"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.setFile(tmp.resolve("pom.xml").toFile()); // basedir = tmp
+        proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
+        proj.addCompileSourceRoot(javaMainSrcDir.getParent().getParent().toString()); // src/main/java only
+
+        var mojo = new DependenciesMojo(null);
+        // Groovy main source found via convention → hasMainSources=true → classes absent → guard fires
+        assertThatThrownBy(() -> mojo.executeForProject(proj))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/classes not found");
+    }
+
+    @Test
     void executeForProject_generatedMainSourcesDetectedViaCompileSourceRoots(@TempDir Path tmp) throws Exception {
         // Symmetrical test for hasMainSources: a project with ONLY generated main sources
         // (registered via addCompileSourceRoot, not getBuild().setSourceDirectory()) must be
