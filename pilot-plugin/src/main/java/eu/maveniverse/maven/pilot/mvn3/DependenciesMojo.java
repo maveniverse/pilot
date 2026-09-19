@@ -242,17 +242,7 @@ public class DependenciesMojo extends AbstractMojo {
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (Dependency dep : proj.getDependencies()) {
-            boolean isOwn = true;
-            if (ownPomPath != null) {
-                InputLocation loc = dep.getLocation("");
-                String rawSrc = (loc != null && loc.getSource() != null)
-                        ? loc.getSource().getLocation()
-                        : null;
-                String depSrc = (rawSrc != null && !rawSrc.contains("://"))
-                        ? Path.of(rawSrc).normalize().toString()
-                        : rawSrc;
-                isOwn = ownPomPath.equals(depSrc);
-            }
+            boolean isOwn = isOwnDeclared(dep, ownPomPath);
             DependenciesTui.addDeclaredEntry(
                     declaredGAs,
                     declared,
