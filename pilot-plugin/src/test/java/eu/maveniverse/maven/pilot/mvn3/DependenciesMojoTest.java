@@ -228,6 +228,63 @@ class DependenciesMojoTest {
         assertThat(result).doesNotContain("com.example:own-lib");
     }
 
+    // --- isOwnDeclared ---
+
+    @Test
+    void isOwnDeclared_ownDepReturnsTrue() throws Exception {
+        File pomFile = Files.createTempFile("pom", ".xml").toFile();
+        String ownPath = pomFile.toPath().normalize().toString();
+
+        Dependency own = dep("com.example", "own-lib", "1.0", locFor(ownPath));
+
+        assertThat(DependenciesMojo.isOwnDeclared(own, ownPath)).isTrue();
+    }
+
+    @Test
+    void isOwnDeclared_inheritedDepReturnsFalse() throws Exception {
+        File pomFile = Files.createTempFile("pom", ".xml").toFile();
+        String ownPath = pomFile.toPath().normalize().toString();
+
+        Dependency inherited = dep("com.other", "parent-lib", "2.0", locFor("/parent/pom.xml"));
+
+        assertThat(DependenciesMojo.isOwnDeclared(inherited, ownPath)).isFalse();
+    }
+
+    @Test
+    void isOwnDeclared_nullLocationReturnsFalse() throws Exception {
+        File pomFile = Files.createTempFile("pom", ".xml").toFile();
+        String ownPath = pomFile.toPath().normalize().toString();
+
+        // Dependency with no InputLocation metadata → loc == null → treated as not-own
+        Dependency noLoc = new Dependency();
+        noLoc.setGroupId("com.unknown");
+        noLoc.setArtifactId("mystery-lib");
+        noLoc.setVersion("1.0");
+
+        assertThat(DependenciesMojo.isOwnDeclared(noLoc, ownPath)).isFalse();
+    }
+
+    @Test
+    void isOwnDeclared_nullOwnPomPathReturnsTrueConservatively() throws Exception {
+        Dependency dep = dep("com.example", "lib", "1.0", locFor("/some/pom.xml"));
+
+        // When ownPomPath is null (proj.getFile() == null), we can't compare — treat as own
+        assertThat(DependenciesMojo.isOwnDeclared(dep, null)).isTrue();
+    }
+
+    @Test
+    void isOwnDeclared_nonNormalizedOwnPathRecognized() throws Exception {
+        File pomFile = Files.createTempFile("pom", ".xml").toFile();
+        String ownPath = pomFile.toPath().normalize().toString();
+        // Non-normalized equivalent of the same path
+        String nonNormalized = pomFile.getParent() + "/." + "/" + pomFile.getName();
+
+        Dependency own = dep("com.example", "own-lib", "1.0", locFor(nonNormalized));
+
+        // After normalization, paths are equal → must be recognized as own
+        assertThat(DependenciesMojo.isOwnDeclared(own, ownPath)).isTrue();
+    }
+
     // --- skipTestScope parameter ---
 
     @Test

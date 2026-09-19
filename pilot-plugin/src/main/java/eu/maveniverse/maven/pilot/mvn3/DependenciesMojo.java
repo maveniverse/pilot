@@ -375,6 +375,28 @@ public class DependenciesMojo extends AbstractMojo {
         return ancestorManagedGAs;
     }
 
+    /**
+     * Returns {@code true} when the given dependency was declared directly in {@code ownPomPath}
+     * (the module's own POM file), {@code false} when it is inherited from a parent or when
+     * {@code ownPomPath} is {@code null} (unknown — treated conservatively as own-declared).
+     *
+     * <p>The comparison normalizes local file paths so that paths with redundant {@code .} or
+     * {@code ..} segments still match correctly. URL-style locations (containing {@code ://}) are
+     * left unchanged; they cannot match a local path and therefore always yield {@code false}.</p>
+     */
+    static boolean isOwnDeclared(Dependency dep, String ownPomPath) {
+        if (ownPomPath == null) {
+            return true; // unknown: treat conservatively as own-declared
+        }
+        InputLocation loc = dep.getLocation("");
+        String rawSrc =
+                (loc != null && loc.getSource() != null) ? loc.getSource().getLocation() : null;
+        String depSrc = (rawSrc != null && !rawSrc.contains("://"))
+                ? Path.of(rawSrc).normalize().toString()
+                : rawSrc;
+        return ownPomPath.equals(depSrc);
+    }
+
     void executeNonInteractive(
             MavenProject proj,
             List<DependenciesTui.DepEntry> declared,
