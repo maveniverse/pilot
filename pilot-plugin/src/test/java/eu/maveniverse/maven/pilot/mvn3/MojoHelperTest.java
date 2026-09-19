@@ -173,4 +173,24 @@ class MojoHelperTest {
         assertThat(result.getArtifact().getExtension()).isEqualTo("jar");
         assertThat(result.getArtifact().getClassifier()).isEqualTo("android"); // explicit wins
     }
+
+    @Test
+    void convertDependency_withRegistry_unknownTypeFallsBackToExtensionAsType() {
+        // Third path through convertDependency(dep, registry):
+        // registry != null AND registry.get(type) == null → extension = type (backward-compat fallback).
+        // This is the backward-compat guarantee for custom/unknown types not registered in the session registry.
+        var dep = new org.apache.maven.model.Dependency();
+        dep.setGroupId("com.example");
+        dep.setArtifactId("lib");
+        dep.setVersion("1.0");
+        dep.setType("custom-zip"); // not registered in the (empty) registry
+
+        var registry = new DefaultArtifactTypeRegistry(); // empty — doesn't know custom-zip
+
+        Dependency result = MojoHelper.convertDependency(dep, registry);
+
+        // Falls through: extension = type, classifier = "" (no registry default applied)
+        assertThat(result.getArtifact().getExtension()).isEqualTo("custom-zip");
+        assertThat(result.getArtifact().getClassifier()).isEmpty();
+    }
 }

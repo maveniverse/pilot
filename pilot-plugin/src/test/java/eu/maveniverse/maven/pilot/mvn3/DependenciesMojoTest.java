@@ -410,6 +410,65 @@ class DependenciesMojoTest {
     }
 
     @Test
+    void hasTestSources_detectsGroovyTestDirByConvention(@TempDir Path tmp) throws Exception {
+        // When pilot:dependencies is invoked directly (not via full lifecycle), GMavenPlus's
+        // addTestSources (INITIALIZE phase) may not have run, so src/test/groovy is NOT in
+        // getTestCompileSourceRoots(). hasTestSources() must fall back to probing well-known
+        // JVM test source directories by convention (groovy, kotlin, scala).
+        Path classesDir = Files.createDirectory(tmp.resolve("classes"));
+        // Only src/test/java registered (Maven default), but it's empty (package dirs only)
+        Path javaTestSrcDir = Files.createDirectories(tmp.resolve("src/test/java/com/example"));
+        // Groovy test sources exist but are NOT registered in getTestCompileSourceRoots()
+        Path groovyTestSrcDir = Files.createDirectories(tmp.resolve("src/test/groovy/com/example"));
+        Files.createFile(groovyTestSrcDir.resolve("SomeSpec.groovy"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.setFile(tmp.resolve("pom.xml").toFile()); // basedir = tmp; file need not exist for getBasedir()
+        proj.getBuild().setOutputDirectory(classesDir.toString());
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
+        proj.addTestCompileSourceRoot(javaTestSrcDir.getParent().getParent().toString()); // src/test/java only
+        Dependency dep = new Dependency();
+        dep.setGroupId("org.spockframework");
+        dep.setArtifactId("spock-core");
+        dep.setVersion("2.3");
+        dep.setScope("test");
+        proj.getDependencies().add(dep);
+
+        var mojo = new DependenciesMojo(null);
+        // Groovy test source found via convention → hasTestSources=true → test-classes absent → guard fires
+        assertThatThrownBy(() -> mojo.executeForProject(proj))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/test-classes not found");
+    }
+
+    @Test
+    void hasMainSources_detectsGroovyMainDirByConvention(@TempDir Path tmp) throws Exception {
+        // Symmetric test for hasMainSources: when pilot:dependencies is invoked directly,
+        // GMavenPlus's addSources (GENERATE_SOURCES phase) may not have run, so src/main/groovy
+        // is NOT in getCompileSourceRoots(). hasMainSources() must fall back to probing
+        // well-known JVM main source directories by convention.
+        // Only src/main/java registered (Maven default), but it's empty (package dirs only)
+        Path javaMainSrcDir = Files.createDirectories(tmp.resolve("src/main/java/com/example"));
+        // Groovy main sources exist but are NOT registered in getCompileSourceRoots()
+        Path groovyMainSrcDir = Files.createDirectories(tmp.resolve("src/main/groovy/com/example"));
+        Files.createFile(groovyMainSrcDir.resolve("SomeClass.groovy"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.setFile(tmp.resolve("pom.xml").toFile()); // basedir = tmp
+        proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
+        proj.addCompileSourceRoot(javaMainSrcDir.getParent().getParent().toString()); // src/main/java only
+
+        var mojo = new DependenciesMojo(null);
+        // Groovy main source found via convention → hasMainSources=true → classes absent → guard fires
+        assertThatThrownBy(() -> mojo.executeForProject(proj))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/classes not found");
+    }
+
+    @Test
     void executeForProject_generatedMainSourcesDetectedViaCompileSourceRoots(@TempDir Path tmp) throws Exception {
         // Symmetrical test for hasMainSources: a project with ONLY generated main sources
         // (registered via addCompileSourceRoot, not getBuild().setSourceDirectory()) must be

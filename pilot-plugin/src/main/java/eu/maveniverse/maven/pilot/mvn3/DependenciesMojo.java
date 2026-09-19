@@ -230,9 +230,29 @@ public class DependenciesMojo extends AbstractMojo {
                             + " or use -Dpilot.skipTestScope=true to exclude test-scope analysis.");
         }
 
+        // Collect dependencies from this module's effective model (own + inherited).
+        // We split them into "own" (declared in this module's pom.xml) and "inherited" (from a parent).
+        // - "Declared" for analysis purposes includes both own and inherited (so inherited deps are
+        //   not promoted to "used transitive" — the parent already provides them).
+        // - "Own-declared" is the subset used for unused-declared reporting and fix: we only report/fix
+        //   deps that are in this module's pom.xml, not deps inherited from a parent (those are the
+        //   parent's responsibility).
+        String ownPomPath =
+                proj.getFile() != null ? proj.getFile().toPath().normalize().toString() : null;
         Set<String> declaredGAs = new HashSet<>();
         List<DependenciesTui.DepEntry> declared = new ArrayList<>();
         for (Dependency dep : proj.getDependencies()) {
+            boolean isOwn = true;
+            if (ownPomPath != null) {
+                InputLocation loc = dep.getLocation("");
+                String rawSrc = (loc != null && loc.getSource() != null)
+                        ? loc.getSource().getLocation()
+                        : null;
+                String depSrc = (rawSrc != null && !rawSrc.contains("://"))
+                        ? Path.of(rawSrc).normalize().toString()
+                        : rawSrc;
+                isOwn = ownPomPath.equals(depSrc);
+            }
             DependenciesTui.addDeclaredEntry(
                     declaredGAs,
                     declared,
@@ -240,7 +260,8 @@ public class DependenciesMojo extends AbstractMojo {
                     dep.getArtifactId(),
                     dep.getClassifier(),
                     dep.getVersion(),
-                    dep.getScope());
+                    dep.getScope(),
+                    isOwn);
         }
 
         DependencyRequest depRequest = new DependencyRequest(MojoHelper.buildCollectRequest(proj, repoSession), null);
@@ -377,6 +398,7 @@ public class DependenciesMojo extends AbstractMojo {
 
         List<String> contradictions = new ArrayList<>();
         for (var dep : declared) {
+            if (!dep.ownDeclared) continue; // inherited deps are not subject to overrides
             if (DependencyUsageAnalyzer.matchesArtifactPattern(dep.ga(), knownUsedSet)) {
                 if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED) {
                     contradictions.add("'" + dep.ga() + "' is declared knownUsed but analyser found it UNUSED");
@@ -404,7 +426,7 @@ public class DependenciesMojo extends AbstractMojo {
         // --- Bucket deps by status ---
         List<DependenciesTui.DepEntry> unusedDeclared = new ArrayList<>();
         for (var dep : declared) {
-            if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED) {
+            if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED && dep.ownDeclared) {
                 unusedDeclared.add(dep);
             }
         }
@@ -418,7 +440,7 @@ public class DependenciesMojo extends AbstractMojo {
 
         List<DependenciesTui.DepEntry> undetermined = new ArrayList<>();
         for (var dep : declared) {
-            if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
+            if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED && dep.ownDeclared) {
                 undetermined.add(dep);
             }
         }
@@ -507,22 +529,53 @@ public class DependenciesMojo extends AbstractMojo {
     }
 
     /**
+     * Well-known JVM source directory names beyond the language default ({@code src/main/java},
+     * {@code src/test/java}).  Plugins such as GMavenPlus ({@code addSources}/{@code addTestSources}),
+     * kotlin-maven-plugin, or scala-maven-plugin register these at build time, but only when the
+     * full lifecycle is involved.  When {@code pilot:dependencies} is invoked directly these
+     * registrations may not have fired, so the methods below fall back to probing by convention.
+     */
+    static final List<String> EXTRA_SOURCE_LANGS = List.of("groovy", "kotlin", "scala");
+
+    /**
      * Returns {@code true} if the project has at least one main source directory that exists and is non-empty.
      * When a project has no main sources (e.g. POM packaging, BOM, parent POM), the absence of
      * {@code target/classes} is expected and should not be treated as an error.
+     * <p>
+     * In addition to the directories registered in {@code getCompileSourceRoots()} (which only
+     * contains {@code src/main/java} by default), this method also probes well-known JVM main
+     * source directories such as {@code src/main/groovy}, {@code src/main/kotlin}, and
+     * {@code src/main/scala}.  This is necessary because language-specific plugins
+     * (e.g. GMavenPlus {@code addSources}) register their source directories only during the
+     * {@code GENERATE_SOURCES} phase, which may not have run when {@code pilot:dependencies}
+     * is invoked directly.
      */
-    boolean hasMainSources(MavenProject proj) {
+    boolean hasMainSources(MavenProject proj) throws IOException {
+        Set<Path> checked = new HashSet<>();
         List<String> roots = proj.getCompileSourceRoots();
         if (roots != null) {
             for (String root : roots) {
                 Path srcPath = Path.of(root);
-                if (Files.isDirectory(srcPath)) {
+                if (checked.add(srcPath) && Files.isDirectory(srcPath)) {
                     try (var stream = Files.walk(srcPath)) {
                         if (stream.anyMatch(Files::isRegularFile)) {
                             return true;
                         }
-                    } catch (IOException e) {
-                        getLog().debug("Cannot walk source directory " + srcPath + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
+        // Probe well-known JVM main source directories that may not yet be registered.
+        File basedirFile = proj.getBasedir();
+        if (basedirFile != null) {
+            Path basedir = basedirFile.toPath();
+            for (String lang : EXTRA_SOURCE_LANGS) {
+                Path srcPath = basedir.resolve("src").resolve("main").resolve(lang);
+                if (checked.add(srcPath) && Files.isDirectory(srcPath)) {
+                    try (var stream = Files.walk(srcPath)) {
+                        if (stream.anyMatch(Files::isRegularFile)) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -534,19 +587,41 @@ public class DependenciesMojo extends AbstractMojo {
      * Returns {@code true} if the project has at least one test source directory that exists and contains
      * at least one source file (regular file). When a project has no test sources, the absence of
      * {@code target/test-classes} is expected and should not be treated as an error.
+     * <p>
+     * In addition to the directories registered in {@code getTestCompileSourceRoots()} (which only
+     * contains {@code src/test/java} by default), this method also probes well-known JVM test source
+     * directories such as {@code src/test/groovy}, {@code src/test/kotlin}, and {@code src/test/scala}.
+     * This is necessary because language-specific plugins (e.g. GMavenPlus) register their source
+     * directories only during the {@code INITIALIZE} phase, which may not have run when
+     * {@code pilot:dependencies} is invoked directly.
      */
-    boolean hasTestSources(MavenProject proj) {
+    boolean hasTestSources(MavenProject proj) throws IOException {
+        Set<Path> checked = new HashSet<>();
         List<String> roots = proj.getTestCompileSourceRoots();
         if (roots != null) {
             for (String root : roots) {
                 Path testSrcPath = Path.of(root);
-                if (Files.isDirectory(testSrcPath)) {
+                if (checked.add(testSrcPath) && Files.isDirectory(testSrcPath)) {
                     try (var stream = Files.walk(testSrcPath)) {
                         if (stream.anyMatch(Files::isRegularFile)) {
                             return true;
                         }
-                    } catch (IOException e) {
-                        getLog().debug("Cannot walk test source directory " + testSrcPath + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
+        // Probe well-known JVM test source directories that may not yet be registered
+        // (e.g. src/test/groovy added by GMavenPlus only during INITIALIZE).
+        File basedirFile = proj.getBasedir();
+        if (basedirFile != null) {
+            Path basedir = basedirFile.toPath();
+            for (String lang : EXTRA_SOURCE_LANGS) {
+                Path testSrcPath = basedir.resolve("src").resolve("test").resolve(lang);
+                if (checked.add(testSrcPath) && Files.isDirectory(testSrcPath)) {
+                    try (var stream = Files.walk(testSrcPath)) {
+                        if (stream.anyMatch(Files::isRegularFile)) {
+                            return true;
+                        }
                     }
                 }
             }
