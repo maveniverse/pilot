@@ -380,12 +380,14 @@ public class DependenciesTui extends ToolPanel {
         this.reactorMode = false;
         this.treeTui = treeTui;
         this.dmTreeTui = dmTreeTui;
-        // Build undetermined list from declared deps only — transitive deps are never
-        // directly managed by the project, so UNDETERMINED status on them is not actionable
+        // Build undetermined list from own-declared deps only — transitive deps are never
+        // directly managed by the project, so UNDETERMINED status on them is not actionable.
+        // Inherited deps (ownDeclared=false) are also excluded: they are the parent's
+        // responsibility and not candidates for undetermined warnings or fix actions.
         List<DepEntry> undeterminedList = new ArrayList<>();
         if (bytecodeAnalyzed) {
             for (var dep : declared) {
-                if (dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
+                if (dep.ownDeclared && dep.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNDETERMINED) {
                     undeterminedList.add(dep);
                 }
             }
@@ -480,7 +482,7 @@ public class DependenciesTui extends ToolPanel {
     private void updateStatus() {
         if (bytecodeAnalyzed) {
             long unused = declared.stream()
-                    .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
+                    .filter(d -> d.ownDeclared && d.usageStatus == DependencyUsageAnalyzer.UsageStatus.UNUSED)
                     .count();
             long usedTransitive = transitive.stream()
                     .filter(d -> d.usageStatus == DependencyUsageAnalyzer.UsageStatus.USED)
@@ -1006,6 +1008,10 @@ public class DependenciesTui extends ToolPanel {
         int sel = selectedIndex();
         if (sel < 0 || sel >= declared.size()) return;
         var dep = declared.get(sel);
+        if (!dep.ownDeclared) {
+            status = "Cannot remove inherited dependency " + dep.ga() + " (declared in parent POM)";
+            return;
+        }
 
         try {
             Coordinates coords = dep.hasClassifier()
@@ -1200,6 +1206,11 @@ public class DependenciesTui extends ToolPanel {
             }
             int current = scopes.indexOf(dep.scope);
             dep.scope = scopes.get((current + 1) % scopes.size());
+            return;
+        }
+
+        if (!dep.ownDeclared) {
+            status = "Cannot change scope of inherited dependency " + dep.ga() + " (declared in parent POM)";
             return;
         }
 
