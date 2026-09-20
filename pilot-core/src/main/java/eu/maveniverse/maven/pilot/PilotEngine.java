@@ -596,8 +596,9 @@ public class PilotEngine {
                 break;
             }
             int score = current.originalManagedDependencies != null ? current.originalManagedDependencies.size() : 0;
-            // Greater-or-equal: on a tie the higher (later in walk) ancestor replaces the lower one
-            if (score >= bestScore) {
+            // Only consider ancestors with actual dependency management entries.
+            // Greater-or-equal: on a tie the higher (later in walk) ancestor replaces the lower one.
+            if (score > 0 && score >= bestScore) {
                 bestScore = score;
                 bestCandidate = current;
             }

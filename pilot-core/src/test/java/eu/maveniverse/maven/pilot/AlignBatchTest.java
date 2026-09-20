@@ -800,8 +800,8 @@ class AlignBatchTest {
     }
 
     @Test
-    void findManagementPomEngineFallsBackToReactorRoot() {
-        // No ancestor has any managed deps → fallback is projects.get(0)
+    void findManagementPomSelectsRootWhenNoAncestorHasManagedDeps() {
+        // No ancestor has any managed deps → bestCandidate stays null → fallback is projects.get(0) (the root)
         var rootProject = makeEngineProject("root", 0);
         var childProject = makeEngineProject("child", 0);
         childProject.parent = rootProject;
