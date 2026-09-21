@@ -59,7 +59,7 @@ under the License.
     <maven.compiler.release>17</maven.compiler.release>
     <mavenVersion>3.9.16</mavenVersion>
     <maven4Version>4.0.0-rc-6</maven4Version>
-    <tamboui.version>0.4.0</tamboui.version>
+    <tamboui.version>0.5.0</tamboui.version>
     <domtrip.version>1.7.0</domtrip.version>
     <jline.version>4.4.3</jline.version>
 
