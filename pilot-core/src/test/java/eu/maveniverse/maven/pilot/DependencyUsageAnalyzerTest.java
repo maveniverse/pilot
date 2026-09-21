@@ -872,8 +872,8 @@ class DependencyUsageAnalyzerTest {
                 .analyze(Set.of("com.example.App"), Set.of(), classIndex, gaToJar, List.of(dep), List.of(), true);
 
         // runtimeArtifacts allowlist must win: USED, not UNDETERMINED
-        assertThat(result.declaredUsage().get("org.postgresql:postgresql"))
-                .isEqualTo(DependencyUsageAnalyzer.UsageStatus.USED);
+        assertThat(result.declaredUsage())
+                .containsEntry("org.postgresql:postgresql", DependencyUsageAnalyzer.UsageStatus.USED);
     }
 
     /**
@@ -1022,9 +1022,10 @@ class DependencyUsageAnalyzerTest {
                         true);
 
         // provided dep must not be narrowed to test — it's UNUSED (or UNDETERMINED), not USED_IN_TEST
-        assertThat(result.declaredUsage().get("javax.servlet:javax.servlet-api"))
+        assertThat(result.declaredUsage())
                 .as("provided-scope dep used only in tests must not be classified USED_IN_TEST")
-                .isNotEqualTo(DependencyUsageAnalyzer.UsageStatus.USED_IN_TEST);
+                .doesNotContainEntry(
+                        "javax.servlet:javax.servlet-api", DependencyUsageAnalyzer.UsageStatus.USED_IN_TEST);
     }
 
     /**
@@ -1051,9 +1052,9 @@ class DependencyUsageAnalyzerTest {
                         true);
 
         // runtime dep must not be narrowed to test
-        assertThat(result.declaredUsage().get("org.slf4j:slf4j-simple"))
+        assertThat(result.declaredUsage())
                 .as("runtime-scope dep used only in tests must not be classified USED_IN_TEST")
-                .isNotEqualTo(DependencyUsageAnalyzer.UsageStatus.USED_IN_TEST);
+                .doesNotContainEntry("org.slf4j:slf4j-simple", DependencyUsageAnalyzer.UsageStatus.USED_IN_TEST);
     }
 
     /**
@@ -1093,9 +1094,9 @@ class DependencyUsageAnalyzerTest {
                         true);
 
         // classifyByRuntimeDiscovery must win: UNDETERMINED (SPI dep), not USED_IN_TEST
-        assertThat(result.declaredUsage().get("org.example:slf4j-backend"))
+        assertThat(result.declaredUsage())
                 .as("compile-scope SPI dep with test-only class refs must be UNDETERMINED, not USED_IN_TEST")
-                .isEqualTo(DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                .containsEntry("org.example:slf4j-backend", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
     }
 
     /**
@@ -1127,9 +1128,9 @@ class DependencyUsageAnalyzerTest {
                         false); // testRefsAvailable=false: test-classes not scanned
 
         // Must be UNDETERMINED, not UNUSED — we cannot rule out test-only usage
-        assertThat(result.declaredUsage().get("com.example:compile-lib"))
+        assertThat(result.declaredUsage())
                 .as("compile-scope dep with no main refs and unavailable test scan must be UNDETERMINED, not UNUSED")
-                .isEqualTo(DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+                .containsEntry("com.example:compile-lib", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
     }
 
     /**
@@ -1159,8 +1160,8 @@ class DependencyUsageAnalyzerTest {
                         true); // testRefsAvailable=true: test-classes were scanned, just empty
 
         // Must be UNUSED — test was scanned, dep appears in neither main nor test bytecode
-        assertThat(result.declaredUsage().get("com.example:compile-lib"))
+        assertThat(result.declaredUsage())
                 .as("compile-scope dep with no refs from completed test scan must be UNUSED")
-                .isEqualTo(DependencyUsageAnalyzer.UsageStatus.UNUSED);
+                .containsEntry("com.example:compile-lib", DependencyUsageAnalyzer.UsageStatus.UNUSED);
     }
 }

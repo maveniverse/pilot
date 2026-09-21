@@ -288,19 +288,9 @@ public final class DependencyUsageAnalyzer {
         // deps and SPI/DI-registered deps are not mistakenly narrowed when their classes appear only
         // in test bytecode.
         // NOTE: "provided" and "runtime" scopes are intentionally excluded — see NARROWABLE_TO_TEST_SCOPES.
-        // NOTE: Only classify USED_IN_TEST when test refs were actually scanned. When testRefsAvailable is
-        //       false (test compilation was skipped or target/test-classes was absent), the absence of test
-        //       references is not evidence of test-only usage — the scan simply did not run. In that case,
-        //       treat a narrowable dep with known classes and no main refs as UNDETERMINED.
-        if (isNarrowableToTestScope(dep.scope) && depClasses != null) {
-            if (testRefsAvailable) {
-                if (!Collections.disjoint(depClasses, testRefs)) {
-                    return UsageStatus.USED_IN_TEST;
-                }
-            } else {
-                // Test bytecode was not scanned — cannot distinguish test-only from genuinely unused.
-                return UsageStatus.UNDETERMINED;
-            }
+        UsageStatus testScopeStatus = classifyTestScopeNarrowing(dep.scope, depClasses, testRefs, testRefsAvailable);
+        if (testScopeStatus != null) {
+            return testScopeStatus;
         }
 
         // A JAR that contains public static final String/int/… fields (ConstantValue attribute)
@@ -313,6 +303,31 @@ public final class DependencyUsageAnalyzer {
         }
 
         return depClasses == null ? UsageStatus.UNDETERMINED : UsageStatus.UNUSED;
+    }
+
+    /**
+     * Determine whether a compile-like-scoped dependency should be classified as {@link UsageStatus#USED_IN_TEST}.
+     * <p>
+     * Only classify {@code USED_IN_TEST} when test refs were actually scanned. When {@code testRefsAvailable} is
+     * {@code false} (test compilation was skipped or {@code target/test-classes} was absent), the absence of test
+     * references is not evidence of test-only usage — the scan simply did not run. In that case,
+     * treat a narrowable dep with known classes and no main refs as {@code UNDETERMINED}.
+     * </p>
+     *
+     * @return {@link UsageStatus#USED_IN_TEST} if the dep is used exclusively in tests,
+     *         {@link UsageStatus#UNDETERMINED} if test bytecode was not scanned, or
+     *         {@code null} if this check does not apply (non-narrowable scope or no known classes).
+     */
+    private UsageStatus classifyTestScopeNarrowing(
+            String scope, Set<String> depClasses, Set<String> testRefs, boolean testRefsAvailable) {
+        if (!isNarrowableToTestScope(scope) || depClasses == null) {
+            return null;
+        }
+        if (!testRefsAvailable) {
+            // Test bytecode was not scanned — cannot distinguish test-only from genuinely unused.
+            return UsageStatus.UNDETERMINED;
+        }
+        return Collections.disjoint(depClasses, testRefs) ? null : UsageStatus.USED_IN_TEST;
     }
 
     /**
