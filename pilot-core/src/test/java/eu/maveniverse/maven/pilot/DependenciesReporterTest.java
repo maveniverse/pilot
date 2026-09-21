@@ -324,9 +324,10 @@ class DependenciesReporterTest {
                 logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).contains("ancestor-lib");
-        // The newly added dependency must NOT have its resolved version hardcoded
-        assertThat(result).doesNotContain("<version>3.0</version>");
+        assertThat(result)
+                .contains("ancestor-lib")
+                // The newly added dependency must NOT have its resolved version hardcoded
+                .doesNotContain("<version>3.0</version>");
         assertThat(logs).anyMatch(l -> l.contains("version managed by ancestor"));
     }
 
@@ -358,9 +359,10 @@ class DependenciesReporterTest {
                 logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).contains("test-lib");
-        assertThat(result).doesNotContain("<version>2.5</version>");
-        assertThat(result).contains("<scope>test</scope>");
+        assertThat(result)
+                .contains("test-lib")
+                .doesNotContain("<version>2.5</version>")
+                .contains("<scope>test</scope>");
     }
 
     @Test
@@ -549,8 +551,9 @@ class DependenciesReporterTest {
                 logs::add);
 
         String result = Files.readString(pomPath);
-        assertThat(result).contains("bom-lib");
-        assertThat(result).doesNotContain("<version>5.0</version>");
-        assertThat(result).contains("<dependencies>");
+        assertThat(result)
+                .contains("bom-lib")
+                .doesNotContain("<version>5.0</version>")
+                .contains("<dependencies>");
     }
 }
