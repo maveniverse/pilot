@@ -304,6 +304,60 @@ public class DependenciesMojo extends AbstractMojo {
     }
 
     /**
+     * Holds the two artifact maps built from a resolved {@link DependencyResult}.
+     *
+     * @param gaToJar     GA (with optional classifier) → local jar {@link File}
+     * @param gaToVersion GA (with optional classifier) → resolved version string
+     */
+    record ArtifactMaps(Map<String, File> gaToJar, Map<String, String> gaToVersion) {}
+
+    /**
+     * Builds the {@link ArtifactMaps} (GA → jar, GA → version) from a resolved dependency result.
+     * Classifier-carrying artifacts are keyed as {@code groupId:artifactId:classifier}.
+     */
+    static ArtifactMaps buildArtifactMaps(DependencyResult depResult) {
+        Map<String, File> gaToJar = new HashMap<>();
+        Map<String, String> gaToVersion = new HashMap<>();
+        for (ArtifactResult ar : depResult.getArtifactResults()) {
+            var art = ar.getArtifact();
+            if (art == null) {
+                continue;
+            }
+            String classifier = art.getClassifier();
+            String ga = (classifier != null && !classifier.isEmpty())
+                    ? art.getGroupId() + ":" + art.getArtifactId() + ":" + classifier
+                    : art.getGroupId() + ":" + art.getArtifactId();
+            gaToVersion.put(ga, art.getVersion());
+            if (art.getFile() != null && art.getFile().getName().endsWith(".jar")) {
+                gaToJar.put(ga, art.getFile());
+            }
+        }
+        return new ArtifactMaps(gaToJar, gaToVersion);
+    }
+
+    /**
+     * Validates that compiled output directories exist when the project has the corresponding
+     * sources.  Throws {@link MojoExecutionException} early (before expensive dependency
+     * resolution) when a required directory is absent.
+     */
+    private void checkBuildOutputDirs(MavenProject proj, Path classesDir, Path testClassesDir)
+            throws MojoExecutionException, IOException {
+        if (hasMainSources(proj) && !Files.isDirectory(classesDir)) {
+            throw new MojoExecutionException("target/classes not found. Run 'mvn compile pilot:dependencies' first.");
+        }
+        if (!skipTestScope
+                && hasTestSources(proj)
+                && !Files.isDirectory(testClassesDir)
+                && proj.getDependencies().stream()
+                        .anyMatch(dep -> DependencyUsageAnalyzer.isTestScope(dep.getScope()))) {
+            throw new MojoExecutionException(
+                    "target/test-classes not found but the project declares test-scoped dependencies."
+                            + " Run 'mvn test-compile' first for accurate analysis,"
+                            + " or use -Dpilot.skipTestScope=true to exclude test-scope analysis.");
+        }
+    }
+
+    /**
      * Core per-project analysis and action dispatch.
      *
      * @param fixLogger optional logger override for the fix action; when {@code null} the mojo's
@@ -319,22 +373,10 @@ public class DependenciesMojo extends AbstractMojo {
         // Early-exit guards: check filesystem state before the expensive dependency resolution.
         Path classesDir = Path.of(proj.getBuild().getOutputDirectory());
         Path testClassesDir = Path.of(proj.getBuild().getTestOutputDirectory());
+        checkBuildOutputDirs(proj, classesDir, testClassesDir);
 
         boolean hasMainSources = hasMainSources(proj);
-        if (hasMainSources && !Files.isDirectory(classesDir)) {
-            throw new MojoExecutionException("target/classes not found. Run 'mvn compile pilot:dependencies' first.");
-        }
         boolean hasTestSources = hasTestSources(proj);
-        if (!skipTestScope
-                && hasTestSources
-                && !Files.isDirectory(testClassesDir)
-                && proj.getDependencies().stream()
-                        .anyMatch(dep -> DependencyUsageAnalyzer.isTestScope(dep.getScope()))) {
-            throw new MojoExecutionException(
-                    "target/test-classes not found but the project declares test-scoped dependencies."
-                            + " Run 'mvn test-compile' first for accurate analysis,"
-                            + " or use -Dpilot.skipTestScope=true to exclude test-scope analysis.");
-        }
 
         // Collect dependencies from this module's effective model (own + inherited).
         // We split them into "own" (declared in this module's pom.xml) and "inherited" (from a parent).
@@ -377,21 +419,9 @@ public class DependenciesMojo extends AbstractMojo {
         // their transitive closure as "used transitive (should be declared)" is a false positive.
         suppressPomAggregatorCoveredTransitives(transitive, depTree, pomAggregatorGAs);
 
-        Map<String, File> gaToJar = new HashMap<>();
-        Map<String, String> gaToVersion = new HashMap<>();
-        for (ArtifactResult ar : depResult.getArtifactResults()) {
-            var art = ar.getArtifact();
-            if (art != null) {
-                String classifier = art.getClassifier();
-                String ga = (classifier != null && !classifier.isEmpty())
-                        ? art.getGroupId() + ":" + art.getArtifactId() + ":" + classifier
-                        : art.getGroupId() + ":" + art.getArtifactId();
-                gaToVersion.put(ga, art.getVersion());
-                if (art.getFile() != null && art.getFile().getName().endsWith(".jar")) {
-                    gaToJar.put(ga, art.getFile());
-                }
-            }
-        }
+        ArtifactMaps artifactMaps = buildArtifactMaps(depResult);
+        Map<String, File> gaToJar = artifactMaps.gaToJar();
+        Map<String, String> gaToVersion = artifactMaps.gaToVersion();
 
         // Build set of GAs already managed by an ancestor BOM/parent POM (not by this module itself).
         // When a transitive dependency is already version-managed by an ancestor, the fix action

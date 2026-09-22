@@ -25,14 +25,33 @@ final class MojoTestHelper {
     private MojoTestHelper() {}
 
     static void setField(Object target, String name, Object value) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        f.set(target, value);
+        Class<?> cls = target.getClass();
+        while (cls != null) {
+            try {
+                Field f = cls.getDeclaredField(name);
+                f.setAccessible(true);
+                f.set(target, value);
+                return;
+            } catch (NoSuchFieldException e) {
+                cls = cls.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException("Field '" + name + "' not found in class hierarchy of "
+                + target.getClass().getName());
     }
 
     static Object getField(Object target, String name) throws Exception {
-        Field f = target.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        return f.get(target);
+        Class<?> cls = target.getClass();
+        while (cls != null) {
+            try {
+                Field f = cls.getDeclaredField(name);
+                f.setAccessible(true);
+                return f.get(target);
+            } catch (NoSuchFieldException e) {
+                cls = cls.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException("Field '" + name + "' not found in class hierarchy of "
+                + target.getClass().getName());
     }
 }

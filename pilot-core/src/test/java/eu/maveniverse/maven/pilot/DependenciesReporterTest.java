@@ -556,4 +556,66 @@ class DependenciesReporterTest {
                 .doesNotContain("<version>5.0</version>")
                 .contains("<dependencies>");
     }
+
+    @Test
+    void fixNoopWhenDepAlreadyAbsent(@TempDir Path tempDir) throws Exception {
+        // When the dep to remove is not present in the POM (already absent),
+        // deleteDependency returns false → no "Removed" log entry should be emitted.
+        Path pomPath = tempDir.resolve("pom.xml");
+        String original = """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>com.example</groupId>
+                      <artifactId>kept-lib</artifactId>
+                      <version>1.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """;
+        Files.writeString(pomPath, original);
+
+        // This dep is NOT in the POM — deleteDependency returns false, no log
+        var notPresent = new DependenciesTui.DepEntry("com.example", "not-present", "", "1.0", "compile", true);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(pomPath, List.of(notPresent), List.of(), Map.of(), logs::add);
+
+        // POM must still contain kept-lib and NOT contain a "Removed" entry for not-present
+        String result = Files.readString(pomPath);
+        assertThat(result).contains("kept-lib");
+        assertThat(logs).noneMatch(l -> l.contains("Removed unused dependency: com.example:not-present"));
+        // Only the "Updated" message should be logged
+        assertThat(logs).anyMatch(l -> l.startsWith("Updated "));
+    }
+
+    @Test
+    void fixNoopWhenTransitiveAlreadyPresent(@TempDir Path tempDir) throws Exception {
+        // When the transitive dep to add is already declared in the POM,
+        // addAligned returns false → no "Added" log entry should be emitted.
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.already</groupId>
+                      <artifactId>present-lib</artifactId>
+                      <version>2.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+
+        // This dep IS already in the POM — addAligned returns false, no log
+        var alreadyPresent = new DependenciesTui.DepEntry("org.already", "present-lib", "", "2.0", "compile", false);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(
+                pomPath, List.of(), List.of(alreadyPresent), Map.of("org.already:present-lib", "2.0"), logs::add);
+
+        // No "Added" message for the already-present dep
+        assertThat(logs).noneMatch(l -> l.contains("Added used transitive dependency: org.already:present-lib"));
+        // Only the "Updated" message should be logged
+        assertThat(logs).anyMatch(l -> l.startsWith("Updated "));
+    }
 }

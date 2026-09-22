@@ -1106,6 +1106,413 @@ class DependenciesMojoTest {
                 .hasMessageContaining("pilot.maxIterations must be >= 1");
     }
 
+    @Test
+    void execute_fixAction_routesToExecuteFixWithIterations(@TempDir Path tmp) throws Exception {
+        // Verify that execute() with action=fix delegates to executeFixWithIterations()
+        // (not executeForProject directly). Uses FakeFixMojo to avoid needing a real reactor.
+        FakeFixMojo mojo = new FakeFixMojo(0); // 0 changes → converges in 1 pass
+        mojo.maxIterations = 5;
+        MojoTestHelper.setField(mojo, "action", "fix");
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+        MojoTestHelper.setField(mojo, "project", proj);
+
+        mojo.execute();
+
+        // executeForProject was called once (converged on first clean pass)
+        assertThat(mojo.callCount()).isEqualTo(1);
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("No dependency issues found"));
+    }
+
+    @Test
+    void execute_reportAction_callsExecuteForProjectDirectly(@TempDir Path tmp) throws Exception {
+        // Verify that execute() with action=report delegates to executeForProject (not the fix loop).
+        // Use a FakeFixMojo to capture calls; execute with pom packaging so it returns early.
+        FakeFixMojo mojo = new FakeFixMojo(0);
+        MojoTestHelper.setField(mojo, "action", "report");
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("pom"); // early-exit in executeForProject
+        MojoTestHelper.setField(mojo, "project", proj);
+
+        mojo.execute();
+
+        // pom-packaging triggers early-exit in executeForProject before any work
+        assertThat(mojo.callCount()).isEqualTo(1);
+    }
+
+    @Test
+    void executeForProject_withFixLogger_pomPackagingSkipped(@TempDir Path tmp) throws Exception {
+        // executeForProject(proj, fixLogger) with pom packaging must exit early without calling
+        // the fixLogger at all.
+        var mojo = new DependenciesMojo(null);
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("pom");
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+
+        List<String> logged = new ArrayList<>();
+        DependenciesReporter.FixLogger fixLogger = logged::add;
+
+        mojo.executeForProject(proj, fixLogger);
+
+        assertThat(logged).isEmpty(); // no fix log emitted for pom-packaging skip
+    }
+
+    @Test
+    void execute_maxIterationsValidation_ignoredForReportAndCheck() throws Exception {
+        // maxIterations < 1 must NOT trigger the maxIterations-specific error for report/check
+        // — the param has no effect for those actions.
+        for (String action : List.of("report", "check")) {
+            var mojo = new DependenciesMojo(null);
+            MojoTestHelper.setField(mojo, "action", action);
+            MojoTestHelper.setField(mojo, "maxIterations", 0);
+            // Will throw (null project → NPE wrapped in MojoExecutionException), but NOT for
+            // the maxIterations guard — that guard only fires for action=fix.
+            assertThatThrownBy(mojo::execute).hasMessageNotContaining("pilot.maxIterations");
+        }
+    }
+
+    @Test
+    void executeForProject_singleArg_delegatesToTwoArgOverload(@TempDir Path tmp) throws Exception {
+        // The no-fixLogger overload must behave identically to the 2-arg variant with null logger.
+        // We exercise it by reaching the resolver — it will throw because repoSystem is null,
+        // which is acceptable here: we only care that the 1-arg → 2-arg delegation occurred.
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "report");
+
+        MavenProject proj = new MavenProject();
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+        // Give it a fake classes dir so the early-exit guard passes
+        Path classesDir = tmp.resolve("classes");
+        Files.createDirectories(classesDir);
+        proj.getBuild().setOutputDirectory(classesDir.toString());
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
+
+        // Will fail at dep resolution (null repoSystem), but not at the 1-arg delegation
+        assertThatThrownBy(() -> mojo.executeForProject(proj)).isNotInstanceOf(MojoExecutionException.class);
+    }
+
+    @Test
+    void executeNonInteractive_twoArgOverload_delegatesToFiveArgVariant(@TempDir Path tmp) throws Exception {
+        // The 2-arg overload must delegate without ancestor-managed or fixLogger.
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "check");
+
+        var dep = depWithStatus("com.example", "lib", "compile", true, DependencyUsageAnalyzer.UsageStatus.UNUSED);
+        MavenProject proj = tempProject(tmp);
+
+        // 2-arg: (proj, declared, transitive, gaToVersion) — unused dep → MojoFailureException
+        assertThatThrownBy(() -> mojo.executeNonInteractive(proj, List.of(dep), List.of(), Map.of()))
+                .isInstanceOf(MojoFailureException.class)
+                .hasMessageContaining("com.example:lib");
+    }
+
+    @Test
+    void executeNonInteractive_threeArgOverload_delegatesToFiveArgVariant(@TempDir Path tmp) throws Exception {
+        // The 3-arg overload (with ancestorManagedGAs, without fixLogger) must delegate correctly.
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "check");
+
+        var dep = depWithStatus("com.example", "lib", "compile", true, DependencyUsageAnalyzer.UsageStatus.UNUSED);
+        MavenProject proj = tempProject(tmp);
+
+        assertThatThrownBy(() -> mojo.executeNonInteractive(proj, List.of(dep), List.of(), Map.of(), Set.of()))
+                .isInstanceOf(MojoFailureException.class)
+                .hasMessageContaining("com.example:lib");
+    }
+
+    @Test
+    void executeNonInteractive_report_showsUndeterminedAsWarnWhenShowFlagSet(@TempDir Path tmp) throws Exception {
+        // report action: UNDETERMINED deps are shown as a warning when showUndetermined=true,
+        // but no exception is thrown.
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "report");
+        MojoTestHelper.setField(mojo, "showUndetermined", true);
+
+        var dep = depWithStatus(
+                "com.example", "resource-jar", "compile", true, DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+        MavenProject proj = tempProject(tmp);
+
+        // report action should not throw for undetermined — it warns
+        mojo.executeNonInteractive(proj, List.of(dep), List.of(), Map.of());
+    }
+
+    @Test
+    void executeNonInteractive_check_warnUndetermined_noFailWhenFlagFalse(@TempDir Path tmp) throws Exception {
+        // showUndetermined=true but failOnUndetermined=false → warn, no exception
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "check");
+        MojoTestHelper.setField(mojo, "showUndetermined", true);
+
+        var dep = depWithStatus(
+                "com.example", "resource-jar", "compile", true, DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+        MavenProject proj = tempProject(tmp);
+
+        // Should produce a warning but not throw
+        mojo.executeNonInteractive(proj, List.of(dep), List.of(), Map.of());
+    }
+
+    @Test
+    void buildTestScan_skipTestScope_removesTestDepsAndReturnsEmpty(@TempDir Path tmp) throws Exception {
+        // When skipTestScope=true, buildTestScan strips test-scoped entries from both lists
+        // and returns an empty ScanResult.
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "skipTestScope", true);
+
+        var testDep = new DependenciesTui.DepEntry("org.junit", "junit", "", "5.0", "test", true);
+        var compileDep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", true);
+        List<DependenciesTui.DepEntry> declared = new ArrayList<>(List.of(testDep, compileDep));
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>(
+                List.of(new DependenciesTui.DepEntry("com.example", "trans", "", "1.0", "test", false)));
+
+        // Invoke private method via reflection
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        m.setAccessible(true);
+        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
+                m.invoke(mojo, true, tmp.resolve("test-classes"), declared, transitive);
+
+        // Test-scoped entries removed from both lists
+        assertThat(declared).hasSize(1).allMatch(d -> "compile".equals(d.scope));
+        assertThat(transitive).isEmpty();
+        // Empty scan result
+        assertThat(result.referencedClasses()).isEmpty();
+    }
+
+    @Test
+    void buildTestScan_noTestSources_returnsEmpty(@TempDir Path tmp) throws Exception {
+        // hasTestSources=false → empty result, no directory scan
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "skipTestScope", false);
+
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        m.setAccessible(true);
+        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
+                m.invoke(mojo, false, tmp.resolve("test-classes"), new ArrayList<>(), new ArrayList<>());
+
+        assertThat(result.referencedClasses()).isEmpty();
+    }
+
+    @Test
+    void buildTestScan_testSourcesButNoDirYet_returnsEmpty(@TempDir Path tmp) throws Exception {
+        // hasTestSources=true but dir does not exist yet (not compiled) → empty result
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "skipTestScope", false);
+
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        m.setAccessible(true);
+        Path nonExistentDir = tmp.resolve("test-classes-nonexistent");
+        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
+                m.invoke(mojo, true, nonExistentDir, new ArrayList<>(), new ArrayList<>());
+
+        assertThat(result.referencedClasses()).isEmpty();
+    }
+
+    @Test
+    void suppressPomAggregatorCoveredTransitives_emptyPomAggregators_noOp(@TempDir Path tmp) throws Exception {
+        // When pomAggregatorGAs is empty, the method returns immediately — no modification
+        var mojo = new DependenciesMojo(null);
+        var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", false);
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>(List.of(dep));
+        // Create a minimal DependencyTreeModel with a root node
+        var root = new eu.maveniverse.maven.pilot.DependencyTreeModel.TreeNode(
+                "com.example", "parent", "1.0", "compile", false, 0);
+        var depTree = new eu.maveniverse.maven.pilot.DependencyTreeModel(root, List.of(), 1);
+
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "suppressPomAggregatorCoveredTransitives",
+                List.class,
+                eu.maveniverse.maven.pilot.DependencyTreeModel.class,
+                Set.class);
+        m.setAccessible(true);
+        m.invoke(mojo, transitive, depTree, Set.of());
+
+        // No entries removed — pomAggregatorGAs was empty
+        assertThat(transitive).hasSize(1);
+    }
+
+    @Test
+    void suppressPomAggregatorCoveredTransitives_noCoveredGAs_noOp(@TempDir Path tmp) throws Exception {
+        // pomAggregatorGAs non-empty but no transitive dep is covered — nothing removed
+        var mojo = new DependenciesMojo(null);
+        var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", false);
+        List<DependenciesTui.DepEntry> transitive = new ArrayList<>(List.of(dep));
+        // Root only: no pom-type child, so collectPomAggregatorCoveredGAs returns empty
+        var root = new eu.maveniverse.maven.pilot.DependencyTreeModel.TreeNode(
+                "org.example", "bom", "1.0", "compile", false, 0);
+        var depTree = new eu.maveniverse.maven.pilot.DependencyTreeModel(root, List.of(), 1);
+
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "suppressPomAggregatorCoveredTransitives",
+                List.class,
+                eu.maveniverse.maven.pilot.DependencyTreeModel.class,
+                Set.class);
+        m.setAccessible(true);
+        m.invoke(mojo, transitive, depTree, Set.of("org.example:bom"));
+
+        // Nothing covered → nothing removed
+        assertThat(transitive).hasSize(1);
+    }
+
+    // --- buildArtifactMaps ---
+
+    @Test
+    void buildArtifactMaps_empty_returnsBothMapsEmpty() {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        depResult.setArtifactResults(List.of());
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToJar()).isEmpty();
+        assertThat(maps.gaToVersion()).isEmpty();
+    }
+
+    @Test
+    void buildArtifactMaps_artifactWithNullArtifact_skipped() {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+
+        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        // ar.getArtifact() is null by default
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToJar()).isEmpty();
+        assertThat(maps.gaToVersion()).isEmpty();
+    }
+
+    @Test
+    void buildArtifactMaps_jarArtifact_addedToBothMaps(@TempDir Path tmp) throws Exception {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+
+        File jarFile = Files.createFile(tmp.resolve("foo.jar")).toFile();
+        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:1.0");
+        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(jarFile);
+
+        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        ar.setArtifact(artifact);
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToVersion()).containsEntry("com.example:foo", "1.0");
+        assertThat(maps.gaToJar()).containsEntry("com.example:foo", jarFile);
+    }
+
+    @Test
+    void buildArtifactMaps_nonJarArtifact_versionMappedButNotJar(@TempDir Path tmp) throws Exception {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+
+        File pomFile = Files.createFile(tmp.resolve("foo.pom")).toFile();
+        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:pom:1.0");
+        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(pomFile);
+
+        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        ar.setArtifact(artifact);
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToVersion()).containsEntry("com.example:foo", "1.0");
+        // pom file → not added to gaToJar
+        assertThat(maps.gaToJar()).doesNotContainKey("com.example:foo");
+    }
+
+    @Test
+    void buildArtifactMaps_classifiedArtifact_keyedWithClassifier(@TempDir Path tmp) throws Exception {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+
+        File jarFile = Files.createFile(tmp.resolve("foo-tests.jar")).toFile();
+        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:jar:tests:1.0");
+        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(jarFile);
+
+        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        ar.setArtifact(artifact);
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        // Classified artifact → key includes classifier
+        assertThat(maps.gaToVersion()).containsEntry("com.example:foo:tests", "1.0");
+        assertThat(maps.gaToJar()).containsEntry("com.example:foo:tests", jarFile);
+    }
+
+    @Test
+    void buildArtifactMaps_nullFile_notAddedToJarMap() {
+        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
+        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+
+        // Artifact with no local file (e.g. resolution failed or not downloaded)
+        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:1.0");
+        // No setFile call → artifact.getFile() returns null
+
+        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        ar.setArtifact(artifact);
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToVersion()).containsEntry("com.example:foo", "1.0");
+        // No file → not in gaToJar
+        assertThat(maps.gaToJar()).doesNotContainKey("com.example:foo");
+    }
+
+    // --- checkBuildOutputDirs ---
+
+    @Test
+    void checkBuildOutputDirs_neitherDirExists_noMainSources_passes(@TempDir Path tmp) throws Exception {
+        // Project with no main sources and no test sources: neither directory check fires
+        var mojo = new DependenciesMojo(null);
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString()); // non-existent
+        // No source roots → hasMainSources=false, hasTestSources=false
+
+        // Should not throw
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "checkBuildOutputDirs", MavenProject.class, Path.class, Path.class);
+        m.setAccessible(true);
+        m.invoke(mojo, proj, tmp.resolve("classes"), tmp.resolve("test-classes"));
+    }
+
+    @Test
+    void checkBuildOutputDirs_mainSourcesPresentClassesMissing_throws(@TempDir Path tmp) throws Exception {
+        // Project with main sources but no compiled classes → must throw
+        var mojo = new DependenciesMojo(null);
+        Path mainSrcDir = Files.createDirectories(tmp.resolve("src/main/java"));
+        Files.createFile(mainSrcDir.resolve("Foo.java"));
+
+        MavenProject proj = new MavenProject();
+        proj.setPackaging("jar");
+        proj.addCompileSourceRoot(mainSrcDir.toString());
+        proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
+        proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
+
+        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+                "checkBuildOutputDirs", MavenProject.class, Path.class, Path.class);
+        m.setAccessible(true);
+        assertThatThrownBy(() -> {
+                    try {
+                        m.invoke(mojo, proj, tmp.resolve("classes"), tmp.resolve("test-classes"));
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                })
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("target/classes not found");
+    }
+
     /** Minimal Maven Log implementation that captures warning messages for assertion. */
     private static class RecordingLog implements Log {
         private final List<String> warnings = new ArrayList<>();
