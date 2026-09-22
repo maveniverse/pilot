@@ -150,7 +150,10 @@ public class PilotEngine {
                     : new ClassFileScanner.ScanResult(Set.of(), Map.of());
             boolean testRefsAvailable = testClassesDir != null && Files.isDirectory(testClassesDir);
             Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+            Map<String, List<String>> nativeImageClasses =
+                    NativeImageMetadataParser.collectNativeImageClasses(classesDir, classIndex);
             DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                    .reflectionLoadedClasses(nativeImageClasses)
                     .build()
                     .analyze(
                             mainScan.referencedClasses(),
@@ -248,7 +251,10 @@ public class PilotEngine {
                 : new ClassFileScanner.ScanResult(Set.of(), Map.of());
         boolean testRefsAvailable = p.testOutputDirectory != null && Files.isDirectory(p.testOutputDirectory);
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+        Map<String, List<String>> nativeImageClasses =
+                NativeImageMetadataParser.collectNativeImageClasses(p.outputDirectory, classIndex);
         DependencyUsageAnalyzer.AnalysisResult usage = DependencyUsageAnalyzer.builder()
+                .reflectionLoadedClasses(nativeImageClasses)
                 .build()
                 .analyze(
                         mainScan.referencedClasses(),

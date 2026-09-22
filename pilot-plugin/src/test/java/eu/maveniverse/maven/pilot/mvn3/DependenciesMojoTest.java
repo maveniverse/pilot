@@ -112,7 +112,7 @@ class DependenciesMojoTest {
     @Test
     void buildAnalyzerDefaults() {
         var mojo = new DependenciesMojo(null);
-        var analyzer = mojo.buildAnalyzer();
+        var analyzer = mojo.buildAnalyzer(Map.of());
         assertThat(analyzer).isNotNull();
     }
 
@@ -124,8 +124,92 @@ class DependenciesMojoTest {
         MojoTestHelper.setField(
                 mojo, "reflectionLoadedClasses", Map.of("org.postgresql:postgresql", "org.postgresql.Driver"));
 
-        var analyzer = mojo.buildAnalyzer();
+        var analyzer = mojo.buildAnalyzer(Map.of());
         assertThat(analyzer).isNotNull();
+    }
+
+    // --- collectNativeImageClasses ---
+
+    @Test
+    void collectNativeImageClasses_emptyWhenNoMetaInfDir(@TempDir Path tmp) {
+        var result = DependenciesMojo.collectNativeImageClasses(tmp, Map.of("com.example.Foo", "com.example:lib"));
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void collectNativeImageClasses_mapsClassesToGa(@TempDir Path tmp) throws Exception {
+        // Create a reflect-config.json under META-INF/native-image/
+        Path nativeDir = tmp.resolve("META-INF/native-image/com.example/lib");
+        Files.createDirectories(nativeDir);
+        Files.writeString(
+                nativeDir.resolve("reflect-config.json"),
+                "[{\"name\": \"com.example.MyClass\", \"allDeclaredConstructors\": true}]");
+
+        Map<String, String> classIndex = Map.of("com.example.MyClass", "com.example:mylib");
+        var result = DependenciesMojo.collectNativeImageClasses(tmp, classIndex);
+
+        assertThat(result).containsKey("com.example:mylib");
+        assertThat(result.get("com.example:mylib")).contains("com.example.MyClass");
+    }
+
+    @Test
+    void collectNativeImageClasses_ignoresClassesNotInClassIndex(@TempDir Path tmp) throws Exception {
+        Path nativeDir = tmp.resolve("META-INF/native-image");
+        Files.createDirectories(nativeDir);
+        // This class is from the project itself (not a dependency) — no classIndex entry
+        Files.writeString(nativeDir.resolve("reflect-config.json"), "[{\"name\": \"com.myapp.internal.MyClass\"}]");
+
+        var result = DependenciesMojo.collectNativeImageClasses(tmp, Map.of());
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void collectNativeImageClasses_mergesMultipleJsonFiles(@TempDir Path tmp) throws Exception {
+        Path nativeDir = tmp.resolve("META-INF/native-image");
+        Files.createDirectories(nativeDir);
+        Files.writeString(nativeDir.resolve("reflect-config.json"), "[{\"name\": \"com.example.ClassA\"}]");
+        Files.writeString(nativeDir.resolve("proxy-config.json"), "[{\"interfaces\": [\"com.example.InterfaceB\"]}]");
+
+        Map<String, String> classIndex = Map.of(
+                "com.example.ClassA", "com.example:lib-a",
+                "com.example.InterfaceB", "com.example:lib-b");
+
+        var result = DependenciesMojo.collectNativeImageClasses(tmp, classIndex);
+        assertThat(result).containsKey("com.example:lib-a");
+        assertThat(result).containsKey("com.example:lib-b");
+    }
+
+    @Test
+    void buildAnalyzerMergesNativeImageClassesWithExplicitConfig() throws Exception {
+        var mojo = new DependenciesMojo(null);
+        // Explicit user config: one class from dep-a
+        MojoTestHelper.setField(
+                mojo, "reflectionLoadedClasses", Map.of("com.example:dep-a", "com.example.ExplicitClass"));
+
+        // native-image discovered: another class from dep-a + one from dep-b
+        var nativeImageClasses = Map.of(
+                "com.example:dep-a", List.of("com.example.NativeClass"),
+                "com.example:dep-b", List.of("com.example.BClass"));
+
+        var analyzer = mojo.buildAnalyzer(nativeImageClasses);
+
+        // Verify the merge path through matchesReflectionLoadedClasses:
+        // dep-a has com.example.NativeClass in its index and in reflectionLoadedClasses → USED
+        var dep = new DependenciesTui.DepEntry("com.example", "dep-a", "", "1.0", "compile", true);
+        Map<String, String> classIndex = Map.of("com.example.NativeClass", "com.example:dep-a");
+        Map<String, File> gaToJar = Map.of();
+
+        var result = analyzer.analyze(
+                Set.of("com.app.Main"), // no bytecode reference to NativeClass
+                Set.of(),
+                classIndex,
+                gaToJar,
+                List.of(dep),
+                List.of(),
+                true);
+
+        // dep-a must be USED via the merged reflectionLoadedClasses (NativeClass is in both index and config)
+        assertThat(result.declaredUsage()).containsEntry("com.example:dep-a", DependencyUsageAnalyzer.UsageStatus.USED);
     }
 
     // --- buildAncestorManagedGAs ---

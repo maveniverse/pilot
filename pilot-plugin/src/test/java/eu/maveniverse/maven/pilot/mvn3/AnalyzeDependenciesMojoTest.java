@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import eu.maveniverse.maven.pilot.DependenciesTui;
 import eu.maveniverse.maven.pilot.DependencyUsageAnalyzer;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -151,7 +152,7 @@ class AnalyzeDependenciesMojoTest {
 
     @Test
     void buildAnalyzerDefaults() {
-        var analyzer = mojo.buildAnalyzer();
+        var analyzer = mojo.buildAnalyzer(Map.of());
         assertThat(analyzer).isNotNull();
     }
 
@@ -165,8 +166,41 @@ class AnalyzeDependenciesMojoTest {
                 "reflectionLoadedClasses",
                 Map.of("org.postgresql:postgresql", "org.postgresql.Driver"));
 
-        var analyzer = configuredMojo.buildAnalyzer();
+        var analyzer = configuredMojo.buildAnalyzer(Map.of());
         assertThat(analyzer).isNotNull();
+    }
+
+    @Test
+    void buildAnalyzerMergesNativeImageClassesWithExplicitConfig() throws Exception {
+        var mojo = new AnalyzeDependenciesMojo(null);
+        // Explicit user config: one class from dep-a
+        MojoTestHelper.setField(
+                mojo, "reflectionLoadedClasses", Map.of("com.example:dep-a", "com.example.ExplicitClass"));
+
+        // native-image discovered: another class from dep-a + one from dep-b
+        var nativeImageClasses = Map.of(
+                "com.example:dep-a", List.of("com.example.NativeClass"),
+                "com.example:dep-b", List.of("com.example.BClass"));
+
+        var analyzer = mojo.buildAnalyzer(nativeImageClasses);
+
+        // Verify the merge path through matchesReflectionLoadedClasses:
+        // dep-a has com.example.NativeClass in its index and in reflectionLoadedClasses → USED
+        var dep = new DependenciesTui.DepEntry("com.example", "dep-a", "", "1.0", "compile", true);
+        Map<String, String> classIndex = Map.of("com.example.NativeClass", "com.example:dep-a");
+        Map<String, File> gaToJar = Map.of();
+
+        var result = analyzer.analyze(
+                Set.of("com.app.Main"), // no bytecode reference to NativeClass
+                Set.of(),
+                classIndex,
+                gaToJar,
+                List.of(dep),
+                List.of(),
+                true);
+
+        // dep-a must be USED via the merged reflectionLoadedClasses (NativeClass is in both index and config)
+        assertThat(result.declaredUsage()).containsEntry("com.example:dep-a", DependencyUsageAnalyzer.UsageStatus.USED);
     }
 
     // --- execute validation tests ---

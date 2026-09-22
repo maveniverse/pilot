@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -340,7 +341,8 @@ public class DependenciesMojo extends AbstractMojo {
         }
 
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-        DependencyUsageAnalyzer.AnalysisResult usage = buildAnalyzer()
+        Map<String, List<String>> nativeImageClasses = collectNativeImageClasses(classesDir, classIndex);
+        DependencyUsageAnalyzer.AnalysisResult usage = buildAnalyzer(nativeImageClasses)
                 .analyze(
                         mainScan.referencedClasses(),
                         testScan.referencedClasses(),
@@ -579,7 +581,7 @@ public class DependenciesMojo extends AbstractMojo {
         }
     }
 
-    DependencyUsageAnalyzer buildAnalyzer() {
+    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageClasses) {
         DependencyUsageAnalyzer.Builder builder = DependencyUsageAnalyzer.builder();
         if (runtimeArtifacts != null && !runtimeArtifacts.isEmpty()) {
             builder.runtimeArtifacts(new HashSet<>(runtimeArtifacts));
@@ -587,14 +589,61 @@ public class DependenciesMojo extends AbstractMojo {
         if (annotationOnlyArtifacts != null && !annotationOnlyArtifacts.isEmpty()) {
             builder.annotationOnlyArtifacts(new HashSet<>(annotationOnlyArtifacts));
         }
-        if (reflectionLoadedClasses != null && !reflectionLoadedClasses.isEmpty()) {
-            Map<String, List<String>> parsed = new HashMap<>();
-            for (var entry : reflectionLoadedClasses.entrySet()) {
-                parsed.put(entry.getKey(), List.of(entry.getValue().split(",")));
-            }
-            builder.reflectionLoadedClasses(parsed);
+        Map<String, List<String>> merged = mergeReflectionClasses(reflectionLoadedClasses, nativeImageClasses);
+        if (!merged.isEmpty()) {
+            builder.reflectionLoadedClasses(merged);
         }
         return builder.build();
+    }
+
+    /**
+     * Merges explicit user-supplied {@code reflectionLoadedClasses} (CSV strings keyed by GA) with
+     * classes discovered from native-image metadata. Explicit config takes precedence per-GA: when
+     * both sources list classes for the same GA the explicit list is kept as-is and the discovered
+     * entries are appended (deduped via {@link LinkedHashSet}).
+     *
+     * @param reflectionLoadedClasses explicit user config ({@code groupId:artifactId → CSV classes});
+     *                                may be {@code null} or empty
+     * @param nativeImageClasses      classes discovered from native-image metadata JSON; must not be
+     *                                {@code null}
+     * @return merged map, possibly empty if both inputs are empty/null
+     */
+    static Map<String, List<String>> mergeReflectionClasses(
+            Map<String, String> reflectionLoadedClasses, Map<String, List<String>> nativeImageClasses) {
+        Map<String, List<String>> merged = new HashMap<>();
+        if (reflectionLoadedClasses != null && !reflectionLoadedClasses.isEmpty()) {
+            for (var entry : reflectionLoadedClasses.entrySet()) {
+                merged.put(entry.getKey(), List.of(entry.getValue().split(",")));
+            }
+        }
+        // native-image entries are merged in; explicit user config takes precedence per-GA
+        for (var entry : nativeImageClasses.entrySet()) {
+            merged.merge(entry.getKey(), entry.getValue(), (explicit, discovered) -> {
+                var combined = new LinkedHashSet<>(explicit);
+                combined.addAll(discovered);
+                return List.copyOf(combined);
+            });
+        }
+        return merged;
+    }
+
+    /**
+     * Scans {@code outputDirectory/META-INF/native-image/} for GraalVM reachability metadata JSON
+     * files and maps the discovered class names back to their providing {@code groupId:artifactId}
+     * using the supplied {@code classIndex}.
+     *
+     * <p>Class names that cannot be mapped to any known dependency (e.g. classes from the project
+     * itself) are silently ignored — they need no dependency entry in the analysis.</p>
+     *
+     * @param outputDirectory the compiled output directory (e.g. {@code target/classes})
+     * @param classIndex      map of fully-qualified class name → {@code groupId:artifactId} for
+     *                        all resolved dependency JARs (see
+     *                        {@link DependencyUsageAnalyzer#buildClassIndex})
+     * @return map of {@code groupId:artifactId} → list of class names referenced in native-image
+     *         metadata; empty if no metadata directory exists or no mappable class names are found
+     */
+    static Map<String, List<String>> collectNativeImageClasses(Path outputDirectory, Map<String, String> classIndex) {
+        return NativeImageMetadataParser.collectNativeImageClasses(outputDirectory, classIndex);
     }
 
     static Set<String> buildIgnoreSet(List<String> patterns) {

@@ -171,7 +171,9 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
 
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
 
-        DependencyUsageAnalyzer analyzer = buildAnalyzer();
+        Map<String, List<String>> nativeImageClasses =
+                DependenciesMojo.collectNativeImageClasses(classesDir, classIndex);
+        DependencyUsageAnalyzer analyzer = buildAnalyzer(nativeImageClasses);
         DependencyUsageAnalyzer.AnalysisResult usage = analyzer.analyze(
                 mainScan.referencedClasses(),
                 testScan.referencedClasses(),
@@ -254,7 +256,7 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         }
     }
 
-    DependencyUsageAnalyzer buildAnalyzer() {
+    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageClasses) {
         DependencyUsageAnalyzer.Builder builder = DependencyUsageAnalyzer.builder();
         if (runtimeArtifacts != null && !runtimeArtifacts.isEmpty()) {
             builder.runtimeArtifacts(new HashSet<>(runtimeArtifacts));
@@ -262,12 +264,10 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         if (annotationOnlyArtifacts != null && !annotationOnlyArtifacts.isEmpty()) {
             builder.annotationOnlyArtifacts(new HashSet<>(annotationOnlyArtifacts));
         }
-        if (reflectionLoadedClasses != null && !reflectionLoadedClasses.isEmpty()) {
-            Map<String, List<String>> parsed = new HashMap<>();
-            for (var entry : reflectionLoadedClasses.entrySet()) {
-                parsed.put(entry.getKey(), List.of(entry.getValue().split(",")));
-            }
-            builder.reflectionLoadedClasses(parsed);
+        Map<String, List<String>> merged =
+                DependenciesMojo.mergeReflectionClasses(reflectionLoadedClasses, nativeImageClasses);
+        if (!merged.isEmpty()) {
+            builder.reflectionLoadedClasses(merged);
         }
         return builder.build();
     }
