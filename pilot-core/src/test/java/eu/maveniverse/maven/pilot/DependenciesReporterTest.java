@@ -618,4 +618,38 @@ class DependenciesReporterTest {
         // Only the "Updated" message should be logged
         assertThat(logs).anyMatch(l -> l.startsWith("Updated "));
     }
+
+    @Test
+    void fixNoopWhenNarrowingAlreadyTestScope(@TempDir Path tempDir) throws Exception {
+        // When the dep's scope is already <test>, the alreadyTest guard must prevent
+        // logging — CountingFixLogger must not count it as a change, so the pass
+        // converges cleanly (passTotal == 0 on re-run).
+        Path pomPath = tempDir.resolve("pom.xml");
+        Files.writeString(pomPath, """
+                        <project>
+                          <dependencies>
+                            <dependency>
+                              <groupId>com.example</groupId>
+                              <artifactId>already-test</artifactId>
+                              <version>1.0</version>
+                              <scope>test</scope>
+                            </dependency>
+                          </dependencies>
+                        </project>
+                        """);
+
+        // This dep already has <scope>test</scope> — alreadyTest guard fires, no log
+        var dep = new DependenciesTui.DepEntry("com.example", "already-test", "", "1.0", "test", true);
+        List<String> logs = new ArrayList<>();
+
+        DependenciesReporter.fix(pomPath, List.of(), List.of(dep), List.of(), Map.of(), Set.of(), logs::add);
+
+        // No "Narrowed" message — scope was already test
+        assertThat(logs)
+                .noneMatch(l -> l.contains("Narrowed to test scope (used only in tests): com.example:already-test"));
+        // POM scope must remain <test>
+        assertThat(Files.readString(pomPath)).contains("<scope>test</scope>");
+        // Only the "Updated" message may be logged (pre-existing write-always behaviour)
+        assertThat(logs).noneMatch(l -> l.contains("Narrowed"));
+    }
 }
