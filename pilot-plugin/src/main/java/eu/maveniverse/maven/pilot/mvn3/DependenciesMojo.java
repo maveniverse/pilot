@@ -375,24 +375,7 @@ public class DependenciesMojo extends AbstractMojo {
         // Suppress transitive deps that are exclusively reachable via type=pom aggregator
         // declared dependencies — those are intentional "classpath importers" and flagging
         // their transitive closure as "used transitive (should be declared)" is a false positive.
-        if (!pomAggregatorGAs.isEmpty()) {
-            Set<String> pomCoveredGAs = DependenciesTui.collectPomAggregatorCoveredGAs(depTree.root, pomAggregatorGAs);
-            if (!pomCoveredGAs.isEmpty()) {
-                Set<String> suppressedGAs = new HashSet<>();
-                transitive.removeIf(dep -> {
-                    if (!pomCoveredGAs.contains(dep.ga())) {
-                        return false;
-                    }
-                    suppressedGAs.add(dep.ga());
-                    return true;
-                });
-                if (!suppressedGAs.isEmpty()) {
-                    getLog().debug(suppressedGAs.size()
-                            + " transitive dep(s) suppressed — exclusively pulled by type=pom"
-                            + " aggregator(s); suppressed GAs: " + suppressedGAs);
-                }
-            }
-        }
+        suppressPomAggregatorCoveredTransitives(transitive, depTree, pomAggregatorGAs);
 
         Map<String, File> gaToJar = new HashMap<>();
         Map<String, String> gaToVersion = new HashMap<>();
@@ -419,26 +402,8 @@ public class DependenciesMojo extends AbstractMojo {
         ClassFileScanner.ScanResult mainScan = Files.isDirectory(classesDir)
                 ? ClassFileScanner.scanDirectory(classesDir)
                 : new ClassFileScanner.ScanResult(Set.of(), Map.of());
-        boolean testClassesScanned = Files.isDirectory(testClassesDir);
-        ClassFileScanner.ScanResult testScan;
-        boolean testRefsAvailable;
-
-        if (skipTestScope) {
-            getLog().info("Skipping test-scope dependency analysis (pilot.skipTestScope=true).");
-            // Exclude test-scoped deps from both lists before analysis so they are never
-            // classified and never added/removed by the fix action.
-            declared.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
-            transitive.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
-            testScan = new ClassFileScanner.ScanResult(Set.of(), Map.of());
-            testRefsAvailable = false;
-        } else if (hasTestSources && testClassesScanned) {
-            testScan = ClassFileScanner.scanDirectory(testClassesDir);
-            testRefsAvailable = true;
-        } else {
-            // No test sources or no compiled test classes — proceed without test bytecode.
-            testScan = new ClassFileScanner.ScanResult(Set.of(), Map.of());
-            testRefsAvailable = false;
-        }
+        ClassFileScanner.ScanResult testScan = buildTestScan(hasTestSources, testClassesDir, declared, transitive);
+        boolean testRefsAvailable = !skipTestScope && hasTestSources && Files.isDirectory(testClassesDir);
 
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
         DependencyUsageAnalyzer.AnalysisResult usage = buildAnalyzer()
@@ -522,6 +487,61 @@ public class DependenciesMojo extends AbstractMojo {
                 ? Path.of(rawSrc).normalize().toString()
                 : rawSrc;
         return ownPomPath.equals(depSrc);
+    }
+
+    /**
+     * Removes from {@code transitive} any entries whose GA is exclusively covered by a
+     * {@code type=pom} aggregator dependency — those are intentional classpath importers and
+     * should not be flagged as "used transitive".
+     */
+    private void suppressPomAggregatorCoveredTransitives(
+            List<DependenciesTui.DepEntry> transitive, DependencyTreeModel depTree, Set<String> pomAggregatorGAs) {
+        if (pomAggregatorGAs.isEmpty()) {
+            return;
+        }
+        Set<String> pomCoveredGAs = DependenciesTui.collectPomAggregatorCoveredGAs(depTree.root, pomAggregatorGAs);
+        if (pomCoveredGAs.isEmpty()) {
+            return;
+        }
+        Set<String> suppressedGAs = new HashSet<>();
+        transitive.removeIf(dep -> {
+            if (!pomCoveredGAs.contains(dep.ga())) {
+                return false;
+            }
+            suppressedGAs.add(dep.ga());
+            return true;
+        });
+        if (!suppressedGAs.isEmpty()) {
+            getLog().debug(suppressedGAs.size()
+                    + " transitive dep(s) suppressed — exclusively pulled by type=pom"
+                    + " aggregator(s); suppressed GAs: " + suppressedGAs);
+        }
+    }
+
+    /**
+     * Builds the test-class scan result for the current project, applying {@code skipTestScope}
+     * filtering when configured. Mutates {@code declared} and {@code transitive} in-place when
+     * {@code skipTestScope=true} to strip test-scoped entries before analysis.
+     */
+    private ClassFileScanner.ScanResult buildTestScan(
+            boolean hasTestSources,
+            Path testClassesDir,
+            List<DependenciesTui.DepEntry> declared,
+            List<DependenciesTui.DepEntry> transitive)
+            throws IOException {
+        if (skipTestScope) {
+            getLog().info("Skipping test-scope dependency analysis (pilot.skipTestScope=true).");
+            // Exclude test-scoped deps from both lists before analysis so they are never
+            // classified and never added/removed by the fix action.
+            declared.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
+            transitive.removeIf(dep -> DependencyUsageAnalyzer.isTestScope(dep.scope));
+            return new ClassFileScanner.ScanResult(Set.of(), Map.of());
+        }
+        if (hasTestSources && Files.isDirectory(testClassesDir)) {
+            return ClassFileScanner.scanDirectory(testClassesDir);
+        }
+        // No test sources or no compiled test classes — proceed without test bytecode.
+        return new ClassFileScanner.ScanResult(Set.of(), Map.of());
     }
 
     void executeNonInteractive(

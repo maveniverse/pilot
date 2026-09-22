@@ -962,11 +962,14 @@ class DependenciesMojoTest {
                     return false;
                 }
 
-                public void debug(CharSequence c) {}
+                public void debug(CharSequence c) { // no-op
+                }
 
-                public void debug(CharSequence c, Throwable t) {}
+                public void debug(CharSequence c, Throwable t) { // no-op
+                }
 
-                public void debug(Throwable t) {}
+                public void debug(Throwable t) { // no-op
+                }
 
                 public boolean isInfoEnabled() {
                     return true;
@@ -980,7 +983,8 @@ class DependenciesMojoTest {
                     loggedMessages.add(c.toString());
                 }
 
-                public void info(Throwable t) {}
+                public void info(Throwable t) { // no-op
+                }
 
                 public boolean isWarnEnabled() {
                     return true;
@@ -994,17 +998,21 @@ class DependenciesMojoTest {
                     loggedMessages.add("[WARN] " + c);
                 }
 
-                public void warn(Throwable t) {}
+                public void warn(Throwable t) { // no-op
+                }
 
                 public boolean isErrorEnabled() {
                     return false;
                 }
 
-                public void error(CharSequence c) {}
+                public void error(CharSequence c) { // no-op
+                }
 
-                public void error(CharSequence c, Throwable t) {}
+                public void error(CharSequence c, Throwable t) { // no-op
+                }
 
-                public void error(Throwable t) {}
+                public void error(Throwable t) { // no-op
+                }
             };
         }
 
@@ -1028,10 +1036,11 @@ class DependenciesMojoTest {
 
         // 2 passes: one with changes, one to confirm convergence
         assertThat(mojo.callCount()).isEqualTo(2);
-        // Pass 1 summary logged
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 1/5") && m.contains("1 added"));
-        // Convergence logged on pass 2
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 2/5") && m.contains("converged"));
+        assertThat(mojo.loggedMessages)
+                // Pass 1 summary logged
+                .anyMatch(m -> m.contains("Pass 1/5") && m.contains("1 added"))
+                // Convergence logged on pass 2
+                .anyMatch(m -> m.contains("Pass 2/5") && m.contains("converged"));
     }
 
     @Test
@@ -1047,10 +1056,11 @@ class DependenciesMojoTest {
         mojo.executeFixWithIterations(proj);
 
         assertThat(mojo.callCount()).isEqualTo(3);
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("[WARN]") && m.contains("max-iterations"));
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 1/3") && m.contains("1 added"));
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 2/3") && m.contains("1 added"));
-        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 3/3") && m.contains("1 added"));
+        assertThat(mojo.loggedMessages)
+                .anyMatch(m -> m.contains("[WARN]") && m.contains("max-iterations"))
+                .anyMatch(m -> m.contains("Pass 1/3") && m.contains("1 added"))
+                .anyMatch(m -> m.contains("Pass 2/3") && m.contains("1 added"))
+                .anyMatch(m -> m.contains("Pass 3/3") && m.contains("1 added"));
     }
 
     @Test
