@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot.mvn3;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import eu.maveniverse.maven.pilot.DependenciesReporter;
 import eu.maveniverse.maven.pilot.DependenciesTui;
 import eu.maveniverse.maven.pilot.DependencyUsageAnalyzer;
 import java.io.File;
@@ -927,6 +928,172 @@ class DependenciesMojoTest {
         assertThatThrownBy(() -> mojo.executeNonInteractive(proj, List.of(), List.of(dep), Map.of()))
                 .isInstanceOf(MojoFailureException.class)
                 .hasMessageContaining("com.example:test-only-transitive");
+    }
+
+    // --- executeFixWithIterations / CountingFixLogger ---
+
+    /**
+     * Subclass that lets tests control what each pass "does" without needing a real Maven reactor.
+     * On the first {@code passesWithChanges} calls to {@code executeForProject(proj, fixLogger)}
+     * it simulates one transitive-add; subsequent calls do nothing (convergence).
+     */
+    private static class FakeFixMojo extends DependenciesMojo {
+        private final int passesWithChanges;
+        private int callCount = 0;
+        final List<String> loggedMessages = new ArrayList<>();
+
+        FakeFixMojo(int passesWithChanges) {
+            super(null);
+            this.passesWithChanges = passesWithChanges;
+        }
+
+        @Override
+        void executeForProject(MavenProject proj, DependenciesReporter.FixLogger fixLogger) throws Exception {
+            callCount++;
+            if (callCount <= passesWithChanges && fixLogger != null) {
+                fixLogger.log("Added used transitive dependency: com.example:level" + callCount);
+            }
+        }
+
+        @Override
+        public Log getLog() {
+            return new Log() {
+                public boolean isDebugEnabled() {
+                    return false;
+                }
+
+                public void debug(CharSequence c) {}
+
+                public void debug(CharSequence c, Throwable t) {}
+
+                public void debug(Throwable t) {}
+
+                public boolean isInfoEnabled() {
+                    return true;
+                }
+
+                public void info(CharSequence c) {
+                    loggedMessages.add(c.toString());
+                }
+
+                public void info(CharSequence c, Throwable t) {
+                    loggedMessages.add(c.toString());
+                }
+
+                public void info(Throwable t) {}
+
+                public boolean isWarnEnabled() {
+                    return true;
+                }
+
+                public void warn(CharSequence c) {
+                    loggedMessages.add("[WARN] " + c);
+                }
+
+                public void warn(CharSequence c, Throwable t) {
+                    loggedMessages.add("[WARN] " + c);
+                }
+
+                public void warn(Throwable t) {}
+
+                public boolean isErrorEnabled() {
+                    return false;
+                }
+
+                public void error(CharSequence c) {}
+
+                public void error(CharSequence c, Throwable t) {}
+
+                public void error(Throwable t) {}
+            };
+        }
+
+        int callCount() {
+            return callCount;
+        }
+    }
+
+    @Test
+    void executeFixWithIterations_convergesIn2Passes(@TempDir Path tmp) throws Exception {
+        // Simulate: pass 1 adds a 2nd-level transitive dep; pass 2 is clean.
+        // This is the real-world scenario: adding dep A exposes dep B (A's transitive),
+        // which is added in pass 2; pass 3 finds nothing.
+        FakeFixMojo mojo = new FakeFixMojo(1); // only pass 1 produces changes
+        mojo.maxIterations = 5;
+
+        MavenProject proj = new MavenProject();
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+
+        mojo.executeFixWithIterations(proj);
+
+        // 2 passes: one with changes, one to confirm convergence
+        assertThat(mojo.callCount()).isEqualTo(2);
+        // Pass 1 summary logged
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 1/5") && m.contains("1 added"));
+        // Convergence logged on pass 2
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 2/5") && m.contains("converged"));
+    }
+
+    @Test
+    void executeFixWithIterations_stopsAtMaxIterations(@TempDir Path tmp) throws Exception {
+        // Pathological case: every pass still finds changes.
+        // Loop must stop at maxIterations and warn.
+        FakeFixMojo mojo = new FakeFixMojo(Integer.MAX_VALUE); // always produces changes
+        mojo.maxIterations = 3;
+
+        MavenProject proj = new MavenProject();
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+
+        mojo.executeFixWithIterations(proj);
+
+        assertThat(mojo.callCount()).isEqualTo(3);
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("[WARN]") && m.contains("max-iterations"));
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 1/3") && m.contains("1 added"));
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 2/3") && m.contains("1 added"));
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("Pass 3/3") && m.contains("1 added"));
+    }
+
+    @Test
+    void executeFixWithIterations_singlePassClean(@TempDir Path tmp) throws Exception {
+        // First pass finds nothing → "No dependency issues found." and stop.
+        FakeFixMojo mojo = new FakeFixMojo(0);
+        mojo.maxIterations = 5;
+
+        MavenProject proj = new MavenProject();
+        proj.setFile(Files.createTempFile(tmp, "pom", ".xml").toFile());
+
+        mojo.executeFixWithIterations(proj);
+
+        assertThat(mojo.callCount()).isEqualTo(1);
+        assertThat(mojo.loggedMessages).anyMatch(m -> m.contains("No dependency issues found"));
+    }
+
+    @Test
+    void countingFixLogger_countsCorrectly() {
+        List<String> logged = new ArrayList<>();
+        DependenciesMojo.CountingFixLogger logger = new DependenciesMojo.CountingFixLogger(logged::add);
+
+        logger.log("Added used transitive dependency: com.example:foo");
+        logger.log("Added used transitive dependency (version managed by ancestor): com.example:bar");
+        logger.log("Removed unused dependency: com.old:artifact");
+        logger.log("Narrowed to test scope (used only in tests): com.test:lib");
+        logger.log("Updated /some/path/pom.xml");
+
+        assertThat(logger.added).isEqualTo(2);
+        assertThat(logger.removed).isEqualTo(1);
+        assertThat(logger.narrowed).isEqualTo(1);
+        assertThat(logged).hasSize(5);
+    }
+
+    @Test
+    void execute_rejectsZeroMaxIterations() throws Exception {
+        var mojo = new DependenciesMojo(null);
+        MojoTestHelper.setField(mojo, "action", "fix");
+        MojoTestHelper.setField(mojo, "maxIterations", 0);
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("pilot.maxIterations must be >= 1");
     }
 
     /** Minimal Maven Log implementation that captures warning messages for assertion. */
