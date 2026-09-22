@@ -143,12 +143,13 @@ public class DependenciesMojo extends AbstractMojo {
     private List<String> annotationOnlyArtifacts;
 
     /**
-     * Map of artifact {@code groupId:artifactId} to comma-separated class names that are
-     * loaded reflectively at runtime. Maven cannot bind a {@code Map<String,String>} field
-     * from a {@code -D} system property; use POM {@code <configuration>} instead.
+     * Map of artifact {@code groupId:artifactId} to comma-separated class names that are used
+     * but invisible to bytecode analysis (loaded via reflection, native-image metadata, etc.).
+     * Maven cannot bind a {@code Map<String,String>} field from a {@code -D} system property;
+     * use POM {@code <configuration>} instead.
      */
-    @Parameter(property = "pilot.reflectionLoadedClasses")
-    private Map<String, String> reflectionLoadedClasses;
+    @Parameter(property = "pilot.extraUsedClasses")
+    private Map<String, String> extraUsedClasses;
 
     @Parameter(property = "pilot.ignoredUnusedDeclared")
     private List<String> ignoredUnusedDeclared;
@@ -438,8 +439,8 @@ public class DependenciesMojo extends AbstractMojo {
         boolean testRefsAvailable = !skipTestScope && hasTestSources && Files.isDirectory(testClassesDir);
 
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
-        Map<String, List<String>> nativeImageClasses = collectNativeImageClasses(classesDir, classIndex);
-        DependencyUsageAnalyzer.AnalysisResult usage = buildAnalyzer(nativeImageClasses)
+        Map<String, List<String>> nativeImageExtraClasses = collectNativeImageClasses(classesDir, classIndex);
+        DependencyUsageAnalyzer.AnalysisResult usage = buildAnalyzer(nativeImageExtraClasses)
                 .analyze(
                         mainScan.referencedClasses(),
                         testScan.referencedClasses(),
@@ -744,7 +745,7 @@ public class DependenciesMojo extends AbstractMojo {
         }
     }
 
-    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageClasses) {
+    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageExtraClasses) {
         DependencyUsageAnalyzer.Builder builder = DependencyUsageAnalyzer.builder();
         if (runtimeArtifacts != null && !runtimeArtifacts.isEmpty()) {
             builder.runtimeArtifacts(new HashSet<>(runtimeArtifacts));
@@ -752,35 +753,35 @@ public class DependenciesMojo extends AbstractMojo {
         if (annotationOnlyArtifacts != null && !annotationOnlyArtifacts.isEmpty()) {
             builder.annotationOnlyArtifacts(new HashSet<>(annotationOnlyArtifacts));
         }
-        Map<String, List<String>> merged = mergeReflectionClasses(reflectionLoadedClasses, nativeImageClasses);
+        Map<String, List<String>> merged = mergeExtraUsedClasses(extraUsedClasses, nativeImageExtraClasses);
         if (!merged.isEmpty()) {
-            builder.reflectionLoadedClasses(merged);
+            builder.extraUsedClasses(merged);
         }
         return builder.build();
     }
 
     /**
-     * Merges explicit user-supplied {@code reflectionLoadedClasses} (CSV strings keyed by GA) with
+     * Merges explicit user-supplied {@code extraUsedClasses} (CSV strings keyed by GA) with
      * classes discovered from native-image metadata. Explicit config takes precedence per-GA: when
      * both sources list classes for the same GA the explicit list is kept as-is and the discovered
      * entries are appended (deduped via {@link LinkedHashSet}).
      *
-     * @param reflectionLoadedClasses explicit user config ({@code groupId:artifactId → CSV classes});
+     * @param extraUsedClasses        explicit user config ({@code groupId:artifactId → CSV classes});
      *                                may be {@code null} or empty
-     * @param nativeImageClasses      classes discovered from native-image metadata JSON; must not be
+     * @param nativeImageExtraClasses classes discovered from native-image metadata JSON; must not be
      *                                {@code null}
      * @return merged map, possibly empty if both inputs are empty/null
      */
-    static Map<String, List<String>> mergeReflectionClasses(
-            Map<String, String> reflectionLoadedClasses, Map<String, List<String>> nativeImageClasses) {
+    static Map<String, List<String>> mergeExtraUsedClasses(
+            Map<String, String> extraUsedClasses, Map<String, List<String>> nativeImageExtraClasses) {
         Map<String, List<String>> merged = new HashMap<>();
-        if (reflectionLoadedClasses != null && !reflectionLoadedClasses.isEmpty()) {
-            for (var entry : reflectionLoadedClasses.entrySet()) {
+        if (extraUsedClasses != null && !extraUsedClasses.isEmpty()) {
+            for (var entry : extraUsedClasses.entrySet()) {
                 merged.put(entry.getKey(), List.of(entry.getValue().split(",")));
             }
         }
         // native-image entries are merged in; explicit user config takes precedence per-GA
-        for (var entry : nativeImageClasses.entrySet()) {
+        for (var entry : nativeImageExtraClasses.entrySet()) {
             merged.merge(entry.getKey(), entry.getValue(), (explicit, discovered) -> {
                 var combined = new LinkedHashSet<>(explicit);
                 combined.addAll(discovered);

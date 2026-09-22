@@ -40,7 +40,8 @@ import java.util.jar.JarFile;
  * <ul>
  * <li><b>runtimeArtifacts</b> — artifacts needed only at runtime (JDBC drivers, SLF4J backends)</li>
  * <li><b>annotationOnlyArtifacts</b> — artifacts providing source/class-retention annotations</li>
- * <li><b>reflectionLoadedClasses</b> — classes loaded via reflection, verified against the JAR</li>
+ * <li><b>extraUsedClasses</b> — classes invisible to bytecode analysis (reflection, native-image
+ *     metadata), verified against the JAR's class index</li>
  * </ul>
  * <p>
  * Use {@link #builder()} to configure allowlists:
@@ -50,23 +51,27 @@ import java.util.jar.JarFile;
  * DependencyUsageAnalyzer analyzer = DependencyUsageAnalyzer.builder()
  *         .runtimeArtifacts(Set.of("org.postgresql:postgresql"))
  *         .annotationOnlyArtifacts(Set.of("org.projectlombok:lombok"))
- *         .reflectionLoadedClasses(Map.of("org.postgresql:postgresql", List.of("org.postgresql.Driver"))).build();
+ *         .extraUsedClasses(Map.of("org.postgresql:postgresql", List.of("org.postgresql.Driver"))).build();
  * }</pre>
  */
 public final class DependencyUsageAnalyzer {
 
-    private static final String META_INF_SERVICES = "META-INF/services/";
-    private static final String META_INF_SISU = "META-INF/sisu/";
-    private static final String META_INF_MAVEN_DI = "META-INF/maven/";
-    private static final String META_INF_CAMEL_SERVICES = "META-INF/services/org/apache/camel/";
     /**
-     * Sentinel class name added to {@code discoveryClasses} when a JAR registers itself as a
-     * Camel SPI provider. It is never present in consumer bytecode, so
-     * {@link #classifyByRuntimeDiscovery} will fall through to {@code UNDETERMINED} rather than
-     * {@code USED} — which is the correct result: Camel's {@code FactoryFinder} / {@code PluginHelper}
-     * discovers these providers at runtime without any direct class reference in the consumer.
+     * Ordered list of runtime-discovery conventions used by {@link #scanDiscoveryMetadata}.
+     *
+     * <p>Order matters: {@link DiscoveryConvention.CamelConvention} must precede
+     * {@link DiscoveryConvention.ServiceLoaderConvention} because Camel paths ({@code
+     * META-INF/services/org/apache/camel/…}) are a sub-path of {@code META-INF/services/}.</p>
      */
-    private static final String CAMEL_SPI_SENTINEL = "org.apache.camel.spi.CamelSpiProvider";
+    private static final List<DiscoveryConvention> CONVENTIONS = List.of(
+            new DiscoveryConvention.SisuConvention(),
+            new DiscoveryConvention.MavenDiConvention(),
+            new DiscoveryConvention.CamelConvention(), // before ServiceLoader — overlapping prefix
+            new DiscoveryConvention.SpringBootConvention(),
+            new DiscoveryConvention.QuarkusConvention(),
+            new DiscoveryConvention.GraalVmConvention(),
+            new DiscoveryConvention.ServiceLoaderConvention() // catch-all, must be last
+            );
 
     private static final Set<String> TEST_SCOPES = Set.of("test", "test-only", "test-runtime");
 
@@ -140,15 +145,15 @@ public final class DependencyUsageAnalyzer {
 
     private final Set<String> runtimeArtifacts;
     private final Set<String> annotationOnlyArtifacts;
-    private final Map<String, List<String>> reflectionLoadedClasses;
+    private final Map<String, List<String>> extraUsedClasses;
     private final Map<String, Boolean> inlineableConstantsCache = new HashMap<>();
 
     private DependencyUsageAnalyzer(Builder builder) {
         this.runtimeArtifacts = Set.copyOf(builder.runtimeArtifacts);
         this.annotationOnlyArtifacts = Set.copyOf(builder.annotationOnlyArtifacts);
         HashMap<String, List<String>> copy = new HashMap<>();
-        builder.reflectionLoadedClasses.forEach((k, v) -> copy.put(k, List.copyOf(v)));
-        this.reflectionLoadedClasses = Collections.unmodifiableMap(copy);
+        builder.extraUsedClasses.forEach((k, v) -> copy.put(k, List.copyOf(v)));
+        this.extraUsedClasses = Collections.unmodifiableMap(copy);
     }
 
     public static Builder builder() {
@@ -278,7 +283,7 @@ public final class DependencyUsageAnalyzer {
         // test scope — to avoid removing it from the production runtime classpath.
         if (matchesArtifactPattern(dep.ga(), annotationOnlyArtifacts)
                 || matchesArtifactPattern(dep.ga(), runtimeArtifacts)
-                || matchesReflectionLoadedClasses(dep.ga(), depClasses)) {
+                || matchesExtraUsedClasses(dep.ga(), depClasses)) {
             return UsageStatus.USED;
         }
 
@@ -379,7 +384,7 @@ public final class DependencyUsageAnalyzer {
         // the wiring interface. DI containers (Sisu/Guice, Maven DI) resolve implementations
         // by scanning the index at runtime — there is no bytecode reference in the consumer.
         // We cannot determine from bytecode alone whether the dep is actually needed.
-        if (info.hasMavenDiOrSisu()) {
+        if (info.impliesUndetermined()) {
             return UsageStatus.UNDETERMINED;
         }
         // The dep has ServiceLoader registration metadata (META-INF/services/<X>) but the consumer
@@ -396,120 +401,77 @@ public final class DependencyUsageAnalyzer {
      * Result of a single JAR scan for runtime-discovery metadata.
      *
      * @param discoveryClasses
-     *            class names used as service/DI wiring keys
-     * @param hasMavenDiOrSisu
-     *            {@code true} if the JAR has a Maven DI or Sisu index
+     *            class names used as service/DI wiring keys; populated from matched convention entry names and (for
+     *            content-parsing conventions) file content
+     * @param impliesUndetermined
+     *            {@code true} if at least one matched convention declares {@link DiscoveryConvention#impliesUndetermined()};
+     *            means the dep cannot be classified {@code UNUSED} even without a direct consumer bytecode reference
      */
-    record DiscoveryInfo(Set<String> discoveryClasses, boolean hasMavenDiOrSisu) {
+    record DiscoveryInfo(Set<String> discoveryClasses, boolean impliesUndetermined) {
         boolean hasAnyDiscoveryMetadata() {
-            return !discoveryClasses.isEmpty();
+            return !discoveryClasses.isEmpty() || impliesUndetermined;
         }
     }
 
     /**
-     * Returns {@code true} if the JAR contains a Maven DI index ({@code META-INF/maven/<annotation-fqn>}) or a Sisu
-     * index ({@code META-INF/sisu/<annotation-fqn>}).
+     * Returns {@code true} if the JAR contains any runtime-discovery registration that would
+     * cause it to be classified {@link UsageStatus#UNDETERMINED} rather than {@link UsageStatus#UNUSED}.
      * <p>
-     * These index files are written at build time by the Sisu Maven plugin and the Maven DI compiler plugin. At runtime
-     * the DI container reads them to discover injectable components without any direct bytecode reference in the
-     * consuming module.
+     * This covers all conventions whose {@link DiscoveryConvention#impliesUndetermined()} flag
+     * returns {@code true}: Maven DI, Sisu, Camel, Spring Boot, Quarkus, and GraalVM native-image
+     * metadata. A JAR matching any of these conventions registers runtime-wired components whose
+     * usage cannot be verified through bytecode analysis alone.
      * </p>
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
-    static boolean hasMavenDiOrSisuRegistration(File jarFile) {
-        return scanDiscoveryMetadata(jarFile).hasMavenDiOrSisu();
+    static boolean hasImpliesUndeterminedRegistration(File jarFile) {
+        return scanDiscoveryMetadata(jarFile).impliesUndetermined();
     }
 
     /**
-     * Scan a JAR for all runtime-discovery metadata in a single pass.
+     * Scan a JAR for all runtime-discovery metadata in a single pass, delegating to the ordered
+     * list of {@link DiscoveryConvention} strategies.
+     *
+     * <p>For each JAR entry the list is walked in order; the first convention that returns a
+     * non-empty key set from {@link DiscoveryConvention#matchEntry} wins and its {@link
+     * DiscoveryConvention#impliesUndetermined()} flag is ORed into the aggregate result. If the
+     * winning convention also declares {@link DiscoveryConvention#needsContent}, the entry body is
+     * read and the additional keys from {@link DiscoveryConvention#matchContent} are merged in.</p>
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
     private static DiscoveryInfo scanDiscoveryMetadata(File jarFile) {
         Set<String> classes = new HashSet<>();
-        boolean hasMavenDiOrSisu = false;
+        boolean impliesUndetermined = false;
         try (JarFile jar = new JarFile(jarFile)) {
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
-                String name = entries.nextElement().getName();
-                if (isSisuEntry(name)) {
-                    classes.add(name.substring(META_INF_SISU.length()));
-                    hasMavenDiOrSisu = true;
-                } else if (isMavenDiEntry(name)) {
-                    classes.add(name.substring(META_INF_MAVEN_DI.length()));
-                    hasMavenDiOrSisu = true;
-                } else if (isCamelSpiEntry(name)) {
-                    classes.add(CAMEL_SPI_SENTINEL);
-                } else {
-                    addIfServiceEntry(name, META_INF_SERVICES, classes);
+                JarEntry entry = entries.nextElement();
+                String name = entry.getName();
+                for (DiscoveryConvention conv : CONVENTIONS) {
+                    Set<String> keys = conv.matchEntry(name);
+                    if (!keys.isEmpty()) {
+                        classes.addAll(keys);
+                        if (conv.impliesUndetermined()) {
+                            impliesUndetermined = true;
+                        }
+                        if (conv.needsContent(name)) {
+                            classes.addAll(conv.matchContent(jar, entry));
+                        }
+                        break; // first match wins
+                    }
                 }
-            }
-            // Spring component index: META-INF/spring.components
-            if (jar.getEntry("META-INF/spring.components") != null) {
-                classes.add("org.springframework.stereotype.Component");
-            }
-            // Spring Boot auto-configuration
-            if (jar.getEntry("META-INF/spring.factories") != null
-                    || jar.getEntry("META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
-                            != null) {
-                classes.add("org.springframework.boot.autoconfigure.EnableAutoConfiguration");
             }
         } catch (IOException ignored) {
             // skip unreadable JARs
         }
-        return new DiscoveryInfo(Set.copyOf(classes), hasMavenDiOrSisu);
+        return new DiscoveryInfo(Set.copyOf(classes), impliesUndetermined);
     }
 
-    /**
-     * Returns {@code true} for a {@code META-INF/maven/<fqn>} entry where {@code <fqn>} is a flat class name (no
-     * further slashes), distinguishing DI index files from the standard Maven POM metadata
-     * ({@code META-INF/maven/<groupId>/<artifactId>/...}).
-     */
-    private static boolean isMavenDiEntry(String name) {
-        if (!name.startsWith(META_INF_MAVEN_DI) || name.equals(META_INF_MAVEN_DI)) {
-            return false;
-        }
-        String remainder = name.substring(META_INF_MAVEN_DI.length());
-        // DI index: flat file (no sub-path), e.g. "org.apache.maven.api.di.Inject"
-        // POM metadata: "org.apache.maven/maven-jline/pom.xml" (contains '/')
-        return !remainder.contains("/") && !remainder.isEmpty();
-    }
-
-    /**
-     * Returns {@code true} for a {@code META-INF/sisu/<annotation-fqn>} entry (flat file, no sub-path), e.g.
-     * {@code META-INF/sisu/javax.inject.Named}.
-     */
-    private static boolean isSisuEntry(String name) {
-        if (!name.startsWith(META_INF_SISU) || name.equals(META_INF_SISU)) {
-            return false;
-        }
-        String remainder = name.substring(META_INF_SISU.length());
-        return !remainder.contains("/") && !remainder.isEmpty();
-    }
-
-    /**
-     * Returns {@code true} for a Camel SPI registration entry under
-     * {@code META-INF/services/org/apache/camel/}.
-     *
-     * <p>Apache Camel registers components, languages, data formats and other extension points
-     * via files under this path (e.g. {@code META-INF/services/org/apache/camel/component/timer},
-     * {@code META-INF/services/org/apache/camel/language.properties},
-     * {@code META-INF/services/org/apache/camel/modelyaml-dumper}).
-     * These are resolved at runtime by Camel's {@code FactoryFinder} / {@code PluginHelper}
-     * without any direct class reference in the consuming module.</p>
-     *
-     * <p>Directory entries (trailing {@code /}) are excluded.</p>
-     */
-    private static boolean isCamelSpiEntry(String name) {
-        return name.startsWith(META_INF_CAMEL_SERVICES)
-                && !name.endsWith("/")
-                && name.length() > META_INF_CAMEL_SERVICES.length();
-    }
-
-    private boolean matchesReflectionLoadedClasses(String ga, Set<String> depClasses) {
+    private boolean matchesExtraUsedClasses(String ga, Set<String> depClasses) {
         if (depClasses == null) {
             return false;
         }
-        List<String> expectedClasses = reflectionLoadedClasses.get(ga);
+        List<String> expectedClasses = extraUsedClasses.get(ga);
         if (expectedClasses == null) {
             return false;
         }
@@ -565,34 +527,29 @@ public final class DependencyUsageAnalyzer {
     /**
      * Extract class names used for runtime discovery from a JAR.
      * <p>
-     * Covers four conventions:
+     * Covers all conventions registered in {@link #CONVENTIONS}:
      * </p>
      * <ul>
      * <li><b>ServiceLoader</b>: {@code META-INF/services/<interface>}</li>
      * <li><b>Sisu/JSR-330</b>: {@code META-INF/sisu/<annotation>}</li>
-     * <li><b>Maven DI</b>: {@code META-INF/maven/<annotation>} (flat file, not the POM metadata at
-     * {@code META-INF/maven/<groupId>/<artifactId>/...})</li>
-     * <li><b>Spring</b>: {@code META-INF/spring.components} and {@code META-INF/spring.factories} — reads the
-     * keys/values to extract referenced class names</li>
+     * <li><b>Maven DI</b>: {@code META-INF/maven/<annotation>} (flat file, not POM metadata)</li>
+     * <li><b>Apache Camel</b>: {@code META-INF/services/org/apache/camel/…} and {@code META-INF/camel/…}</li>
+     * <li><b>Spring Boot</b>: {@code META-INF/spring.components}, {@code META-INF/spring.factories} (interface keys
+     * parsed from content), {@code META-INF/spring/…AutoConfiguration.imports}</li>
+     * <li><b>Quarkus</b>: {@code META-INF/quarkus-extension.properties}</li>
+     * <li><b>GraalVM Native Image</b>: {@code META-INF/native-image/…/reflect-config.json},
+     * {@code jni-config.json}, {@code resource-config.json}, {@code proxy-config.json},
+     * {@code serialization-config.json}, {@code reachability-metadata.json}</li>
      * </ul>
      */
     public static Set<String> getRuntimeDiscoveryClasses(File jarFile) {
         return scanDiscoveryMetadata(jarFile).discoveryClasses();
     }
 
-    private static void addIfServiceEntry(String name, String prefix, Set<String> classes) {
-        if (name.startsWith(prefix) && !name.equals(prefix)) {
-            String entry = name.substring(prefix.length());
-            if (!entry.contains("/") && !entry.isEmpty()) {
-                classes.add(entry);
-            }
-        }
-    }
-
     public static final class Builder {
         private Set<String> runtimeArtifacts = Set.of();
         private Set<String> annotationOnlyArtifacts = Set.of();
-        private Map<String, List<String>> reflectionLoadedClasses = Map.of();
+        private Map<String, List<String>> extraUsedClasses = Map.of();
 
         private Builder() {}
 
@@ -615,13 +572,15 @@ public final class DependencyUsageAnalyzer {
         }
 
         /**
-         * Classes known to be loaded via reflection, mapped by their providing artifact. Keys must be exact
-         * {@code groupId:artifactId} coordinates; wildcard patterns like {@code groupId:*} are not supported. During
-         * classification the artifact's class index is checked to verify the class is actually present, so the
+         * Classes known to be used but invisible to bytecode analysis — loaded via reflection,
+         * referenced from native-image metadata, or otherwise accessed without a direct import.
+         * Mapped by providing artifact; keys must be exact {@code groupId:artifactId} coordinates
+         * (wildcard patterns like {@code groupId:*} are not supported). During classification the
+         * artifact's class index is checked to verify the class is actually present, so the
          * allowlist stays valid even if a class moves.
          */
-        public Builder reflectionLoadedClasses(Map<String, List<String>> classes) {
-            this.reflectionLoadedClasses = classes;
+        public Builder extraUsedClasses(Map<String, List<String>> classes) {
+            this.extraUsedClasses = classes;
             return this;
         }
 

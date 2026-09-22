@@ -147,8 +147,29 @@ public final class NativeImageMetadataParser {
      */
     static void extractClassNames(Path jsonFile, Set<String> result) throws IOException {
         String fileName = jsonFile.getFileName().toString().toLowerCase();
-        try (InputStream is = Files.newInputStream(jsonFile);
-                JsonReader reader = Json.createReader(is)) {
+        try (InputStream is = Files.newInputStream(jsonFile)) {
+            extractClassNames(fileName, is, result);
+        }
+    }
+
+    /**
+     * Parses a JSON entry (from a JAR or filesystem) and adds discovered class names to
+     * {@code result}. Dispatches to the appropriate parser based on the file name.
+     *
+     * @param entryName the file name (or last path segment), used to choose the parser; compared
+     *                  case-insensitively
+     * @param is        open input stream for the JSON content; closed by this method via
+     *                  the internal {@link JsonReader} wrapper
+     * @param result    accumulator for discovered class names
+     * @throws IOException if reading the stream fails
+     */
+    static void extractClassNames(String entryName, InputStream is, Set<String> result) throws IOException {
+        String fileName = entryName.toLowerCase();
+        int slash = fileName.lastIndexOf('/');
+        if (slash >= 0) {
+            fileName = fileName.substring(slash + 1);
+        }
+        try (JsonReader reader = Json.createReader(is)) {
             if (fileName.equals("reflect-config.json") || fileName.equals("jni-config.json")) {
                 parseReflectConfig(reader.readArray(), result);
             } else if (fileName.equals("resource-config.json")) {

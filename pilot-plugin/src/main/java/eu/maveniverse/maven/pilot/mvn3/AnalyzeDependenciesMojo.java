@@ -78,12 +78,13 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
     private List<String> annotationOnlyArtifacts;
 
     /**
-     * Map of artifact {@code groupId:artifactId} to comma-separated class names that are
-     * loaded reflectively at runtime. Maven cannot bind a {@code Map<String,String>} field
-     * from a {@code -D} system property; use POM {@code <configuration>} instead.
+     * Map of artifact {@code groupId:artifactId} to comma-separated class names that are used
+     * but invisible to bytecode analysis (loaded via reflection, native-image metadata, etc.).
+     * Maven cannot bind a {@code Map<String,String>} field from a {@code -D} system property;
+     * use POM {@code <configuration>} instead.
      */
-    @Parameter(property = "pilot.reflectionLoadedClasses")
-    private Map<String, String> reflectionLoadedClasses;
+    @Parameter(property = "pilot.extraUsedClasses")
+    private Map<String, String> extraUsedClasses;
 
     @Parameter(property = "pilot.ignoredUnusedDeclared")
     private List<String> ignoredUnusedDeclared;
@@ -171,9 +172,9 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
 
         Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
 
-        Map<String, List<String>> nativeImageClasses =
+        Map<String, List<String>> nativeImageExtraClasses =
                 DependenciesMojo.collectNativeImageClasses(classesDir, classIndex);
-        DependencyUsageAnalyzer analyzer = buildAnalyzer(nativeImageClasses);
+        DependencyUsageAnalyzer analyzer = buildAnalyzer(nativeImageExtraClasses);
         DependencyUsageAnalyzer.AnalysisResult usage = analyzer.analyze(
                 mainScan.referencedClasses(),
                 testScan.referencedClasses(),
@@ -256,7 +257,7 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
         }
     }
 
-    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageClasses) {
+    DependencyUsageAnalyzer buildAnalyzer(Map<String, List<String>> nativeImageExtraClasses) {
         DependencyUsageAnalyzer.Builder builder = DependencyUsageAnalyzer.builder();
         if (runtimeArtifacts != null && !runtimeArtifacts.isEmpty()) {
             builder.runtimeArtifacts(new HashSet<>(runtimeArtifacts));
@@ -265,9 +266,9 @@ public class AnalyzeDependenciesMojo extends AbstractMojo {
             builder.annotationOnlyArtifacts(new HashSet<>(annotationOnlyArtifacts));
         }
         Map<String, List<String>> merged =
-                DependenciesMojo.mergeReflectionClasses(reflectionLoadedClasses, nativeImageClasses);
+                DependenciesMojo.mergeExtraUsedClasses(extraUsedClasses, nativeImageExtraClasses);
         if (!merged.isEmpty()) {
-            builder.reflectionLoadedClasses(merged);
+            builder.extraUsedClasses(merged);
         }
         return builder.build();
     }

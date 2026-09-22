@@ -160,7 +160,7 @@ mvn compile pilot:dependencies -Dpilot.action=check
 mvn compile pilot:dependencies -Dpilot.action=fix
 ```
 
-Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `reflectionLoadedClasses`) for false positives from bytecode analysis, and ignore lists (`ignoredUnusedDeclared`, `ignoredUsedTransitive`) for suppressing known findings. All pattern sets support `groupId:artifactId` exact match and `groupId:*` wildcards.
+Supports allowlists (`runtimeArtifacts`, `annotationOnlyArtifacts`, `extraUsedClasses`) for false positives from bytecode analysis, and ignore lists (`ignoredUnusedDeclared`, `ignoredUsedTransitive`) for suppressing known findings. All pattern sets support `groupId:artifactId` exact match and `groupId:*` wildcards.
 
 ```xml
 <plugin>
