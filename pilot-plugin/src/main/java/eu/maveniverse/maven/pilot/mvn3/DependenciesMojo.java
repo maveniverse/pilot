@@ -72,6 +72,12 @@ import org.eclipse.aether.resolution.DependencyResult;
  * whose status is already confidently known (USED or UNUSED) as the opposite is treated as an
  * error — it means the annotation is stale.</p>
  *
+ * <p>When {@code action=fix}, the mojo iterates until no more changes are found or
+ * {@code pilot.maxIterations} is reached. This is necessary because adding a previously
+ * transitive dependency may expose further transitive dependencies in the next pass.
+ * A clear per-pass summary is logged for auditability. Use {@code -Dpilot.maxIterations=1}
+ * to restore single-pass behaviour.</p>
+ *
  * <p>Usage:</p>
  * <pre>
  * mvn package pilot:dependencies                                            # full analysis (recommended)
@@ -79,6 +85,7 @@ import org.eclipse.aether.resolution.DependencyResult;
  * mvn package pilot:dependencies -Dpilot.action=check
  * mvn package pilot:dependencies -Dpilot.action=check -Dpilot.failOnUndetermined=true
  * mvn package pilot:dependencies -Dpilot.action=fix
+ * mvn package pilot:dependencies -Dpilot.action=fix -Dpilot.maxIterations=1  # single pass
  * mvn compile pilot:dependencies -Dpilot.skipTestScope=true                # skip test-scope analysis
  * </pre>
  *
@@ -95,6 +102,25 @@ public class DependenciesMojo extends AbstractMojo {
 
     @Parameter(property = "pilot.action", defaultValue = "report")
     String action = "report";
+
+    /**
+     * Maximum number of fix iterations when {@code action=fix}.
+     *
+     * <p>Each pass of the fix action re-analyses the updated POM and applies further changes.
+     * Multiple passes are sometimes needed because adding a previously transitive dependency
+     * can expose additional transitive dependencies in the next pass.</p>
+     *
+     * <p>The mojo stops early when a pass produces zero changes (converged), so the actual
+     * number of passes is typically much lower than the maximum. A per-pass summary is always
+     * logged so the audit trail is clear regardless of how many passes ran.</p>
+     *
+     * <p>Set to {@code 1} to restore the original single-pass behaviour.
+     * Has no effect when {@code action} is {@code report} or {@code check}.</p>
+     *
+     * @since 0.5.0
+     */
+    @Parameter(property = "pilot.maxIterations", defaultValue = "5")
+    int maxIterations = 5;
 
     /**
      * When {@code true}, test-scoped dependencies are excluded from analysis entirely.
@@ -200,8 +226,15 @@ public class DependenciesMojo extends AbstractMojo {
         if (!"report".equals(action) && !"check".equals(action) && !"fix".equals(action)) {
             throw new MojoExecutionException("Invalid action '" + action + "'. Use 'report', 'check', or 'fix'.");
         }
+        if (maxIterations < 1) {
+            throw new MojoExecutionException("pilot.maxIterations must be >= 1, got: " + maxIterations);
+        }
         try {
-            executeForProject(project);
+            if ("fix".equals(action)) {
+                executeFixWithIterations(project);
+            } else {
+                executeForProject(project);
+            }
         } catch (MojoFailureException e) {
             throw e;
         } catch (Exception e) {
@@ -209,7 +242,69 @@ public class DependenciesMojo extends AbstractMojo {
         }
     }
 
+    /**
+     * Runs the fix action in a convergence loop, up to {@code maxIterations} passes.
+     * Stops early when a pass makes no changes (the POM has converged).
+     * Logs a clear per-pass summary for auditability.
+     */
+    void executeFixWithIterations(MavenProject proj) throws Exception {
+        int totalAdded = 0;
+        int totalRemoved = 0;
+        int totalNarrowed = 0;
+        for (int pass = 1; pass <= maxIterations; pass++) {
+            boolean isLastAllowed = pass == maxIterations;
+
+            CountingFixLogger passLogger = new CountingFixLogger(getLog()::info);
+            executeForProject(proj, passLogger);
+
+            int passAdded = passLogger.added;
+            int passRemoved = passLogger.removed;
+            int passNarrowed = passLogger.narrowed;
+            int passTotal = passAdded + passRemoved + passNarrowed;
+
+            totalAdded += passAdded;
+            totalRemoved += passRemoved;
+            totalNarrowed += passNarrowed;
+
+            if (passTotal == 0) {
+                if (pass == 1) {
+                    getLog().info("No dependency issues found.");
+                } else {
+                    getLog().info(String.format(
+                            "[pilot] Pass %d/%d: 0 changes — converged. Total: %d added, %d removed, %d narrowed.",
+                            pass, maxIterations, totalAdded, totalRemoved, totalNarrowed));
+                }
+                return;
+            }
+
+            getLog().info(String.format(
+                    "[pilot] Pass %d/%d: %d added, %d removed, %d narrowed to test scope.",
+                    pass, maxIterations, passAdded, passRemoved, passNarrowed));
+
+            if (isLastAllowed) {
+                getLog().warn(String.format(
+                        "[pilot] Reached max-iterations limit (%d). POM may not be fully converged."
+                                + " Re-run with a higher -Dpilot.maxIterations value or run again to continue.",
+                        maxIterations));
+                getLog().info(String.format(
+                        "[pilot] Total after %d passes: %d added, %d removed, %d narrowed.",
+                        maxIterations, totalAdded, totalRemoved, totalNarrowed));
+            }
+        }
+    }
+
     void executeForProject(MavenProject proj) throws Exception {
+        executeForProject(proj, null);
+    }
+
+    /**
+     * Core per-project analysis and action dispatch.
+     *
+     * @param fixLogger optional logger override for the fix action; when {@code null} the mojo's
+     *                  own logger is used. Pass a {@link CountingFixLogger} from the iteration
+     *                  loop to count changes per pass without duplicating analysis logic.
+     */
+    void executeForProject(MavenProject proj, DependenciesReporter.FixLogger fixLogger) throws Exception {
         if ("pom".equals(proj.getPackaging())) {
             getLog().debug("Skipping " + proj.getArtifactId() + " (pom packaging, no classes to analyse).");
             return;
@@ -351,7 +446,7 @@ public class DependenciesMojo extends AbstractMojo {
                         testRefsAvailable);
         applyUsageStatus(declared, transitive, usage);
 
-        executeNonInteractive(proj, declared, transitive, gaToVersion, ancestorManagedGAs);
+        executeNonInteractive(proj, declared, transitive, gaToVersion, ancestorManagedGAs, fixLogger);
     }
 
     /**
@@ -429,7 +524,7 @@ public class DependenciesMojo extends AbstractMojo {
             List<DependenciesTui.DepEntry> transitive,
             Map<String, String> gaToVersion)
             throws Exception {
-        executeNonInteractive(proj, declared, transitive, gaToVersion, Set.of());
+        executeNonInteractive(proj, declared, transitive, gaToVersion, Set.of(), null);
     }
 
     void executeNonInteractive(
@@ -438,6 +533,17 @@ public class DependenciesMojo extends AbstractMojo {
             List<DependenciesTui.DepEntry> transitive,
             Map<String, String> gaToVersion,
             Set<String> ancestorManagedGAs)
+            throws Exception {
+        executeNonInteractive(proj, declared, transitive, gaToVersion, ancestorManagedGAs, null);
+    }
+
+    void executeNonInteractive(
+            MavenProject proj,
+            List<DependenciesTui.DepEntry> declared,
+            List<DependenciesTui.DepEntry> transitive,
+            Map<String, String> gaToVersion,
+            Set<String> ancestorManagedGAs,
+            DependenciesReporter.FixLogger fixLogger)
             throws Exception {
 
         // --- Apply knownUsed / knownUnused overrides ---
@@ -545,7 +651,7 @@ public class DependenciesMojo extends AbstractMojo {
                         usedTransitive,
                         gaToVersion,
                         ancestorManagedGAs,
-                        getLog()::info);
+                        fixLogger != null ? fixLogger : getLog()::info);
             case "report" ->
                 getLog().warn(DependenciesReporter.formatFindings(
                         unusedDeclared, testScopedDeclared, usedTransitive, visibleUndetermined));
@@ -700,5 +806,40 @@ public class DependenciesMojo extends AbstractMojo {
             }
         }
         return false;
+    }
+
+    /**
+     * A {@link DependenciesReporter.FixLogger} that counts each type of change applied
+     * by a single fix pass, forwarding all messages to a delegate logger.
+     *
+     * <p>Counts are keyed by the prefix of the log message emitted by
+     * {@link DependenciesReporter#fix}:</p>
+     * <ul>
+     *   <li>{@code added}    — "Added used transitive dependency"</li>
+     *   <li>{@code removed}  — "Removed unused dependency"</li>
+     *   <li>{@code narrowed} — "Narrowed to test scope"</li>
+     * </ul>
+     */
+    static final class CountingFixLogger implements DependenciesReporter.FixLogger {
+        int added = 0;
+        int removed = 0;
+        int narrowed = 0;
+        private final DependenciesReporter.FixLogger delegate;
+
+        CountingFixLogger(DependenciesReporter.FixLogger delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void log(String message) {
+            if (message.startsWith("Added used transitive")) {
+                added++;
+            } else if (message.startsWith("Removed unused")) {
+                removed++;
+            } else if (message.startsWith("Narrowed to test scope")) {
+                narrowed++;
+            }
+            delegate.log(message);
+        }
     }
 }
