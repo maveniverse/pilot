@@ -39,6 +39,8 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import eu.maveniverse.domtrip.DomTripException;
+import eu.maveniverse.domtrip.maven.Coordinates;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -66,6 +68,11 @@ public class PluginsTui extends ToolPanel {
         final List<String> modules = new ArrayList<>();
         /** Per-module version: module GA (groupId:artifactId) → declared version (empty string if inherited/absent). */
         final Map<String, String> moduleVersions = new LinkedHashMap<>();
+        /**
+         * Profile ID this plugin is declared in, or {@code null} for root-level plugins.
+         * Used to scope PomEditor operations via {@code editor.plugins().forProfile(profileId)}.
+         */
+        String profileId;
 
         // All mutations to mutable fields go through runOnRenderThread and are consumed on the same
         // render thread, so no volatile/synchronization is needed on any of these fields.
@@ -81,6 +88,11 @@ public class PluginsTui extends ToolPanel {
             this.artifactId = artifactId;
             this.version = version != null ? version : "";
             this.managed = managed;
+        }
+
+        PluginEntry(String groupId, String artifactId, String version, boolean managed, String profileId) {
+            this(groupId, artifactId, version, managed);
+            this.profileId = profileId;
         }
 
         String ga() {
@@ -126,6 +138,9 @@ public class PluginsTui extends ToolPanel {
     final List<PluginEntry> updates = new ArrayList<>();
     private final boolean singleModule;
     private final UpdatesTui.VersionResolver versionResolver;
+    /** Shared POM edit session for the current project — null when no project path is available. */
+    private PomEditSession session;
+
     final ExecutorService httpPool = PilotUtil.newHttpPool();
     private final TableState tableState = new TableState();
     private final TableState detailTableState = new TableState();
@@ -146,6 +161,9 @@ public class PluginsTui extends ToolPanel {
             PilotProject project, List<PilotProject> allProjects, UpdatesTui.VersionResolver versionResolver) {
         this.versionResolver = versionResolver;
         this.singleModule = allProjects.size() <= 1;
+        if (project != null && project.pomPath != null && java.nio.file.Files.isRegularFile(project.pomPath)) {
+            this.session = new PomEditSession(project.pomPath);
+        }
 
         Map<String, PluginEntry> pluginsMap = new LinkedHashMap<>();
         Map<String, PluginEntry> managedMap = new LinkedHashMap<>();
@@ -169,12 +187,16 @@ public class PluginsTui extends ToolPanel {
         String moduleName = p.ga();
         for (PilotProject.Plugin plugin : p.getPlugins()) {
             PluginEntry entry = pluginsMap.computeIfAbsent(
-                    plugin.ga(), k -> new PluginEntry(plugin.groupId(), plugin.artifactId(), plugin.version(), false));
+                    plugin.ga(),
+                    k -> new PluginEntry(
+                            plugin.groupId(), plugin.artifactId(), plugin.version(), false, plugin.profileId()));
             mergeModule(entry, moduleName, plugin.version());
         }
         for (PilotProject.Plugin plugin : p.getManagedPlugins()) {
             PluginEntry entry = managedMap.computeIfAbsent(
-                    plugin.ga(), k -> new PluginEntry(plugin.groupId(), plugin.artifactId(), plugin.version(), true));
+                    plugin.ga(),
+                    k -> new PluginEntry(
+                            plugin.groupId(), plugin.artifactId(), plugin.version(), true, plugin.profileId()));
             mergeModule(entry, moduleName, plugin.version());
         }
     }
@@ -186,6 +208,53 @@ public class PluginsTui extends ToolPanel {
         entry.moduleVersions.put(moduleName, version != null ? version : "");
         if (entry.version.isEmpty() && version != null) {
             entry.version = version;
+        }
+    }
+
+    // -- Apply action --
+
+    /**
+     * Apply the selected update in the Updates view: writes the new version into the POM
+     * using the domtrip PomEditor, correctly scoping to the profile when the plugin is
+     * declared inside a {@code <profile>} element (requires domtrip 1.8.0+).
+     */
+    private void applySelectedUpdate() {
+        if (session == null) {
+            statusText = "Cannot apply: no POM session available";
+            return;
+        }
+        Integer sel = tableState.selected();
+        if (sel == null || sel >= updates.size()) return;
+        PluginEntry entry = updates.get(sel);
+        if (!entry.hasUpdate()) return;
+
+        String newVersion = entry.newestVersion;
+        Coordinates coords = Coordinates.of(entry.groupId, entry.artifactId, newVersion);
+
+        try {
+            session.beforeMutation();
+            boolean updated;
+            if (entry.profileId != null) {
+                updated = session.editor().plugins().forProfile(entry.profileId).updatePlugin(false, coords);
+            } else {
+                updated = session.editor().plugins().updatePlugin(false, coords);
+            }
+            if (updated) {
+                PomEditSession.SaveResult result = session.save();
+                if (result.success()) {
+                    String old = entry.version;
+                    entry.version = newVersion;
+                    updates.remove(sel);
+                    if (sel > 0 && sel >= updates.size()) tableState.select(sel - 1);
+                    statusText = "Updated " + entry.ga() + ": " + old + " → " + newVersion;
+                } else {
+                    statusText = "Save failed: " + result.message();
+                }
+            } else {
+                statusText = "Plugin not found in POM (may be inherited or property-managed)";
+            }
+        } catch (DomTripException e) {
+            statusText = "Apply failed: " + e.getMessage();
         }
     }
 
@@ -518,6 +587,10 @@ public class PluginsTui extends ToolPanel {
                 applyFilter();
                 return true;
             }
+            if (key.isChar('u')) {
+                applySelectedUpdate();
+                return true;
+            }
         }
 
         return false;
@@ -634,7 +707,9 @@ public class PluginsTui extends ToolPanel {
         spans.add(Span.raw(":Search  "));
         if (view == View.UPDATES) {
             spans.add(Span.raw("f").bold());
-            spans.add(Span.raw(":Filter"));
+            spans.add(Span.raw(":Filter  "));
+            spans.add(Span.raw("u").bold());
+            spans.add(Span.raw(":Apply update"));
         }
         return spans;
     }
@@ -668,6 +743,8 @@ public class PluginsTui extends ToolPanel {
                                 new HelpOverlay.Entry("1-3", "Switch Plugins / Managed / Updates view"),
                                 new HelpOverlay.Entry(
                                         "f / F", "Cycle filter: all → patch → minor → major (Updates view)"),
+                                new HelpOverlay.Entry(
+                                        "u", "Apply selected update: write new version into POM (Updates view)"),
                                 new HelpOverlay.Entry("s / S", "Sort by column / reverse direction"),
                                 new HelpOverlay.Entry("/", "Search / filter"),
                                 new HelpOverlay.Entry("n / N", "Next / previous search match"))));
