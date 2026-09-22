@@ -261,24 +261,57 @@ public final class MojoHelper {
     }
 
     private static List<PilotProject.Plugin> extractPlugins(MavenProject mp) {
-        if (mp.getBuildPlugins() == null) return List.of();
-        return mp.getBuildPlugins().stream().map(MojoHelper::toPilotPlugin).toList();
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level build plugins
+        if (mp.getBuildPlugins() != null) {
+            mp.getBuildPlugins().stream().map(MojoHelper::toPilotPlugin).forEach(result::add);
+        }
+        // Profile-scoped build plugins (active profiles only; Maven already filters inactive)
+        for (org.apache.maven.model.Profile profile : mp.getModel().getProfiles()) {
+            String profileId = profile.getId();
+            if (profile.getBuild() != null && profile.getBuild().getPlugins() != null) {
+                profile.getBuild().getPlugins().stream()
+                        .map(p -> toPilotPluginWithProfile(p, profileId))
+                        .forEach(result::add);
+            }
+        }
+        return result;
     }
 
     private static List<PilotProject.Plugin> extractManagedPlugins(MavenProject mp) {
-        if (mp.getPluginManagement() == null || mp.getPluginManagement().getPlugins() == null) return List.of();
-        return mp.getPluginManagement().getPlugins().stream()
-                .map(MojoHelper::toPilotPlugin)
-                .toList();
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level plugin management
+        if (mp.getPluginManagement() != null && mp.getPluginManagement().getPlugins() != null) {
+            mp.getPluginManagement().getPlugins().stream()
+                    .map(MojoHelper::toPilotPlugin)
+                    .forEach(result::add);
+        }
+        // Profile-scoped plugin management
+        for (org.apache.maven.model.Profile profile : mp.getModel().getProfiles()) {
+            String profileId = profile.getId();
+            if (profile.getBuild() != null
+                    && profile.getBuild().getPluginManagement() != null
+                    && profile.getBuild().getPluginManagement().getPlugins() != null) {
+                profile.getBuild().getPluginManagement().getPlugins().stream()
+                        .map(p -> toPilotPluginWithProfile(p, profileId))
+                        .forEach(result::add);
+            }
+        }
+        return result;
     }
 
     private static PilotProject.Plugin toPilotPlugin(org.apache.maven.model.Plugin plugin) {
+        return toPilotPluginWithProfile(plugin, null);
+    }
+
+    private static PilotProject.Plugin toPilotPluginWithProfile(
+            org.apache.maven.model.Plugin plugin, String profileId) {
         List<PilotProject.Dep> deps = plugin.getDependencies() != null
                 ? plugin.getDependencies().stream().map(MojoHelper::toPilotDep).toList()
                 : List.of();
         List<PilotProject.Excl> exclusions = List.of();
         return new PilotProject.Plugin(
-                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, exclusions);
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, exclusions, profileId);
     }
 
     static PilotProject.Dep toPilotDep(org.apache.maven.model.Dependency dep) {
