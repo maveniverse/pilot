@@ -291,8 +291,8 @@ public class DependenciesMojo extends AbstractMojo {
 
             if (isLastAllowed) {
                 getLog().warn(("[pilot] Reached max-iterations limit (%d). POM may not be fully converged."
-                        + " Re-run with a higher -Dpilot.maxIterations value or run again to continue.")
-                                .formatted(maxIterations));
+                                + " Re-run with a higher -Dpilot.maxIterations value or run again to continue.")
+                        .formatted(maxIterations));
                 getLog().info("[pilot] Total after %d passes: %d added, %d removed, %d narrowed."
                         .formatted(maxIterations, totalAdded, totalRemoved, totalNarrowed));
             }
