@@ -203,9 +203,11 @@ public final class DependenciesReporter {
             Coordinates coords = parts.length > 2
                     ? Coordinates.of(parts[0], parts[1], null, parts[2], "jar")
                     : Coordinates.of(parts[0], parts[1], null);
-            editor.dependencies().deleteDependency(coords);
+            boolean removed = editor.dependencies().deleteDependency(coords);
             pomContent = editor.toXml();
-            logger.log("Removed unused dependency: " + dep.ga());
+            if (removed) {
+                logger.log("Removed unused dependency: " + dep.ga());
+            }
         }
 
         for (var dep : testScopedDeclared) {
@@ -251,10 +253,12 @@ public final class DependenciesReporter {
             if (scope != null && !scope.isEmpty() && !"compile".equals(scope)) {
                 optBuilder.scope(scope);
             }
-            editor.dependencies().addAligned(coords, optBuilder.build());
-            logger.log("Added used transitive dependency"
-                    + (ancestorManaged ? " (version managed by ancestor)" : "")
-                    + ": " + dep.ga());
+            boolean added = editor.dependencies().addAligned(coords, optBuilder.build());
+            if (added) {
+                logger.log("Added used transitive dependency"
+                        + (ancestorManaged ? " (version managed by ancestor)" : "")
+                        + ": " + dep.ga());
+            }
 
             pomContent = editor.toXml();
         }

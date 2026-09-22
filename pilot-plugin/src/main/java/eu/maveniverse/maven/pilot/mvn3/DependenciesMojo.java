@@ -226,7 +226,7 @@ public class DependenciesMojo extends AbstractMojo {
         if (!"report".equals(action) && !"check".equals(action) && !"fix".equals(action)) {
             throw new MojoExecutionException("Invalid action '" + action + "'. Use 'report', 'check', or 'fix'.");
         }
-        if (maxIterations < 1) {
+        if ("fix".equals(action) && maxIterations < 1) {
             throw new MojoExecutionException("pilot.maxIterations must be >= 1, got: " + maxIterations);
         }
         try {
@@ -246,6 +246,16 @@ public class DependenciesMojo extends AbstractMojo {
      * Runs the fix action in a convergence loop, up to {@code maxIterations} passes.
      * Stops early when a pass makes no changes (the POM has converged).
      * Logs a clear per-pass summary for auditability.
+     *
+     * <p><b>Note on convergence:</b> within a single Maven invocation, the in-memory
+     * {@link MavenProject} model is not refreshed between passes. As a result, this loop
+     * typically converges in at most 2 passes: pass 1 applies all changes to the POM on disk;
+     * pass 2 detects that the same operations are no-ops (the dep is already present/absent)
+     * and exits. Multi-pass transitive discovery — where adding a dependency exposes further
+     * transitive dependencies in subsequent passes — requires re-running {@code mvn pilot:fix}
+     * in a new Maven invocation so the updated POM is re-read. {@code maxIterations} serves as
+     * a safety cap in case future improvements enable in-process POM reloading.
+     * </p>
      */
     void executeFixWithIterations(MavenProject proj) throws Exception {
         int totalAdded = 0;
@@ -270,25 +280,21 @@ public class DependenciesMojo extends AbstractMojo {
                 if (pass == 1) {
                     getLog().info("No dependency issues found.");
                 } else {
-                    getLog().info(String.format(
-                            "[pilot] Pass %d/%d: 0 changes — converged. Total: %d added, %d removed, %d narrowed.",
-                            pass, maxIterations, totalAdded, totalRemoved, totalNarrowed));
+                    getLog().info("[pilot] Pass %d/%d: 0 changes — converged. Total: %d added, %d removed, %d narrowed."
+                            .formatted(pass, maxIterations, totalAdded, totalRemoved, totalNarrowed));
                 }
                 return;
             }
 
-            getLog().info(String.format(
-                    "[pilot] Pass %d/%d: %d added, %d removed, %d narrowed to test scope.",
-                    pass, maxIterations, passAdded, passRemoved, passNarrowed));
+            getLog().info("[pilot] Pass %d/%d: %d added, %d removed, %d narrowed to test scope."
+                    .formatted(pass, maxIterations, passAdded, passRemoved, passNarrowed));
 
             if (isLastAllowed) {
-                getLog().warn(String.format(
-                        "[pilot] Reached max-iterations limit (%d). POM may not be fully converged."
-                                + " Re-run with a higher -Dpilot.maxIterations value or run again to continue.",
-                        maxIterations));
-                getLog().info(String.format(
-                        "[pilot] Total after %d passes: %d added, %d removed, %d narrowed.",
-                        maxIterations, totalAdded, totalRemoved, totalNarrowed));
+                getLog().warn("[pilot] Reached max-iterations limit (%d). POM may not be fully converged."
+                        + " Re-run with a higher -Dpilot.maxIterations value or run again to continue."
+                                .formatted(maxIterations));
+                getLog().info("[pilot] Total after %d passes: %d added, %d removed, %d narrowed."
+                        .formatted(maxIterations, totalAdded, totalRemoved, totalNarrowed));
             }
         }
     }
