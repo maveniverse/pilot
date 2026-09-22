@@ -21,10 +21,14 @@ package eu.maveniverse.maven.pilot.mvn3;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import eu.maveniverse.maven.pilot.ClassFileScanner;
 import eu.maveniverse.maven.pilot.DependenciesReporter;
 import eu.maveniverse.maven.pilot.DependenciesTui;
+import eu.maveniverse.maven.pilot.DependencyTreeModel;
 import eu.maveniverse.maven.pilot.DependencyUsageAnalyzer;
 import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -39,6 +43,11 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.resolution.DependencyResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -1268,11 +1277,11 @@ class DependenciesMojoTest {
                 List.of(new DependenciesTui.DepEntry("com.example", "trans", "", "1.0", "test", false)));
 
         // Invoke private method via reflection
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
-                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, Path.class, List.class, List.class);
         m.setAccessible(true);
-        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
-                m.invoke(mojo, true, tmp.resolve("test-classes"), declared, transitive);
+        var result =
+                (ClassFileScanner.ScanResult) m.invoke(mojo, true, tmp.resolve("test-classes"), declared, transitive);
 
         // Test-scoped entries removed from both lists
         assertThat(declared).hasSize(1).allMatch(d -> "compile".equals(d.scope));
@@ -1287,10 +1296,10 @@ class DependenciesMojoTest {
         var mojo = new DependenciesMojo(null);
         MojoTestHelper.setField(mojo, "skipTestScope", false);
 
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
-                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, Path.class, List.class, List.class);
         m.setAccessible(true);
-        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
+        var result = (ClassFileScanner.ScanResult)
                 m.invoke(mojo, false, tmp.resolve("test-classes"), new ArrayList<>(), new ArrayList<>());
 
         assertThat(result.referencedClasses()).isEmpty();
@@ -1302,11 +1311,11 @@ class DependenciesMojoTest {
         var mojo = new DependenciesMojo(null);
         MojoTestHelper.setField(mojo, "skipTestScope", false);
 
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
-                "buildTestScan", boolean.class, java.nio.file.Path.class, List.class, List.class);
+        Method m = DependenciesMojo.class.getDeclaredMethod(
+                "buildTestScan", boolean.class, Path.class, List.class, List.class);
         m.setAccessible(true);
         Path nonExistentDir = tmp.resolve("test-classes-nonexistent");
-        var result = (eu.maveniverse.maven.pilot.ClassFileScanner.ScanResult)
+        var result = (ClassFileScanner.ScanResult)
                 m.invoke(mojo, true, nonExistentDir, new ArrayList<>(), new ArrayList<>());
 
         assertThat(result.referencedClasses()).isEmpty();
@@ -1319,15 +1328,11 @@ class DependenciesMojoTest {
         var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", false);
         List<DependenciesTui.DepEntry> transitive = new ArrayList<>(List.of(dep));
         // Create a minimal DependencyTreeModel with a root node
-        var root = new eu.maveniverse.maven.pilot.DependencyTreeModel.TreeNode(
-                "com.example", "parent", "1.0", "compile", false, 0);
-        var depTree = new eu.maveniverse.maven.pilot.DependencyTreeModel(root, List.of(), 1);
+        var root = new DependencyTreeModel.TreeNode("com.example", "parent", "1.0", "compile", false, 0);
+        var depTree = new DependencyTreeModel(root, List.of(), 1);
 
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
-                "suppressPomAggregatorCoveredTransitives",
-                List.class,
-                eu.maveniverse.maven.pilot.DependencyTreeModel.class,
-                Set.class);
+        Method m = DependenciesMojo.class.getDeclaredMethod(
+                "suppressPomAggregatorCoveredTransitives", List.class, DependencyTreeModel.class, Set.class);
         m.setAccessible(true);
         m.invoke(mojo, transitive, depTree, Set.of());
 
@@ -1342,15 +1347,11 @@ class DependenciesMojoTest {
         var dep = new DependenciesTui.DepEntry("com.example", "lib", "", "1.0", "compile", false);
         List<DependenciesTui.DepEntry> transitive = new ArrayList<>(List.of(dep));
         // Root only: no pom-type child, so collectPomAggregatorCoveredGAs returns empty
-        var root = new eu.maveniverse.maven.pilot.DependencyTreeModel.TreeNode(
-                "org.example", "bom", "1.0", "compile", false, 0);
-        var depTree = new eu.maveniverse.maven.pilot.DependencyTreeModel(root, List.of(), 1);
+        var root = new DependencyTreeModel.TreeNode("org.example", "bom", "1.0", "compile", false, 0);
+        var depTree = new DependencyTreeModel(root, List.of(), 1);
 
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
-                "suppressPomAggregatorCoveredTransitives",
-                List.class,
-                eu.maveniverse.maven.pilot.DependencyTreeModel.class,
-                Set.class);
+        Method m = DependenciesMojo.class.getDeclaredMethod(
+                "suppressPomAggregatorCoveredTransitives", List.class, DependencyTreeModel.class, Set.class);
         m.setAccessible(true);
         m.invoke(mojo, transitive, depTree, Set.of("org.example:bom"));
 
@@ -1362,8 +1363,8 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_empty_returnsBothMapsEmpty() {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
         depResult.setArtifactResults(List.of());
 
         DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
@@ -1374,10 +1375,10 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_artifactWithNullArtifact_skipped() {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
 
-        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        var ar = new ArtifactResult(new ArtifactRequest());
         // ar.getArtifact() is null by default
         depResult.setArtifactResults(List.of(ar));
 
@@ -1389,14 +1390,14 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_jarArtifact_addedToBothMaps(@TempDir Path tmp) throws Exception {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
 
         File jarFile = Files.createFile(tmp.resolve("foo.jar")).toFile();
-        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:1.0");
-        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(jarFile);
+        var artifact = new DefaultArtifact("com.example:foo:1.0");
+        artifact = (DefaultArtifact) artifact.setFile(jarFile);
 
-        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        var ar = new ArtifactResult(new ArtifactRequest());
         ar.setArtifact(artifact);
         depResult.setArtifactResults(List.of(ar));
 
@@ -1408,14 +1409,14 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_nonJarArtifact_versionMappedButNotJar(@TempDir Path tmp) throws Exception {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
 
         File pomFile = Files.createFile(tmp.resolve("foo.pom")).toFile();
-        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:pom:1.0");
-        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(pomFile);
+        var artifact = new DefaultArtifact("com.example:foo:pom:1.0");
+        artifact = (DefaultArtifact) artifact.setFile(pomFile);
 
-        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        var ar = new ArtifactResult(new ArtifactRequest());
         ar.setArtifact(artifact);
         depResult.setArtifactResults(List.of(ar));
 
@@ -1428,14 +1429,14 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_classifiedArtifact_keyedWithClassifier(@TempDir Path tmp) throws Exception {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
 
         File jarFile = Files.createFile(tmp.resolve("foo-tests.jar")).toFile();
-        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:jar:tests:1.0");
-        artifact = (org.eclipse.aether.artifact.DefaultArtifact) artifact.setFile(jarFile);
+        var artifact = new DefaultArtifact("com.example:foo:jar:tests:1.0");
+        artifact = (DefaultArtifact) artifact.setFile(jarFile);
 
-        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        var ar = new ArtifactResult(new ArtifactRequest());
         ar.setArtifact(artifact);
         depResult.setArtifactResults(List.of(ar));
 
@@ -1448,14 +1449,14 @@ class DependenciesMojoTest {
 
     @Test
     void buildArtifactMaps_nullFile_notAddedToJarMap() {
-        var depReq = new org.eclipse.aether.resolution.DependencyRequest();
-        var depResult = new org.eclipse.aether.resolution.DependencyResult(depReq);
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
 
         // Artifact with no local file (e.g. resolution failed or not downloaded)
-        var artifact = new org.eclipse.aether.artifact.DefaultArtifact("com.example:foo:1.0");
+        var artifact = new DefaultArtifact("com.example:foo:1.0");
         // No setFile call → artifact.getFile() returns null
 
-        var ar = new org.eclipse.aether.resolution.ArtifactResult(new org.eclipse.aether.resolution.ArtifactRequest());
+        var ar = new ArtifactResult(new ArtifactRequest());
         ar.setArtifact(artifact);
         depResult.setArtifactResults(List.of(ar));
 
@@ -1480,7 +1481,7 @@ class DependenciesMojoTest {
         // No source roots → hasMainSources=false, hasTestSources=false
 
         // Should not throw
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+        Method m = DependenciesMojo.class.getDeclaredMethod(
                 "checkBuildOutputDirs", MavenProject.class, Path.class, Path.class);
         m.setAccessible(true);
         m.invoke(mojo, proj, tmp.resolve("classes"), tmp.resolve("test-classes"));
@@ -1499,13 +1500,13 @@ class DependenciesMojoTest {
         proj.getBuild().setOutputDirectory(tmp.resolve("classes").toString()); // non-existent
         proj.getBuild().setTestOutputDirectory(tmp.resolve("test-classes").toString());
 
-        java.lang.reflect.Method m = DependenciesMojo.class.getDeclaredMethod(
+        Method m = DependenciesMojo.class.getDeclaredMethod(
                 "checkBuildOutputDirs", MavenProject.class, Path.class, Path.class);
         m.setAccessible(true);
         assertThatThrownBy(() -> {
                     try {
                         m.invoke(mojo, proj, tmp.resolve("classes"), tmp.resolve("test-classes"));
-                    } catch (java.lang.reflect.InvocationTargetException e) {
+                    } catch (InvocationTargetException e) {
                         throw e.getCause();
                     }
                 })

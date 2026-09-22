@@ -252,7 +252,8 @@ public class DependenciesMojo extends AbstractMojo {
      * typically converges in at most 2 passes: pass 1 applies all changes to the POM on disk;
      * pass 2 detects that the same operations are no-ops (the dep is already present/absent)
      * and exits. Multi-pass transitive discovery — where adding a dependency exposes further
-     * transitive dependencies in subsequent passes — requires re-running {@code mvn pilot:fix}
+     * transitive dependencies in subsequent passes — requires re-running
+     * {@code mvn pilot:dependencies -Dpilot.action=fix}
      * in a new Maven invocation so the updated POM is re-read. {@code maxIterations} serves as
      * a safety cap in case future improvements enable in-process POM reloading.
      * </p>

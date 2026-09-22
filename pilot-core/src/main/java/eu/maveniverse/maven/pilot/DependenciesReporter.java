@@ -223,8 +223,13 @@ public final class DependenciesReporter {
                             .filter(coords.predicateGA())
                             .findFirst())
                     .ifPresent(depEl -> {
-                        editor.updateOrCreateChildElement(depEl, "scope", "test");
-                        logger.log("Narrowed to test scope (used only in tests): " + dep.ga());
+                        boolean alreadyTest = depEl.childElement("scope")
+                                .map(scopeEl -> "test".equals(scopeEl.textContentTrimmedOr("")))
+                                .orElse(false);
+                        if (!alreadyTest) {
+                            editor.updateOrCreateChildElement(depEl, "scope", "test");
+                            logger.log("Narrowed to test scope (used only in tests): " + dep.ga());
+                        }
                     });
             pomContent = editor.toXml();
         }
