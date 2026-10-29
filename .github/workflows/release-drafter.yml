@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Run release drafter
         id: drafter
-        uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7
+        uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -29,7 +29,7 @@ jobs:
 
       - name: Set up Java
         if: github.event_name == 'push'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 21
