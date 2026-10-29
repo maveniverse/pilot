@@ -31,6 +31,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.apache.maven.model.Plugin;
+import org.apache.maven.model.Profile;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.ArtifactType;
@@ -266,8 +268,9 @@ public final class MojoHelper {
         if (mp.getBuildPlugins() != null) {
             mp.getBuildPlugins().stream().map(MojoHelper::toPilotPlugin).forEach(result::add);
         }
-        // Profile-scoped build plugins (active profiles only; Maven already filters inactive)
-        for (org.apache.maven.model.Profile profile : mp.getModel().getProfiles()) {
+        // Profile-scoped build plugins — iterate active profiles only to exclude
+        // plugins from profiles whose activation conditions are not satisfied.
+        for (Profile profile : mp.getActiveProfiles()) {
             String profileId = profile.getId();
             if (profile.getBuild() != null && profile.getBuild().getPlugins() != null) {
                 profile.getBuild().getPlugins().stream()
@@ -286,8 +289,8 @@ public final class MojoHelper {
                     .map(MojoHelper::toPilotPlugin)
                     .forEach(result::add);
         }
-        // Profile-scoped plugin management
-        for (org.apache.maven.model.Profile profile : mp.getModel().getProfiles()) {
+        // Profile-scoped plugin management — active profiles only.
+        for (Profile profile : mp.getActiveProfiles()) {
             String profileId = profile.getId();
             if (profile.getBuild() != null
                     && profile.getBuild().getPluginManagement() != null
@@ -300,12 +303,11 @@ public final class MojoHelper {
         return result;
     }
 
-    private static PilotProject.Plugin toPilotPlugin(org.apache.maven.model.Plugin plugin) {
+    private static PilotProject.Plugin toPilotPlugin(Plugin plugin) {
         return toPilotPluginWithProfile(plugin, null);
     }
 
-    private static PilotProject.Plugin toPilotPluginWithProfile(
-            org.apache.maven.model.Plugin plugin, String profileId) {
+    private static PilotProject.Plugin toPilotPluginWithProfile(Plugin plugin, String profileId) {
         List<PilotProject.Dep> deps = plugin.getDependencies() != null
                 ? plugin.getDependencies().stream().map(MojoHelper::toPilotDep).toList()
                 : List.of();
