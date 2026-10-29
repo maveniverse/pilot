@@ -54,31 +54,23 @@ class PluginsTuiApplyUpdateTest {
      */
     private Path writePomWithPlugin(Path dir, String groupId, String artifactId, String version) throws IOException {
         Path pom = dir.resolve("pom.xml");
-        Files.writeString(
-                pom,
-                "<project>\n"
-                        + "  <modelVersion>4.0.0</modelVersion>\n"
-                        + "  <groupId>com.example</groupId>\n"
-                        + "  <artifactId>"
-                        + dir.getFileName()
-                        + "</artifactId>\n"
-                        + "  <version>1.0</version>\n"
-                        + "  <build>\n"
-                        + "    <plugins>\n"
-                        + "      <plugin>\n"
-                        + "        <groupId>"
-                        + groupId
-                        + "</groupId>\n"
-                        + "        <artifactId>"
-                        + artifactId
-                        + "</artifactId>\n"
-                        + "        <version>"
-                        + version
-                        + "</version>\n"
-                        + "      </plugin>\n"
-                        + "    </plugins>\n"
-                        + "  </build>\n"
-                        + "</project>\n");
+        Files.writeString(pom, """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>%s</artifactId>
+                  <version>1.0</version>
+                  <build>
+                    <plugins>
+                      <plugin>
+                        <groupId>%s</groupId>
+                        <artifactId>%s</artifactId>
+                        <version>%s</version>
+                      </plugin>
+                    </plugins>
+                  </build>
+                </project>
+                """.formatted(dir.getFileName(), groupId, artifactId, version));
         return pom;
     }
 
@@ -349,28 +341,28 @@ class PluginsTuiApplyUpdateTest {
     void applyUpdateTargetsProfileScope() throws IOException {
         Path dir = subdir("profile-scope");
         Path pom = dir.resolve("pom.xml");
-        Files.writeString(
-                pom,
-                "<project>\n"
-                        + "  <modelVersion>4.0.0</modelVersion>\n"
-                        + "  <groupId>com.example</groupId>\n"
-                        + "  <artifactId>profile-scope</artifactId>\n"
-                        + "  <version>1.0</version>\n"
-                        + "  <profiles>\n"
-                        + "    <profile>\n"
-                        + "      <id>release</id>\n"
-                        + "      <build>\n"
-                        + "        <plugins>\n"
-                        + "          <plugin>\n"
-                        + "            <groupId>org.apache.maven.plugins</groupId>\n"
-                        + "            <artifactId>maven-compiler-plugin</artifactId>\n"
-                        + "            <version>3.11.0</version>\n"
-                        + "          </plugin>\n"
-                        + "        </plugins>\n"
-                        + "      </build>\n"
-                        + "    </profile>\n"
-                        + "  </profiles>\n"
-                        + "</project>\n");
+        Files.writeString(pom, """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>profile-scope</artifactId>
+                  <version>1.0</version>
+                  <profiles>
+                    <profile>
+                      <id>release</id>
+                      <build>
+                        <plugins>
+                          <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <version>3.11.0</version>
+                          </plugin>
+                        </plugins>
+                      </build>
+                    </profile>
+                  </profiles>
+                </project>
+                """);
 
         // Create a plugin entry with profileId="release"
         PilotProject.Plugin profilePlugin = new PilotProject.Plugin(
@@ -448,15 +440,15 @@ class PluginsTuiApplyUpdateTest {
         Path dir = subdir("not-found");
         // Write a POM WITHOUT the compiler plugin — updatePlugin will return false
         Path pom = dir.resolve("pom.xml");
-        Files.writeString(
-                pom,
-                "<project>\n"
-                        + "  <modelVersion>4.0.0</modelVersion>\n"
-                        + "  <groupId>com.example</groupId>\n"
-                        + "  <artifactId>not-found</artifactId>\n"
-                        + "  <version>1.0</version>\n"
-                        + "  <build><plugins/></build>\n"
-                        + "</project>\n");
+        Files.writeString(pom, """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>not-found</artifactId>
+                  <version>1.0</version>
+                  <build><plugins/></build>
+                </project>
+                """);
 
         // Create a plugin entry that points to this POM, but the plugin isn't actually in it
         PilotProject.Plugin plugin =
