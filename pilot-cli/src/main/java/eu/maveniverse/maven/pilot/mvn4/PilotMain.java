@@ -300,7 +300,6 @@ public class PilotMain {
         Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
         Session session = ApiRunner.createSession(
                 injector -> {
-                    injector.bindImplicit(SecDispatcherBindings.class);
                     injector.bindImplicit(org.apache.maven.api.spi.ModelParser.class);
                     injector.bindImplicit(org.apache.maven.api.spi.ModelTransformer.class);
                     injector.bindImplicit(FallbackTypeProvider.class);
