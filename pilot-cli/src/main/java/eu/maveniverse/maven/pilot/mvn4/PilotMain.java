@@ -45,6 +45,7 @@ import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.Model;
 import org.apache.maven.api.model.Parent;
 import org.apache.maven.api.model.Plugin;
+import org.apache.maven.api.model.Profile;
 import org.apache.maven.api.services.ArtifactResolver;
 import org.apache.maven.api.services.ArtifactResolverRequest;
 import org.apache.maven.api.services.ModelBuilder;
@@ -539,35 +540,74 @@ public class PilotMain {
                 origProps,
                 outputDir,
                 testOutputDir);
-        pp.setPlugins(extractPlugins(effectiveModel));
-        pp.setManagedPlugins(extractManagedPlugins(effectiveModel));
+        pp.setPlugins(extractPlugins(effectiveModel, fileModel));
+        pp.setManagedPlugins(extractManagedPlugins(effectiveModel, fileModel));
         return pp;
     }
 
-    private static List<PilotProject.Plugin> extractPlugins(Model model) {
-        if (model.getBuild() == null || model.getBuild().getPlugins() == null) return List.of();
-        return model.getBuild().getPlugins().stream()
-                .map(PilotMain::modelPluginToPilotPlugin)
-                .toList();
+    private static List<PilotProject.Plugin> extractPlugins(Model effectiveModel, Model fileModel) {
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level build plugins from the effective model (activation already applied)
+        if (effectiveModel.getBuild() != null && effectiveModel.getBuild().getPlugins() != null) {
+            effectiveModel.getBuild().getPlugins().stream()
+                    .map(PilotMain::modelPluginToPilotPlugin)
+                    .forEach(result::add);
+        }
+        // Profile-scoped build plugins — walk the file model profiles to preserve profileId.
+        // The effective model flattens active profile plugins into build.getPlugins(), losing
+        // the profile scope. Using the file model profiles is intentional here: the profile
+        // declarations in the file are what the domtrip editor targets with forProfile(id).
+        if (fileModel.getProfiles() != null) {
+            for (Profile profile : fileModel.getProfiles()) {
+                String profileId = profile.getId();
+                if (profile.getBuild() != null && profile.getBuild().getPlugins() != null) {
+                    profile.getBuild().getPlugins().stream()
+                            .map(p -> modelPluginToPilotPluginWithProfile(p, profileId))
+                            .forEach(result::add);
+                }
+            }
+        }
+        return result;
     }
 
-    private static List<PilotProject.Plugin> extractManagedPlugins(Model model) {
-        if (model.getBuild() == null
-                || model.getBuild().getPluginManagement() == null
-                || model.getBuild().getPluginManagement().getPlugins() == null) return List.of();
-        return model.getBuild().getPluginManagement().getPlugins().stream()
-                .map(PilotMain::modelPluginToPilotPlugin)
-                .toList();
+    private static List<PilotProject.Plugin> extractManagedPlugins(Model effectiveModel, Model fileModel) {
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level plugin management from the effective model
+        if (effectiveModel.getBuild() != null
+                && effectiveModel.getBuild().getPluginManagement() != null
+                && effectiveModel.getBuild().getPluginManagement().getPlugins() != null) {
+            effectiveModel.getBuild().getPluginManagement().getPlugins().stream()
+                    .map(PilotMain::modelPluginToPilotPlugin)
+                    .forEach(result::add);
+        }
+        // Profile-scoped plugin management — file model profiles only
+        if (fileModel.getProfiles() != null) {
+            for (Profile profile : fileModel.getProfiles()) {
+                String profileId = profile.getId();
+                if (profile.getBuild() != null
+                        && profile.getBuild().getPluginManagement() != null
+                        && profile.getBuild().getPluginManagement().getPlugins() != null) {
+                    profile.getBuild().getPluginManagement().getPlugins().stream()
+                            .map(p -> modelPluginToPilotPluginWithProfile(p, profileId))
+                            .forEach(result::add);
+                }
+            }
+        }
+        return result;
     }
 
     private static PilotProject.Plugin modelPluginToPilotPlugin(Plugin plugin) {
+        return modelPluginToPilotPluginWithProfile(plugin, null);
+    }
+
+    private static PilotProject.Plugin modelPluginToPilotPluginWithProfile(Plugin plugin, String profileId) {
         List<PilotProject.Dep> deps = plugin.getDependencies() != null
                 ? plugin.getDependencies().stream()
                         .map(PilotMain::modelDepToPilotDep)
                         .toList()
                 : List.of();
         return new PilotProject.Plugin(
-                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of());
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of(), profileId);
     }
 
     private static PilotProject.Dep modelDepToPilotDep(Dependency dep) {
