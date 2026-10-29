@@ -35,9 +35,11 @@ class PilotShellToolDefTest {
 
     @Test
     void nonSearchToolsAreNotModuleIndependent() {
-        PilotShell.TOOLS.stream().filter(t -> !"search".equals(t.id())).forEach(t -> assertThat(t.isModuleIndependent())
-                .as("Tool '%s' should not be module-independent", t.id())
-                .isFalse());
+        PilotShell.TOOLS.stream()
+                .filter(t -> !"search".equals(t.id()))
+                .forEach(t -> assertThat(t.isModuleIndependent())
+                        .as("Tool '%s' should not be module-independent", t.id())
+                        .isFalse());
     }
 
     @Test
