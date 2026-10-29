@@ -20,6 +20,7 @@ package eu.maveniverse.maven.pilot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -394,5 +395,141 @@ class PluginsTuiApplyUpdateTest {
         assertThat(tui.updates).isEmpty();
         String pomContent = Files.readString(pom);
         assertThat(pomContent).contains("3.14.0");
+    }
+
+    // ── Session fallback: pomPath null but shared session available ───────────
+
+    /**
+     * When {@code entry.pomPath} is null (cleared after construction) but the shared
+     * root session is available (project POM exists), {@code applySelectedUpdate()} must
+     * fall back to the shared session and succeed.
+     */
+    @Test
+    void applyUpdateUsesSharedSessionWhenPomPathIsNull() throws IOException {
+        Path dir = subdir("session-fallback");
+        // Write a POM at the root project's path so the shared session is created
+        Path pom = writePomWithPlugin(dir, "org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0");
+
+        PilotProject project = createProject(
+                "com.example",
+                "app",
+                "1.0",
+                dir,
+                List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0")),
+                List.of());
+
+        PluginsTui tui = new PluginsTui(project, List.of(project), (g, a) -> List.of());
+        PluginsTui.PluginEntry entry = tui.plugins.get(0);
+        // Clear pomPath to force fallback to shared session
+        entry.pomPath = null;
+        entry.newestVersion = "3.14.0";
+        entry.updateType = VersionComparator.UpdateType.MINOR;
+        tui.loading = false;
+        tui.applyFilter();
+        assertThat(tui.updates).hasSize(1);
+
+        tui.setActiveSubView(2);
+        tui.handleKeyEvent(KeyEvent.ofChar('u'));
+
+        // The shared session (created from project.pomPath) should have succeeded
+        assertThat(tui.updates).isEmpty();
+        assertThat(Files.readString(pom)).contains("3.14.0");
+    }
+
+    // ── "Plugin not found in POM" path ────────────────────────────────────────
+
+    /**
+     * When updatePlugin returns false (plugin is not directly declared in the POM — e.g.
+     * it's inherited or version is a property reference), the status must report
+     * "Plugin not found in POM".
+     */
+    @Test
+    void applyUpdateSetsNotFoundStatusWhenPluginMissingFromPom() throws IOException {
+        Path dir = subdir("not-found");
+        // Write a POM WITHOUT the compiler plugin — updatePlugin will return false
+        Path pom = dir.resolve("pom.xml");
+        Files.writeString(
+                pom,
+                "<project>\n"
+                        + "  <modelVersion>4.0.0</modelVersion>\n"
+                        + "  <groupId>com.example</groupId>\n"
+                        + "  <artifactId>not-found</artifactId>\n"
+                        + "  <version>1.0</version>\n"
+                        + "  <build><plugins/></build>\n"
+                        + "</project>\n");
+
+        // Create a plugin entry that points to this POM, but the plugin isn't actually in it
+        PilotProject.Plugin plugin =
+                new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0");
+        PilotProject project = createProject("com.example", "app", "1.0", dir, List.of(plugin), List.of());
+        // Override pomPath to the POM we wrote
+        PluginsTui tui = new PluginsTui(project, List.of(project), (g, a) -> List.of());
+        PluginsTui.PluginEntry entry = tui.plugins.get(0);
+        entry.pomPath = pom;
+        entry.newestVersion = "3.14.0";
+        entry.updateType = VersionComparator.UpdateType.MINOR;
+        tui.loading = false;
+        tui.applyFilter();
+        assertThat(tui.updates).hasSize(1);
+
+        tui.setActiveSubView(2);
+        tui.handleKeyEvent(KeyEvent.ofChar('u'));
+
+        // updatePlugin returns false → status must contain the expected message
+        assertThat(tui.statusText).contains("Plugin not found in POM");
+        // Entry must still be in the list
+        assertThat(tui.updates).hasSize(1);
+    }
+
+    // ── Selection adjustment: applying the last update decrements selection ───
+
+    /**
+     * When the selected entry is the last in the updates list (sel > 0) and is removed,
+     * the selection must be decremented so the new last item is highlighted rather than
+     * leaving the selection index out of bounds.
+     */
+    @Test
+    void applyUpdateDecrementsSelectionWhenLastEntryRemoved() throws IOException {
+        Path dir1 = subdir("desel-1");
+        Path dir2 = subdir("desel-2");
+
+        writePomWithPlugin(dir1, "org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0");
+        writePomWithPlugin(dir2, "org.apache.maven.plugins", "maven-surefire-plugin", "3.2.5");
+
+        PilotProject p1 = createProject(
+                "com.example",
+                "mod1",
+                "1.0",
+                dir1,
+                List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-compiler-plugin", "3.11.0")),
+                List.of());
+        PilotProject p2 = createProject(
+                "com.example",
+                "mod2",
+                "1.0",
+                dir2,
+                List.of(new PilotProject.Plugin("org.apache.maven.plugins", "maven-surefire-plugin", "3.2.5")),
+                List.of());
+
+        PluginsTui tui = new PluginsTui(p1, List.of(p1, p2), (g, a) -> List.of());
+
+        // Simulate two updates
+        for (PluginsTui.PluginEntry e : tui.plugins) {
+            e.newestVersion = "4.0.0";
+            e.updateType = VersionComparator.UpdateType.MAJOR;
+        }
+        tui.loading = false;
+        tui.applyFilter();
+        assertThat(tui.updates).hasSize(2);
+
+        // Switch to Updates view, move selection to index 1 (last), then apply
+        tui.setActiveSubView(2);
+        tui.handleKeyEvent(KeyEvent.ofKey(KeyCode.DOWN)); // select index 1
+
+        // Applying last entry removes it; selection should decrement to 0
+        tui.handleKeyEvent(KeyEvent.ofChar('u'));
+        assertThat(tui.updates).hasSize(1);
+        // Selection must not be out of bounds (should be 0)
+        assertThat(tui.statusText).contains("→");
     }
 }

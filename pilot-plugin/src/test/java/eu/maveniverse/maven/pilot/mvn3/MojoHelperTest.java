@@ -21,8 +21,14 @@ package eu.maveniverse.maven.pilot.mvn3;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import eu.maveniverse.maven.pilot.*;
+import java.util.IdentityHashMap;
 import java.util.List;
+import org.apache.maven.model.Build;
 import org.apache.maven.model.Exclusion;
+import org.apache.maven.model.Plugin;
+import org.apache.maven.model.PluginManagement;
+import org.apache.maven.model.Profile;
+import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.artifact.DefaultArtifactType;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.util.artifact.DefaultArtifactTypeRegistry;
@@ -192,5 +198,221 @@ class MojoHelperTest {
         // Falls through: extension = type, classifier = "" (no registry default applied)
         assertThat(result.getArtifact().getExtension()).isEqualTo("custom-zip");
         assertThat(result.getArtifact().getClassifier()).isEmpty();
+    }
+
+    // ── extractPlugins / extractManagedPlugins via toPilotProject ─────────────
+
+    /** Creates a minimal MavenProject ready for toPilotProject — originalModel must be set. */
+    private static MavenProject minimalProject() {
+        MavenProject mp = new MavenProject();
+        mp.setGroupId("com.example");
+        mp.setArtifactId("app");
+        mp.setVersion("1.0");
+        // toPilotProject calls mp.getOriginalModel() — must not be null
+        mp.setOriginalModel(new org.apache.maven.model.Model());
+        return mp;
+    }
+
+    /**
+     * Creates a minimal MavenProject with root-level build plugins and no active profiles.
+     * Verifies that extractPlugins picks them up with profileId = null.
+     */
+    @Test
+    void extractPlugins_rootLevelPluginsHaveNullProfileId() {
+        Plugin plugin = new Plugin();
+        plugin.setGroupId("org.apache.maven.plugins");
+        plugin.setArtifactId("maven-compiler-plugin");
+        plugin.setVersion("3.11.0");
+
+        Build build = new Build();
+        build.addPlugin(plugin);
+
+        MavenProject mp = minimalProject();
+        mp.setBuild(build);
+        // No active profiles → only root plugins
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+
+        assertThat(pp.getPlugins()).hasSize(1);
+        assertThat(pp.getPlugins().get(0).groupId()).isEqualTo("org.apache.maven.plugins");
+        assertThat(pp.getPlugins().get(0).artifactId()).isEqualTo("maven-compiler-plugin");
+        assertThat(pp.getPlugins().get(0).profileId()).isNull();
+    }
+
+    /**
+     * Creates a MavenProject with an active profile that has build plugins.
+     * Verifies that extractPlugins picks them up with the correct profileId.
+     */
+    @Test
+    void extractPlugins_activeProfilePluginsCarryProfileId() {
+        // Root build has one plugin
+        Plugin rootPlugin = new Plugin();
+        rootPlugin.setGroupId("org.apache.maven.plugins");
+        rootPlugin.setArtifactId("maven-jar-plugin");
+        rootPlugin.setVersion("3.3.0");
+        Build rootBuild = new Build();
+        rootBuild.addPlugin(rootPlugin);
+
+        // Active profile has one build plugin
+        Plugin profPlugin = new Plugin();
+        profPlugin.setGroupId("org.apache.maven.plugins");
+        profPlugin.setArtifactId("maven-compiler-plugin");
+        profPlugin.setVersion("3.11.0");
+        Build profBuild = new Build();
+        profBuild.addPlugin(profPlugin);
+
+        Profile profile = new Profile();
+        profile.setId("release");
+        profile.setBuild(profBuild);
+
+        MavenProject mp = minimalProject();
+        mp.setBuild(rootBuild);
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+
+        // Root plugin + one profile plugin
+        assertThat(pp.getPlugins()).hasSize(2);
+
+        PilotProject.Plugin rootResult = pp.getPlugins().stream()
+                .filter(p -> "maven-jar-plugin".equals(p.artifactId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(rootResult.profileId()).isNull();
+
+        PilotProject.Plugin profResult = pp.getPlugins().stream()
+                .filter(p -> "maven-compiler-plugin".equals(p.artifactId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(profResult.profileId()).isEqualTo("release");
+    }
+
+    /**
+     * Profile with build section but no plugins — the inner loop body is skipped,
+     * verifying the {@code profile.getBuild() != null && plugins != null} guard.
+     */
+    @Test
+    void extractPlugins_activeProfileWithEmptyBuildContributesNoPlugins() {
+        Build profBuild = new Build();
+        // No plugins added to build
+
+        Profile profile = new Profile();
+        profile.setId("no-plugins");
+        profile.setBuild(profBuild);
+
+        MavenProject mp = minimalProject();
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+        assertThat(pp.getPlugins()).isEmpty();
+    }
+
+    /**
+     * Profile with no build section — verifies the {@code profile.getBuild() != null} guard.
+     */
+    @Test
+    void extractPlugins_activeProfileWithNoBuildContributesNoPlugins() {
+        Profile profile = new Profile();
+        profile.setId("no-build");
+        // profile.setBuild() not called → getBuild() returns null
+
+        MavenProject mp = minimalProject();
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+        assertThat(pp.getPlugins()).isEmpty();
+    }
+
+    /**
+     * Active profile with plugin management — verifies extractManagedPlugins
+     * picks up profile-scoped managed plugins with the correct profileId.
+     */
+    @Test
+    void extractManagedPlugins_activeProfilePluginManagementCarriesProfileId() {
+        // Root plugin management
+        Plugin rootManaged = new Plugin();
+        rootManaged.setGroupId("org.apache.maven.plugins");
+        rootManaged.setArtifactId("maven-jar-plugin");
+        rootManaged.setVersion("3.3.0");
+        PluginManagement rootPM = new PluginManagement();
+        rootPM.addPlugin(rootManaged);
+        Build rootBuild = new Build();
+        rootBuild.setPluginManagement(rootPM);
+
+        // Profile plugin management
+        Plugin profManaged = new Plugin();
+        profManaged.setGroupId("org.apache.maven.plugins");
+        profManaged.setArtifactId("maven-compiler-plugin");
+        profManaged.setVersion("3.11.0");
+        PluginManagement profPM = new PluginManagement();
+        profPM.addPlugin(profManaged);
+        Build profBuild = new Build();
+        profBuild.setPluginManagement(profPM);
+
+        Profile profile = new Profile();
+        profile.setId("release");
+        profile.setBuild(profBuild);
+
+        MavenProject mp = minimalProject();
+        mp.setBuild(rootBuild);
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+
+        // Root managed + one profile managed
+        assertThat(pp.getManagedPlugins()).hasSize(2);
+
+        PilotProject.Plugin rootResult = pp.getManagedPlugins().stream()
+                .filter(p -> "maven-jar-plugin".equals(p.artifactId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(rootResult.profileId()).isNull();
+
+        PilotProject.Plugin profResult = pp.getManagedPlugins().stream()
+                .filter(p -> "maven-compiler-plugin".equals(p.artifactId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(profResult.profileId()).isEqualTo("release");
+    }
+
+    /**
+     * Profile build with plugin management but no plugins in it — verifies the
+     * {@code getPluginManagement() != null && getPlugins() != null} guard in extractManagedPlugins.
+     */
+    @Test
+    void extractManagedPlugins_activeProfileWithEmptyPluginManagementContributesNoPlugins() {
+        PluginManagement emptyPM = new PluginManagement();
+        // No plugins added
+        Build profBuild = new Build();
+        profBuild.setPluginManagement(emptyPM);
+
+        Profile profile = new Profile();
+        profile.setId("empty-pm");
+        profile.setBuild(profBuild);
+
+        MavenProject mp = minimalProject();
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+        assertThat(pp.getManagedPlugins()).isEmpty();
+    }
+
+    /**
+     * Profile with build section but null plugin management — verifies the null check.
+     */
+    @Test
+    void extractManagedPlugins_activeProfileWithNullPluginManagementContributesNoPlugins() {
+        Build profBuild = new Build();
+        // No setPluginManagement() call → getPluginManagement() returns null
+
+        Profile profile = new Profile();
+        profile.setId("no-pm");
+        profile.setBuild(profBuild);
+
+        MavenProject mp = minimalProject();
+        mp.setActiveProfiles(List.of(profile));
+
+        PilotProject pp = MojoHelper.toPilotProject(mp, new IdentityHashMap<>());
+        assertThat(pp.getManagedPlugins()).isEmpty();
     }
 }
