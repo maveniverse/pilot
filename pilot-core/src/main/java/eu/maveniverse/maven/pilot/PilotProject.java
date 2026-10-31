@@ -138,12 +138,27 @@ public class PilotProject {
 
     /**
      * Simplified plugin representation, independent of Maven model types.
+     *
+     * <p>{@code profileId} is non-null when the plugin is declared inside a
+     * {@code <profiles>/<profile>/<build>/<plugins>} or
+     * {@code <profiles>/<profile>/<build>/<pluginManagement>/<plugins>} section.
+     * It is {@code null} for plugins at the project root level.</p>
      */
     public record Plugin(
-            String groupId, String artifactId, String version, List<Dep> dependencies, List<Excl> exclusions) {
+            String groupId,
+            String artifactId,
+            String version,
+            List<Dep> dependencies,
+            List<Excl> exclusions,
+            String profileId) {
 
         public Plugin(String groupId, String artifactId, String version) {
-            this(groupId, artifactId, version, List.of(), List.of());
+            this(groupId, artifactId, version, List.of(), List.of(), null);
+        }
+
+        public Plugin(
+                String groupId, String artifactId, String version, List<Dep> dependencies, List<Excl> exclusions) {
+            this(groupId, artifactId, version, dependencies, exclusions, null);
         }
 
         String ga() {

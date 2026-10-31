@@ -35,9 +35,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.maven.api.DownloadedArtifact;
 import org.apache.maven.api.Session;
@@ -45,6 +47,7 @@ import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.Model;
 import org.apache.maven.api.model.Parent;
 import org.apache.maven.api.model.Plugin;
+import org.apache.maven.api.model.Profile;
 import org.apache.maven.api.services.ArtifactResolver;
 import org.apache.maven.api.services.ArtifactResolverRequest;
 import org.apache.maven.api.services.ModelBuilder;
@@ -345,8 +348,9 @@ public class PilotMain {
             ModelBuilderResult effectiveResult = effectiveSession.build(effectiveBuilder.build());
             Model effectiveModel = effectiveResult.getEffectiveModel();
             Model fileModel = effectiveResult.getFileModel();
+            List<Profile> activeProfiles = effectiveResult.getActivePomProfiles();
 
-            PilotProject project = toPilotProject(effectiveModel, fileModel, modulePom);
+            PilotProject project = toPilotProject(effectiveModel, fileModel, activeProfiles, modulePom);
             if (effectiveModel.getParent() != null) {
                 String parentGa = effectiveModel.getParent().getGroupId() + ":"
                         + effectiveModel.getParent().getArtifactId();
@@ -440,8 +444,11 @@ public class PilotMain {
             }
             ModelBuilderResult parentResult = mbs.build(parentBuilder.build());
 
-            PilotProject parentProject =
-                    toPilotProject(parentResult.getEffectiveModel(), parentResult.getFileModel(), parentPom);
+            PilotProject parentProject = toPilotProject(
+                    parentResult.getEffectiveModel(),
+                    parentResult.getFileModel(),
+                    parentResult.getActivePomProfiles(),
+                    parentPom);
             projectsByGa.put(parentGa, parentProject);
             project.parent = parentProject;
 
@@ -478,7 +485,8 @@ public class PilotMain {
 
     // ── Model conversion ────────────────────────────────────────────────
 
-    static PilotProject toPilotProject(Model effectiveModel, Model fileModel, Path pomPath) {
+    static PilotProject toPilotProject(
+            Model effectiveModel, Model fileModel, List<Profile> activeProfiles, Path pomPath) {
         List<PilotProject.Dep> deps = effectiveModel.getDependencies() != null
                 ? effectiveModel.getDependencies().stream()
                         .map(PilotMain::modelDepToPilotDep)
@@ -539,35 +547,84 @@ public class PilotMain {
                 origProps,
                 outputDir,
                 testOutputDir);
-        pp.setPlugins(extractPlugins(effectiveModel));
-        pp.setManagedPlugins(extractManagedPlugins(effectiveModel));
+        pp.setPlugins(extractPlugins(fileModel, activeProfiles));
+        pp.setManagedPlugins(extractManagedPlugins(fileModel, activeProfiles));
         return pp;
     }
 
-    private static List<PilotProject.Plugin> extractPlugins(Model model) {
-        if (model.getBuild() == null || model.getBuild().getPlugins() == null) return List.of();
-        return model.getBuild().getPlugins().stream()
-                .map(PilotMain::modelPluginToPilotPlugin)
-                .toList();
+    private static List<PilotProject.Plugin> extractPlugins(Model fileModel, List<Profile> activeProfiles) {
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level build plugins from the file model.
+        // Using fileModel (not the effective model) avoids pulling in active-profile plugins
+        // that Maven merges into effectiveModel.build.plugins — those would duplicate the
+        // entries added by the active-profile loop below, shadowing their profileId.
+        if (fileModel.getBuild() != null && fileModel.getBuild().getPlugins() != null) {
+            fileModel.getBuild().getPlugins().stream()
+                    .map(PilotMain::modelPluginToPilotPlugin)
+                    .forEach(result::add);
+        }
+        // Profile-scoped build plugins — active profiles only, to exclude plugins from
+        // profiles whose activation conditions are not satisfied in the current build.
+        Set<String> activeProfileIds =
+                activeProfiles.stream().map(Profile::getId).collect(Collectors.toSet());
+        if (fileModel.getProfiles() != null) {
+            for (Profile profile : fileModel.getProfiles()) {
+                if (!activeProfileIds.contains(profile.getId())) continue;
+                String profileId = profile.getId();
+                if (profile.getBuild() != null && profile.getBuild().getPlugins() != null) {
+                    profile.getBuild().getPlugins().stream()
+                            .map(p -> modelPluginToPilotPluginWithProfile(p, profileId))
+                            .forEach(result::add);
+                }
+            }
+        }
+        return result;
     }
 
-    private static List<PilotProject.Plugin> extractManagedPlugins(Model model) {
-        if (model.getBuild() == null
-                || model.getBuild().getPluginManagement() == null
-                || model.getBuild().getPluginManagement().getPlugins() == null) return List.of();
-        return model.getBuild().getPluginManagement().getPlugins().stream()
-                .map(PilotMain::modelPluginToPilotPlugin)
-                .toList();
+    private static List<PilotProject.Plugin> extractManagedPlugins(Model fileModel, List<Profile> activeProfiles) {
+        List<PilotProject.Plugin> result = new ArrayList<>();
+        // Root-level plugin management from the file model.
+        // Using fileModel avoids the same duplicate/shadow issue as extractPlugins: Maven merges
+        // active-profile PM into effectiveModel.build.pluginManagement; the profile loop below
+        // would then add the same entries again with profileId set.
+        if (fileModel.getBuild() != null
+                && fileModel.getBuild().getPluginManagement() != null
+                && fileModel.getBuild().getPluginManagement().getPlugins() != null) {
+            fileModel.getBuild().getPluginManagement().getPlugins().stream()
+                    .map(PilotMain::modelPluginToPilotPlugin)
+                    .forEach(result::add);
+        }
+        // Profile-scoped plugin management — active profiles only.
+        Set<String> activeProfileIds =
+                activeProfiles.stream().map(Profile::getId).collect(Collectors.toSet());
+        if (fileModel.getProfiles() != null) {
+            for (Profile profile : fileModel.getProfiles()) {
+                if (!activeProfileIds.contains(profile.getId())) continue;
+                String profileId = profile.getId();
+                if (profile.getBuild() != null
+                        && profile.getBuild().getPluginManagement() != null
+                        && profile.getBuild().getPluginManagement().getPlugins() != null) {
+                    profile.getBuild().getPluginManagement().getPlugins().stream()
+                            .map(p -> modelPluginToPilotPluginWithProfile(p, profileId))
+                            .forEach(result::add);
+                }
+            }
+        }
+        return result;
     }
 
     private static PilotProject.Plugin modelPluginToPilotPlugin(Plugin plugin) {
+        return modelPluginToPilotPluginWithProfile(plugin, null);
+    }
+
+    private static PilotProject.Plugin modelPluginToPilotPluginWithProfile(Plugin plugin, String profileId) {
         List<PilotProject.Dep> deps = plugin.getDependencies() != null
                 ? plugin.getDependencies().stream()
                         .map(PilotMain::modelDepToPilotDep)
                         .toList()
                 : List.of();
         return new PilotProject.Plugin(
-                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of());
+                plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion(), deps, List.of(), profileId);
     }
 
     private static PilotProject.Dep modelDepToPilotDep(Dependency dep) {
