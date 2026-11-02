@@ -57,7 +57,7 @@ under the License.
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
-    <mavenVersion>3.9.16</mavenVersion>
+    <mavenVersion>3.10.0</mavenVersion>
     <maven4Version>4.0.0-rc-7</maven4Version>
     <tamboui.version>0.5.0</tamboui.version>
     <domtrip.version>1.8.0</domtrip.version>
