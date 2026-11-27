@@ -21,6 +21,7 @@ package eu.maveniverse.maven.pilot;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Enumeration;
@@ -290,19 +291,18 @@ public final class ClassFileScanner {
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
     public static boolean hasInlineableConstants(File jarFile) {
+        if (jarFile.isDirectory()) {
+            return directoryHasInlineableConstants(jarFile.toPath());
+        }
         try (JarFile jar = new JarFile(jarFile)) {
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String name = entry.getName();
-                if (!name.endsWith(".class") || name.equals("module-info.class") || name.startsWith("META-INF/")) {
+                if (!isScannableClass(entry.getName())) {
                     continue;
                 }
                 try (InputStream is = jar.getInputStream(entry)) {
-                    ClassReader reader = new ClassReader(is);
-                    InlineableConstantDetector detector = new InlineableConstantDetector();
-                    reader.accept(detector, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-                    if (detector.found) {
+                    if (declaresInlineableConstant(is)) {
                         return true;
                     }
                 } catch (IOException | IllegalArgumentException ignored) {
@@ -313,6 +313,37 @@ public final class ClassFileScanner {
             // skip unreadable JARs
         }
         return false;
+    }
+
+    /** Directory variant of {@link #hasInlineableConstants(File)}, for reactor siblings resolved to classes dirs. */
+    private static boolean directoryHasInlineableConstants(Path root) {
+        try (Stream<Path> files = Files.walk(root)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(p -> isScannableClass(root.relativize(p).toString().replace(File.separatorChar, '/')))
+                    .anyMatch(p -> {
+                        try (InputStream is = Files.newInputStream(p)) {
+                            return declaresInlineableConstant(is);
+                        } catch (IOException | RuntimeException ignored) {
+                            // skip corrupt or unsupported class files; a half-written one makes ASM throw
+                            // ArrayIndexOutOfBoundsException
+                            return false;
+                        }
+                    });
+        } catch (IOException | UncheckedIOException ignored) {
+            // skip unreadable directories
+            return false;
+        }
+    }
+
+    private static boolean isScannableClass(String name) {
+        return name.endsWith(".class") && !name.equals("module-info.class") && !name.startsWith("META-INF/");
+    }
+
+    private static boolean declaresInlineableConstant(InputStream is) throws IOException {
+        ClassReader reader = new ClassReader(is);
+        InlineableConstantDetector detector = new InlineableConstantDetector();
+        reader.accept(detector, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return detector.found;
     }
 
     /**

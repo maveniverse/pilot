@@ -103,9 +103,7 @@ class Maven3PilotResolver implements PilotResolver {
             Map<String, File> gaToJar = new HashMap<>();
             for (ArtifactResult ar : depResult.getArtifactResults()) {
                 var art = ar.getArtifact();
-                if (art != null
-                        && art.getFile() != null
-                        && art.getFile().getName().endsWith(".jar")) {
+                if (art != null && DependencyUsageAnalyzer.isClassContainer(art.getFile())) {
                     gaToJar.put(art.getGroupId() + ":" + art.getArtifactId(), art.getFile());
                 }
             }

@@ -25,8 +25,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Properties;
 import java.util.Set;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 
 /**
  * Strategy for recognising one runtime-discovery convention inside a JAR.
@@ -75,12 +73,12 @@ sealed interface DiscoveryConvention
      *
      * <p>The default implementation returns an empty set (no content parsing needed).</p>
      *
-     * @param jar   the open JAR being scanned
-     * @param entry the JAR entry whose content should be parsed
+     * @param name    the entry name, relative to the JAR or directory root, with {@code /} separators
+     * @param content the entry body; closed by the caller
      * @return additional class-name keys extracted from the entry content
      * @throws IOException if reading the entry fails
      */
-    default Set<String> matchContent(JarFile jar, JarEntry entry) throws IOException {
+    default Set<String> matchContent(String name, InputStream content) throws IOException {
         return Set.of();
     }
 
@@ -275,10 +273,9 @@ sealed interface DiscoveryConvention
          * ignored because the consumer references the interface, not the implementation.</p>
          */
         @Override
-        public Set<String> matchContent(JarFile jar, JarEntry entry) throws IOException {
+        public Set<String> matchContent(String name, InputStream content) throws IOException {
             var props = new Properties();
-            try (InputStream is = jar.getInputStream(entry);
-                    var reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
+            try (var reader = new InputStreamReader(content, StandardCharsets.UTF_8)) {
                 props.load(reader);
             }
             return Set.copyOf(props.stringPropertyNames());
@@ -363,10 +360,10 @@ sealed interface DiscoveryConvention
         }
 
         @Override
-        public Set<String> matchContent(JarFile jar, JarEntry entry) throws IOException {
+        public Set<String> matchContent(String name, InputStream content) throws IOException {
             Set<String> result = new HashSet<>();
             try {
-                NativeImageMetadataParser.extractClassNames(entry.getName(), jar.getInputStream(entry), result);
+                NativeImageMetadataParser.extractClassNames(name, content, result);
             } catch (RuntimeException ignored) {
                 // malformed JSON — skip silently, same as NativeImageMetadataParser.scanDirectory
             }

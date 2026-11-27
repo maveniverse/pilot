@@ -20,6 +20,10 @@ package eu.maveniverse.maven.pilot;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -29,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.stream.Stream;
 
 /**
  * Builds a class-to-artifact index from resolved JARs and classifies dependency usage based on bytecode analysis
@@ -174,22 +179,47 @@ public final class DependencyUsageAnalyzer {
         for (var entry : gaToJar.entrySet()) {
             String ga = entry.getKey();
             File jarFile = entry.getValue();
+            if (jarFile.isDirectory()) {
+                indexDirectory(jarFile.toPath(), ga, index);
+                continue;
+            }
             try (JarFile jar = new JarFile(jarFile)) {
                 Enumeration<JarEntry> entries = jar.entries();
                 while (entries.hasMoreElements()) {
-                    JarEntry je = entries.nextElement();
-                    String name = je.getName();
-                    if (name.endsWith(".class") && !name.equals("module-info.class") && !name.startsWith("META-INF/")) {
-                        // Convert path (com/example/Foo.class) to class name (com.example.Foo)
-                        String className = name.substring(0, name.length() - 6).replace('/', '.');
-                        index.put(className, ga);
-                    }
+                    indexEntry(entries.nextElement().getName(), ga, index);
                 }
             } catch (IOException ignored) {
                 // skip unreadable JARs
             }
         }
         return index;
+    }
+
+    /**
+     * Whether an artifact file can be inspected: a JAR, or a directory of compiled classes. In a reactor build that
+     * stops before {@code package}, sibling modules resolve to their {@code target/classes} directory.
+     */
+    public static boolean isClassContainer(File file) {
+        return file != null && (file.isDirectory() || file.getName().endsWith(".jar"));
+    }
+
+    private static void indexDirectory(Path root, String ga, Map<String, String> index) {
+        try (Stream<Path> files = Files.walk(root)) {
+            files.filter(Files::isRegularFile).forEach(p -> indexEntry(relativeName(root, p), ga, index));
+        } catch (IOException | UncheckedIOException ignored) {
+            // skip unreadable directories
+        }
+    }
+
+    private static void indexEntry(String name, String ga, Map<String, String> index) {
+        if (name.endsWith(".class") && !name.equals("module-info.class") && !name.startsWith("META-INF/")) {
+            // Convert path (com/example/Foo.class) to class name (com.example.Foo)
+            index.put(name.substring(0, name.length() - 6).replace('/', '.'), ga);
+        }
+    }
+
+    private static String relativeName(Path root, Path file) {
+        return root.relativize(file).toString().replace(File.separatorChar, '/');
     }
 
     /**
@@ -447,31 +477,61 @@ public final class DependencyUsageAnalyzer {
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
     private static DiscoveryInfo scanDiscoveryMetadata(File jarFile) {
-        Set<String> classes = new HashSet<>();
-        boolean impliesUndetermined = false;
+        DiscoveryScan scan = new DiscoveryScan();
+        if (jarFile.isDirectory()) {
+            Path root = jarFile.toPath();
+            try (Stream<Path> files = Files.walk(root)) {
+                for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                    scan.accept(relativeName(root, file), () -> Files.newInputStream(file));
+                }
+            } catch (IOException | UncheckedIOException ignored) {
+                // skip unreadable directories
+            }
+            return scan.result();
+        }
         try (JarFile jar = new JarFile(jarFile)) {
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String name = entry.getName();
-                for (DiscoveryConvention conv : CONVENTIONS) {
-                    Set<String> keys = conv.matchEntry(name);
-                    if (!keys.isEmpty()) {
-                        classes.addAll(keys);
-                        if (conv.impliesUndetermined()) {
-                            impliesUndetermined = true;
-                        }
-                        if (conv.needsContent(name)) {
-                            classes.addAll(conv.matchContent(jar, entry));
-                        }
-                        break; // first match wins
-                    }
-                }
+                scan.accept(entry.getName(), () -> jar.getInputStream(entry));
             }
         } catch (IOException ignored) {
             // skip unreadable JARs
         }
-        return new DiscoveryInfo(Set.copyOf(classes), impliesUndetermined);
+        return scan.result();
+    }
+
+    @FunctionalInterface
+    private interface ContentSupplier {
+        InputStream open() throws IOException;
+    }
+
+    /** Accumulates the discovery keys and the {@code impliesUndetermined} flag over the entries of one artifact. */
+    private static final class DiscoveryScan {
+        private final Set<String> classes = new HashSet<>();
+        private boolean impliesUndetermined;
+
+        /** Match one entry against the ordered conventions (first match wins). */
+        void accept(String name, ContentSupplier content) throws IOException {
+            for (DiscoveryConvention conv : CONVENTIONS) {
+                Set<String> keys = conv.matchEntry(name);
+                if (!keys.isEmpty()) {
+                    classes.addAll(keys);
+                    // recorded before the content read, so a failed read keeps what the entry name already proved
+                    impliesUndetermined |= conv.impliesUndetermined();
+                    if (conv.needsContent(name)) {
+                        try (InputStream is = content.open()) {
+                            classes.addAll(conv.matchContent(name, is));
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
+        DiscoveryInfo result() {
+            return new DiscoveryInfo(Set.copyOf(classes), impliesUndetermined);
+        }
     }
 
     private boolean matchesExtraUsedClasses(String ga, Set<String> depClasses) {

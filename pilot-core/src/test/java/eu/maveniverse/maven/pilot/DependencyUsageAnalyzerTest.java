@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -440,6 +441,48 @@ class DependencyUsageAnalyzerTest {
 
         assertThat(result.transitiveUsage())
                 .containsEntry("com.example:sisu-transitive", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+    }
+
+    @Test
+    void buildClassIndexIndexesClassesDirectory(@TempDir Path tempDir) throws Exception {
+        // A reactor sibling resolved before 'package' is a target/classes directory, not a JAR
+        Path classesDir = tempDir.resolve("classes");
+        Files.createDirectories(classesDir.resolve("com/example/api"));
+        Files.createFile(classesDir.resolve("com/example/api/Service.class"));
+        Files.createFile(classesDir.resolve("module-info.class"));
+        Files.createDirectories(classesDir.resolve("META-INF/versions/9"));
+        Files.createFile(classesDir.resolve("META-INF/versions/9/Hidden.class"));
+
+        Map<String, String> index =
+                DependencyUsageAnalyzer.buildClassIndex(Map.of("com.example:sibling", classesDir.toFile()));
+
+        assertThat(index).containsExactly(Map.entry("com.example.api.Service", "com.example:sibling"));
+    }
+
+    @Test
+    void classesDirectoryWithSisuIndexIsUndeterminedNotUnused(@TempDir Path tempDir) throws Exception {
+        Path classesDir = tempDir.resolve("classes");
+        // A real class without inlineable constants: only the Sisu index keeps the sibling from UNUSED
+        Path component = classesDir.resolve("com/example/Component.class");
+        Files.createDirectories(component.getParent());
+        try (InputStream is =
+                DependencyUsageAnalyzerTest.class.getResourceAsStream("DependencyUsageAnalyzerTest.class")) {
+            Files.copy(is, component);
+        }
+        assertThat(ClassFileScanner.hasInlineableConstants(classesDir.toFile())).isFalse();
+        Files.createDirectories(classesDir.resolve("META-INF/sisu"));
+        Files.createFile(classesDir.resolve("META-INF/sisu/javax.inject.Named"));
+
+        var dep = new DependenciesTui.DepEntry("com.example", "sibling", "", "1.0", "compile", true);
+        Map<String, File> gaToJar = Map.of("com.example:sibling", classesDir.toFile());
+        Map<String, String> classIndex = DependencyUsageAnalyzer.buildClassIndex(gaToJar);
+
+        var result = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(Set.of("com.other.Unrelated"), Set.of(), classIndex, gaToJar, List.of(dep), List.of(), true);
+
+        assertThat(result.declaredUsage())
+                .containsEntry("com.example:sibling", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
     }
 
     @Test

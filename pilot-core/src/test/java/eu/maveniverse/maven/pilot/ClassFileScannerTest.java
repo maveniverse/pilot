@@ -122,6 +122,23 @@ class ClassFileScannerTest {
                 .isFalse();
     }
 
+    @Test
+    void hasInlineableConstantsDetectsConstantsInClassesDirectory(@TempDir Path tempDir) throws Exception {
+        Path classFile = Path.of("target/test-classes/eu/maveniverse/maven/pilot/ConstantProviderFixture.class");
+        Assumptions.assumeTrue(Files.exists(classFile), "ConstantProviderFixture.class not compiled — skipping");
+
+        // A reactor sibling resolved to target/classes is a directory, not a JAR
+        Path classesDir = tempDir.resolve("classes");
+        Path target = classesDir.resolve("eu/maveniverse/maven/pilot/ConstantProviderFixture.class");
+        Files.createDirectories(target.getParent());
+        Files.copy(classFile, target);
+
+        assertThat(ClassFileScanner.hasInlineableConstants(classesDir.toFile())).isTrue();
+        assertThat(ClassFileScanner.hasInlineableConstants(
+                        Files.createDirectory(tempDir.resolve("empty")).toFile()))
+                .isFalse();
+    }
+
     /**
      * Verifies that a JAR whose classes have no {@code public static final} constant fields
      * is NOT flagged as having inlineable constants.  {@link AnnotationFixture} has only
