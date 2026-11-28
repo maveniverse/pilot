@@ -241,13 +241,15 @@ public final class DependencyUsageAnalyzer {
         Map<String, UsageStatus> declaredUsage = new HashMap<>();
         for (var dep : declared) {
             declaredUsage.put(
-                    dep.ga(), classify(dep, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
+                    dep.ga(),
+                    classify(dep, true, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
         }
 
         Map<String, UsageStatus> transitiveUsage = new HashMap<>();
         for (var dep : transitive) {
             transitiveUsage.put(
-                    dep.ga(), classify(dep, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
+                    dep.ga(),
+                    classify(dep, false, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
         }
 
         return new AnalysisResult(declaredUsage, transitiveUsage);
@@ -255,6 +257,7 @@ public final class DependencyUsageAnalyzer {
 
     private UsageStatus classify(
             DependenciesTui.DepEntry dep,
+            boolean declaredDep,
             Map<String, Set<String>> gaToClasses,
             Map<String, File> gaToJar,
             Set<String> mainRefs,
@@ -292,7 +295,7 @@ public final class DependencyUsageAnalyzer {
         // bytecode (e.g. an SLF4J backend exercised by a test), but narrowing its scope to test
         // would be wrong — the DI/SPI container loads it at runtime in production. UNDETERMINED
         // is the safe return value in that case.
-        UsageStatus discoveryStatus = classifyByRuntimeDiscovery(dep, gaToJar, refs);
+        UsageStatus discoveryStatus = classifyByRuntimeDiscovery(dep, declaredDep, gaToJar, refs);
         if (discoveryStatus != null) {
             return discoveryStatus;
         }
@@ -351,8 +354,10 @@ public final class DependencyUsageAnalyzer {
      * Returns:
      * </p>
      * <ul>
-     * <li>{@link UsageStatus#USED} — the dep's registered service interface is directly referenced by the consuming
-     * module's bytecode, or it is an annotation processor.</li>
+     * <li>{@link UsageStatus#USED} — the dep is declared and its registered service interface is directly referenced
+     * by the consuming module's bytecode, or it is an annotation processor. The direct-reference check is skipped for
+     * transitive deps: the discovery keys are wiring keys shared by many jars (every Sisu index is keyed
+     * {@code javax.inject.Named}), so a match says nothing about this particular jar being needed.</li>
      * <li>{@link UsageStatus#UNDETERMINED} — the dep's JAR contains DI/SPI registration metadata (Maven DI, Sisu) but
      * its wiring interface is not in the consumer's bytecode. The DI container resolves these at runtime without direct
      * class references, so we cannot determine usage from bytecode alone.</li>
@@ -360,7 +365,7 @@ public final class DependencyUsageAnalyzer {
      * </ul>
      */
     private static UsageStatus classifyByRuntimeDiscovery(
-            DependenciesTui.DepEntry dep, Map<String, File> gaToJar, Set<String> refs) {
+            DependenciesTui.DepEntry dep, boolean declaredDep, Map<String, File> gaToJar, Set<String> refs) {
         File jarFile = gaToJar.get(dep.ga());
         if (jarFile == null) {
             return null;
@@ -369,8 +374,10 @@ public final class DependencyUsageAnalyzer {
         if (!info.hasAnyDiscoveryMetadata()) {
             return null;
         }
-        // If the consumer directly references the registered service interface, it's clearly used.
-        if (!Collections.disjoint(info.discoveryClasses(), refs)) {
+        // If the consumer directly references the registered service interface, a declared dep is clearly used.
+        // Not for transitive deps: a wiring key such as javax.inject.Named is shared by every Sisu-indexed
+        // jar, so matching it would report all of them as used transitive (and promote them in fix mode).
+        if (declaredDep && !Collections.disjoint(info.discoveryClasses(), refs)) {
             return UsageStatus.USED;
         }
         // Annotation processors are used at compile time without direct bytecode references.

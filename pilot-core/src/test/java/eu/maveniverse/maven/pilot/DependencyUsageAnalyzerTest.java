@@ -424,6 +424,25 @@ class DependencyUsageAnalyzerTest {
     }
 
     @Test
+    void sisuIndexKeyReferenceDoesNotMarkTransitiveAsUsed(@TempDir Path tempDir) throws Exception {
+        Path tempJar = tempDir.resolve("sisu-transitive.jar");
+        createJarWithEntries(tempJar, "META-INF/sisu/javax.inject.Named");
+
+        var dep = new DependenciesTui.DepEntry("com.example", "sisu-transitive", "", "1.0", "compile", false);
+        dep.pulledBy = "com.example:parent";
+        Map<String, File> gaToJar = Map.of("com.example:sisu-transitive", tempJar.toFile());
+        Map<String, String> classIndex = Map.of("com.example.Component", "com.example:sisu-transitive");
+
+        // The consumer only references the @Named annotation, never a class from the transitive jar
+        var result = DependencyUsageAnalyzer.builder()
+                .build()
+                .analyze(Set.of("javax.inject.Named"), Set.of(), classIndex, gaToJar, List.of(), List.of(dep), true);
+
+        assertThat(result.transitiveUsage())
+                .containsEntry("com.example:sisu-transitive", DependencyUsageAnalyzer.UsageStatus.UNDETERMINED);
+    }
+
+    @Test
     void springComponentsDiscoveryMarksAsUsed(@TempDir Path tempDir) throws Exception {
         Path tempJar = tempDir.resolve("spring-lib.jar");
         createJarWithEntries(tempJar, "META-INF/spring.components");
