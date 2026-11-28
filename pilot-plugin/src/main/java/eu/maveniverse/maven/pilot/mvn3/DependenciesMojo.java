@@ -347,7 +347,7 @@ public class DependenciesMojo extends AbstractMojo {
                     ? art.getGroupId() + ":" + art.getArtifactId() + ":" + classifier
                     : art.getGroupId() + ":" + art.getArtifactId();
             gaToVersion.put(ga, art.getVersion());
-            if (art.getFile() != null && art.getFile().getName().endsWith(".jar")) {
+            if (DependencyUsageAnalyzer.isClassContainer(art.getFile())) {
                 gaToJar.put(ga, art.getFile());
             }
         }

@@ -20,6 +20,10 @@ package eu.maveniverse.maven.pilot;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -29,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.stream.Stream;
 
 /**
  * Builds a class-to-artifact index from resolved JARs and classifies dependency usage based on bytecode analysis
@@ -174,22 +179,47 @@ public final class DependencyUsageAnalyzer {
         for (var entry : gaToJar.entrySet()) {
             String ga = entry.getKey();
             File jarFile = entry.getValue();
+            if (jarFile.isDirectory()) {
+                indexDirectory(jarFile.toPath(), ga, index);
+                continue;
+            }
             try (JarFile jar = new JarFile(jarFile)) {
                 Enumeration<JarEntry> entries = jar.entries();
                 while (entries.hasMoreElements()) {
-                    JarEntry je = entries.nextElement();
-                    String name = je.getName();
-                    if (name.endsWith(".class") && !name.equals("module-info.class") && !name.startsWith("META-INF/")) {
-                        // Convert path (com/example/Foo.class) to class name (com.example.Foo)
-                        String className = name.substring(0, name.length() - 6).replace('/', '.');
-                        index.put(className, ga);
-                    }
+                    indexEntry(entries.nextElement().getName(), ga, index);
                 }
             } catch (IOException ignored) {
                 // skip unreadable JARs
             }
         }
         return index;
+    }
+
+    /**
+     * Whether an artifact file can be inspected: a JAR, or a directory of compiled classes. In a reactor build that
+     * stops before {@code package}, sibling modules resolve to their {@code target/classes} directory.
+     */
+    public static boolean isClassContainer(File file) {
+        return file != null && (file.isDirectory() || file.getName().endsWith(".jar"));
+    }
+
+    private static void indexDirectory(Path root, String ga, Map<String, String> index) {
+        try (Stream<Path> files = Files.walk(root)) {
+            files.filter(Files::isRegularFile).forEach(p -> indexEntry(relativeName(root, p), ga, index));
+        } catch (IOException | UncheckedIOException ignored) {
+            // skip unreadable directories
+        }
+    }
+
+    private static void indexEntry(String name, String ga, Map<String, String> index) {
+        if (name.endsWith(".class") && !name.equals("module-info.class") && !name.startsWith("META-INF/")) {
+            // Convert path (com/example/Foo.class) to class name (com.example.Foo)
+            index.put(name.substring(0, name.length() - 6).replace('/', '.'), ga);
+        }
+    }
+
+    private static String relativeName(Path root, Path file) {
+        return root.relativize(file).toString().replace(File.separatorChar, '/');
     }
 
     /**
@@ -241,13 +271,15 @@ public final class DependencyUsageAnalyzer {
         Map<String, UsageStatus> declaredUsage = new HashMap<>();
         for (var dep : declared) {
             declaredUsage.put(
-                    dep.ga(), classify(dep, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
+                    dep.ga(),
+                    classify(dep, true, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
         }
 
         Map<String, UsageStatus> transitiveUsage = new HashMap<>();
         for (var dep : transitive) {
             transitiveUsage.put(
-                    dep.ga(), classify(dep, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
+                    dep.ga(),
+                    classify(dep, false, gaToClasses, gaToJar, mainRefs, testRefs, allRefs, testRefsAvailable));
         }
 
         return new AnalysisResult(declaredUsage, transitiveUsage);
@@ -255,6 +287,7 @@ public final class DependencyUsageAnalyzer {
 
     private UsageStatus classify(
             DependenciesTui.DepEntry dep,
+            boolean declaredDep,
             Map<String, Set<String>> gaToClasses,
             Map<String, File> gaToJar,
             Set<String> mainRefs,
@@ -292,7 +325,7 @@ public final class DependencyUsageAnalyzer {
         // bytecode (e.g. an SLF4J backend exercised by a test), but narrowing its scope to test
         // would be wrong — the DI/SPI container loads it at runtime in production. UNDETERMINED
         // is the safe return value in that case.
-        UsageStatus discoveryStatus = classifyByRuntimeDiscovery(dep, gaToJar, refs);
+        UsageStatus discoveryStatus = classifyByRuntimeDiscovery(dep, declaredDep, gaToJar, refs);
         if (discoveryStatus != null) {
             return discoveryStatus;
         }
@@ -351,8 +384,10 @@ public final class DependencyUsageAnalyzer {
      * Returns:
      * </p>
      * <ul>
-     * <li>{@link UsageStatus#USED} — the dep's registered service interface is directly referenced by the consuming
-     * module's bytecode, or it is an annotation processor.</li>
+     * <li>{@link UsageStatus#USED} — the dep is declared and its registered service interface is directly referenced
+     * by the consuming module's bytecode, or it is an annotation processor. The direct-reference check is skipped for
+     * transitive deps: the discovery keys are wiring keys shared by many jars (every Sisu index is keyed
+     * {@code javax.inject.Named}), so a match says nothing about this particular jar being needed.</li>
      * <li>{@link UsageStatus#UNDETERMINED} — the dep's JAR contains DI/SPI registration metadata (Maven DI, Sisu) but
      * its wiring interface is not in the consumer's bytecode. The DI container resolves these at runtime without direct
      * class references, so we cannot determine usage from bytecode alone.</li>
@@ -360,7 +395,7 @@ public final class DependencyUsageAnalyzer {
      * </ul>
      */
     private static UsageStatus classifyByRuntimeDiscovery(
-            DependenciesTui.DepEntry dep, Map<String, File> gaToJar, Set<String> refs) {
+            DependenciesTui.DepEntry dep, boolean declaredDep, Map<String, File> gaToJar, Set<String> refs) {
         File jarFile = gaToJar.get(dep.ga());
         if (jarFile == null) {
             return null;
@@ -369,8 +404,10 @@ public final class DependencyUsageAnalyzer {
         if (!info.hasAnyDiscoveryMetadata()) {
             return null;
         }
-        // If the consumer directly references the registered service interface, it's clearly used.
-        if (!Collections.disjoint(info.discoveryClasses(), refs)) {
+        // If the consumer directly references the registered service interface, a declared dep is clearly used.
+        // Not for transitive deps: a wiring key such as javax.inject.Named is shared by every Sisu-indexed
+        // jar, so matching it would report all of them as used transitive (and promote them in fix mode).
+        if (declaredDep && !Collections.disjoint(info.discoveryClasses(), refs)) {
             return UsageStatus.USED;
         }
         // Annotation processors are used at compile time without direct bytecode references.
@@ -440,31 +477,61 @@ public final class DependencyUsageAnalyzer {
      */
     @SuppressWarnings("java:S5042") // JARs are from Maven's local repository, already verified
     private static DiscoveryInfo scanDiscoveryMetadata(File jarFile) {
-        Set<String> classes = new HashSet<>();
-        boolean impliesUndetermined = false;
+        DiscoveryScan scan = new DiscoveryScan();
+        if (jarFile.isDirectory()) {
+            Path root = jarFile.toPath();
+            try (Stream<Path> files = Files.walk(root)) {
+                for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                    scan.accept(relativeName(root, file), () -> Files.newInputStream(file));
+                }
+            } catch (IOException | UncheckedIOException ignored) {
+                // skip unreadable directories
+            }
+            return scan.result();
+        }
         try (JarFile jar = new JarFile(jarFile)) {
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String name = entry.getName();
-                for (DiscoveryConvention conv : CONVENTIONS) {
-                    Set<String> keys = conv.matchEntry(name);
-                    if (!keys.isEmpty()) {
-                        classes.addAll(keys);
-                        if (conv.impliesUndetermined()) {
-                            impliesUndetermined = true;
-                        }
-                        if (conv.needsContent(name)) {
-                            classes.addAll(conv.matchContent(jar, entry));
-                        }
-                        break; // first match wins
-                    }
-                }
+                scan.accept(entry.getName(), () -> jar.getInputStream(entry));
             }
         } catch (IOException ignored) {
             // skip unreadable JARs
         }
-        return new DiscoveryInfo(Set.copyOf(classes), impliesUndetermined);
+        return scan.result();
+    }
+
+    @FunctionalInterface
+    private interface ContentSupplier {
+        InputStream open() throws IOException;
+    }
+
+    /** Accumulates the discovery keys and the {@code impliesUndetermined} flag over the entries of one artifact. */
+    private static final class DiscoveryScan {
+        private final Set<String> classes = new HashSet<>();
+        private boolean impliesUndetermined;
+
+        /** Match one entry against the ordered conventions (first match wins). */
+        void accept(String name, ContentSupplier content) throws IOException {
+            for (DiscoveryConvention conv : CONVENTIONS) {
+                Set<String> keys = conv.matchEntry(name);
+                if (!keys.isEmpty()) {
+                    classes.addAll(keys);
+                    // recorded before the content read, so a failed read keeps what the entry name already proved
+                    impliesUndetermined |= conv.impliesUndetermined();
+                    if (conv.needsContent(name)) {
+                        try (InputStream is = content.open()) {
+                            classes.addAll(conv.matchContent(name, is));
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
+        DiscoveryInfo result() {
+            return new DiscoveryInfo(Set.copyOf(classes), impliesUndetermined);
+        }
     }
 
     private boolean matchesExtraUsedClasses(String ga, Set<String> depClasses) {

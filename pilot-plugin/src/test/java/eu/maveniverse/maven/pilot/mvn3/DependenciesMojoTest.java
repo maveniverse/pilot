@@ -1518,6 +1518,25 @@ class DependenciesMojoTest {
     }
 
     @Test
+    void buildArtifactMaps_classesDirectoryArtifact_addedToJarMap(@TempDir Path tmp) throws Exception {
+        var depReq = new DependencyRequest();
+        var depResult = new DependencyResult(depReq);
+
+        // A reactor sibling resolved before 'package' points at target/classes, not at a jar
+        File classesDir = Files.createDirectory(tmp.resolve("classes")).toFile();
+        var artifact = new DefaultArtifact("com.example:sibling:1.0");
+        artifact = (DefaultArtifact) artifact.setFile(classesDir);
+
+        var ar = new ArtifactResult(new ArtifactRequest());
+        ar.setArtifact(artifact);
+        depResult.setArtifactResults(List.of(ar));
+
+        DependenciesMojo.ArtifactMaps maps = DependenciesMojo.buildArtifactMaps(depResult);
+
+        assertThat(maps.gaToJar()).containsEntry("com.example:sibling", classesDir);
+    }
+
+    @Test
     void buildArtifactMaps_nonJarArtifact_versionMappedButNotJar(@TempDir Path tmp) throws Exception {
         var depReq = new DependencyRequest();
         var depResult = new DependencyResult(depReq);
